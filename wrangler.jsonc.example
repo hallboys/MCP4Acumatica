@@ -1,0 +1,45 @@
+{
+	"name": "acumatica-mcp-server",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-03-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// Acumatica instance configuration
+	// Set ACUMATICA_URL, ACUMATICA_COMPANY, and secrets via:
+	//   npx wrangler secret put <NAME>
+	// Or define in .dev.vars for local development
+	"vars": {
+		"ACUMATICA_ENDPOINT_VERSION": "25.200.001"
+	},
+	// KV namespaces — create with:
+	//   npx wrangler kv namespace create TOKEN_STORE
+	//   npx wrangler kv namespace create OAUTH_KV
+	// Then replace the IDs below
+	"kv_namespaces": [
+		{
+			"binding": "TOKEN_STORE",
+			"id": "<your-token-store-kv-id>"
+		},
+		{
+			"binding": "OAUTH_KV",
+			"id": "<your-oauth-kv-id>"
+		}
+	],
+
+	// Durable Object for McpAgent (agents SDK)
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MCP_OBJECT",
+				"class_name": "AcumaticaMcpServer"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["AcumaticaMcpServer"]
+		}
+	]
+}

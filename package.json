@@ -1,0 +1,21 @@
+{
+  "name": "acumatica-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@cloudflare/workers-oauth-provider": "^0.3.2",
+    "@cloudflare/workers-types": "^4.20250312.0",
+    "agents": "^0.0.98",
+    "hono": "^4.12.9"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "wrangler": "^4.0.0"
+  }
+}

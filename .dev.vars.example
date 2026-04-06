@@ -1,0 +1,11 @@
+# Acumatica instance
+ACUMATICA_URL=https://your-instance.acumatica.com
+ACUMATICA_COMPANY=YourCompany
+
+# Acumatica Connected Application (SM303010) credentials
+ACUMATICA_CLIENT_ID=your-client-id@Production
+ACUMATICA_CLIENT_SECRET=your-client-secret
+
+# Random 256-bit hex key for cookie encryption
+# Generate with: openssl rand -hex 32
+COOKIE_ENCRYPTION_KEY=your-random-hex-key
