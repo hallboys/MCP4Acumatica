@@ -11,7 +11,7 @@ import { handleGetVendor } from "./tools/vendors";
 import { handleGetSalesOrder } from "./tools/sales-orders";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
-import { AcumaticaAuthHandler } from "./auth/entra-handler";
+import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
