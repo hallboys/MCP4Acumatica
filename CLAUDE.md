@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.1.0`
+- **Current tag:** `25R2-0.2.0`
 - **Deployed at:** `https://acumatica-mcp-server.it-495.workers.dev`
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -26,7 +26,13 @@ Claude (claude.ai / Desktop / API)
 │    └─ /mcp → McpAgent DO        │
 │       ├─ acumatica_get_customer │
 │       ├─ acumatica_get_vendor   │
-│       └─ acumatica_get_sales_order │
+│       ├─ acumatica_get_sales_order │
+│       ├─ acumatica_get_invoice  │
+│       ├─ acumatica_get_bill     │
+│       ├─ acumatica_get_journal_transaction │
+│       ├─ acumatica_get_payment  │
+│       ├─ acumatica_get_account  │
+│       └─ acumatica_get_check    │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
                ▼
@@ -77,9 +83,15 @@ src/
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   └── logger.ts                  # Structured JSON audit logging
 ├── tools/
+│   ├── accounts.ts                # acumatica_get_account
+│   ├── bills.ts                   # acumatica_get_bill
+│   ├── checks.ts                  # acumatica_get_check
 │   ├── customers.ts               # acumatica_get_customer
-│   ├── vendors.ts                 # acumatica_get_vendor
-│   └── sales-orders.ts            # acumatica_get_sales_order
+│   ├── invoices.ts                # acumatica_get_invoice
+│   ├── journal-transactions.ts    # acumatica_get_journal_transaction
+│   ├── payments.ts                # acumatica_get_payment
+│   ├── sales-orders.ts            # acumatica_get_sales_order
+│   └── vendors.ts                 # acumatica_get_vendor
 └── types/
     └── acumatica.ts               # All TypeScript types, Env interface, AuthProps
 ```
@@ -141,20 +153,100 @@ npx wrangler kv namespace create X  # Create KV namespace
 
 ## TODO — Remaining Project Work
 
-### High Priority
-- [ ] Add more read-only tools: Inventory Items, Stock Items, Purchase Orders, Invoices, Bills, GL Journal Transactions, Shipments
+### Completed
+- [x] Add Financial/Accounting read-only tools: Invoice, Bill, JournalTransaction, Payment, Account, Check (0.2.0)
+
+### High Priority — Read-Only Tools by Module
+
+**Inventory & Warehouse:**
+- [ ] StockItem — inventory items with cost, price, qty on hand
+- [ ] NonStockItem — service/labor/expense items
+- [ ] InventoryQuantityAvailable — real-time available qty inquiry
+- [ ] InventorySummaryInquiry — aggregated inventory balances
+- [ ] Warehouse — warehouse/location master data
+- [ ] ItemClass — item classification and defaults
+
+**Purchasing:**
+- [ ] PurchaseOrder — PO header + lines, vendor, status
+- [ ] PurchaseReceipt — goods received against POs
+
+**Shipping & Fulfillment:**
+- [ ] Shipment — shipment header, packages, tracking
+- [ ] SalesInvoice — invoice generated from shipment
+
+**Sales & CRM:**
+- [ ] Contact — contact records (name, email, phone, address)
+- [ ] BusinessAccount — prospect/customer/vendor unified record
+- [ ] Opportunity — sales pipeline deals with stages and amounts
+- [ ] Lead — marketing leads with status and source
+- [ ] Salesperson — sales rep master data with commissions
+
+**Projects:**
+- [ ] Project — project header, status, billing rules
+- [ ] ProjectTask — tasks within a project
+- [ ] ProjectBudget — project budget lines (revenue, cost)
+- [ ] ProjectTransaction — project cost/revenue transactions
+
+**HR & Payroll:**
+- [ ] Employee — employee master data
+- [ ] ExpenseClaim — employee expense reports
+- [ ] TimeEntry — time tracking entries
+
+### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
 - [ ] Add action tools: Release Invoice, Confirm Shipment (per project brief Phase 3)
+- [ ] Add search/list tools with pagination, filtering, and $filter support
 - [ ] Validate the Acumatica user info endpoint works reliably for username retrieval
 - [ ] Better error message when refresh token expires (tell user to reconnect)
 
-### Medium Priority
-- [ ] Add search/list tools with pagination, filtering, and $filter support
+### Low Priority — Read-Only Tools
+
+**Financial (additional):**
+- [ ] AccountSummaryInquiry — GL account balances by period/ledger
+- [ ] AccountDetailsForPeriodInquiry — GL transaction detail for a period
+- [ ] CashSale — point-of-sale cash transactions
+- [ ] CashTransaction — bank deposits, withdrawals, transfers
+- [ ] Budget — GL budget lines by period
+- [ ] Ledger — ledger master data (actual, budget, statistical)
+- [ ] Subaccount — sub-account segments
+- [ ] Tax — tax ID master data
+- [ ] TaxCategory — tax category definitions
+- [ ] TaxZone — tax zone definitions
+
+**Sales (additional):**
+- [ ] CustomerLocation — customer ship-to/bill-to locations
+- [ ] CustomerClass — customer classification defaults
+- [ ] CustomerPaymentMethod — stored payment methods
+- [ ] SalesPricesInquiry — item price lookup
+- [ ] Discount / DiscountCode — discount rules
+
+**Purchasing (additional):**
+- [ ] VendorClass — vendor classification defaults
+- [ ] VendorPricesInquiry — vendor price lookup
+
+**Inventory (additional):**
+- [ ] InventoryAllocationInquiry — allocation breakdown (on hand, available, on PO, etc.)
+- [ ] StorageDetailsInquiry / StorageDetailsByLocationInquiry — lot/serial detail
+- [ ] ItemWarehouse — per-warehouse item settings
+- [ ] KitSpecification — kit/BOM definitions
+- [ ] TransferOrder — inter-warehouse transfers
+- [ ] InventoryAdjustment / InventoryIssue / InventoryReceipt — inventory transactions
+
+**Service & Field:**
+- [ ] Case — support case tracking
+- [ ] ServiceOrder — field service work orders
+- [ ] Appointment — scheduled field service visits
+
+**Other:**
+- [ ] Email / Event / Activity / Task — CRM activity records
+- [ ] FinancialPeriod / FinancialYear — fiscal calendar
+- [ ] Currency — currency master data
+- [ ] ShipVia / ShippingTerm / ShippingZones — shipping config
+
+### Low Priority — Infrastructure
 - [ ] Remove unused `@anthropic-ai/sdk` dependency
 - [ ] Add Generic Inquiry (GI) tool for custom reports
 - [ ] Add Attachment upload/download tools
-
-### Low Priority
 - [ ] README.md (to be written when project is more complete)
 - [ ] Remove old Entra ID secrets from Cloudflare (`wrangler secret delete`)
 - [ ] Consider removing `OAUTH_KV` namespace if it can share `TOKEN_STORE`

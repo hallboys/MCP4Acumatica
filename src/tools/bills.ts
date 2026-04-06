@@ -1,0 +1,21 @@
+// Copyright 2026 Hall Boys, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { Bill, Env } from "../types/acumatica";
+import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
+
+export async function handleGetBill(
+  env: Env,
+  acumaticaUsername: string,
+  args: { type?: string; referenceNbr: string }
+): Promise<unknown> {
+  const type = args.type || "Bill";
+  const client = new AcumaticaClient(env, acumaticaUsername);
+  const bill = await client.get<Bill>(
+    `Bill/${encodeURIComponent(type)}/${encodeURIComponent(args.referenceNbr)}`,
+    "acumatica_get_bill",
+    { type, referenceNbr: args.referenceNbr },
+    { $expand: "Details,TaxDetails" }
+  );
+  return unwrapFields(bill);
+}
