@@ -531,6 +531,92 @@ export interface PurchaseReceipt extends Entity {
   LastModifiedDateTime?: DateTimeValue;
 }
 
+/** Project entity */
+export interface Project extends Entity {
+  ProjectID?: StringValue;
+  Description?: StringValue;
+  Status?: StringValue;
+  Hold?: BooleanValue;
+  Customer?: StringValue;
+  ProjectTemplateID?: StringValue;
+  ExternalRefNbr?: StringValue;
+  Assets?: DecimalValue;
+  Liabilities?: DecimalValue;
+  Income?: DecimalValue;
+  Expenses?: DecimalValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Project Task entity */
+export interface ProjectTask extends Entity {
+  ProjectID?: StringValue;
+  ProjectTaskID?: StringValue;
+  Description?: StringValue;
+  Status?: StringValue;
+  Default?: BooleanValue;
+  ExternalRefNbr?: StringValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Project Budget entity */
+export interface ProjectBudget extends Entity {
+  ProjectID?: StringValue;
+  ProjectTaskID?: StringValue;
+  AccountGroup?: StringValue;
+  Type?: StringValue;
+  Description?: StringValue;
+  InventoryID?: StringValue;
+  CostCode?: StringValue;
+  UOM?: StringValue;
+  OriginalBudgetedAmount?: DecimalValue;
+  OriginalBudgetedQty?: DecimalValue;
+  RevisedBudgetedAmount?: DecimalValue;
+  RevisedBudgetedQty?: DecimalValue;
+  ActualAmount?: DecimalValue;
+  ActualQty?: DecimalValue;
+  CommittedOpenAmount?: DecimalValue;
+  CommittedOpenQty?: DecimalValue;
+  PercentageOfCompletion?: DecimalValue;
+  UnitRate?: DecimalValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Project Transaction detail line */
+export interface ProjectTransactionDetail extends Entity {
+  Account?: StringValue;
+  AccountGroup?: StringValue;
+  Amount?: DecimalValue;
+  BillableQty?: DecimalValue;
+  Branch?: StringValue;
+  CostCode?: StringValue;
+  Description?: StringValue;
+  Employee?: StringValue;
+  InventoryID?: StringValue;
+  LineNbr?: IntValue;
+  ProjectID?: StringValue;
+  ProjectTaskID?: StringValue;
+  Qty?: DecimalValue;
+  Subaccount?: StringValue;
+  UOM?: StringValue;
+  UnitRate?: DecimalValue;
+}
+
+/** Project Transaction entity */
+export interface ProjectTransaction extends Entity {
+  Module?: StringValue;
+  ReferenceNbr?: StringValue;
+  Description?: StringValue;
+  Status?: StringValue;
+  OriginalDocType?: StringValue;
+  OriginalDocNbr?: StringValue;
+  TotalAmount?: DecimalValue;
+  TotalQty?: DecimalValue;
+  TotalBillableQty?: DecimalValue;
+  Details?: ProjectTransactionDetail[];
+  CreatedDateTime?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
 /** Env bindings for the Cloudflare Worker */
 export interface Env {
   // Acumatica

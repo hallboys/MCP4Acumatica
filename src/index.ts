@@ -22,6 +22,7 @@ import { handleGetWarehouse } from "./tools/warehouses";
 import { handleGetItemClass } from "./tools/item-classes";
 import { handleGetPurchaseOrder } from "./tools/purchase-orders";
 import { handleGetPurchaseReceipt } from "./tools/purchase-receipts";
+import { handleGetProject, handleGetProjectTask, handleGetProjectBudget, handleGetProjectTransaction } from "./tools/projects";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -29,7 +30,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.4.0",
+    version: "0.5.0",
   });
 
   async init() {
@@ -317,6 +318,72 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, receiptNbr }) => {
         return this.callTool(() =>
           handleGetPurchaseReceipt(this.env, this.props.acumaticaUsername, { type, receiptNbr })
+        );
+      }
+    );
+
+    // Tool 18: Project Lookup
+    this.server.tool(
+      "acumatica_get_project",
+      "Retrieve a project by project ID. Returns description, status, customer, template, financials (assets, liabilities, income, expenses).",
+      {
+        projectID: z
+          .string()
+          .describe("Project ID"),
+      },
+      async ({ projectID }) => {
+        return this.callTool(() =>
+          handleGetProject(this.env, this.props.acumaticaUsername, { projectID })
+        );
+      }
+    );
+
+    // Tool 19: Project Task Lookup
+    this.server.tool(
+      "acumatica_get_project_task",
+      "Retrieve a project task by project ID and task ID. Returns description, status, and whether it is the default task.",
+      {
+        projectID: z.string().describe("Project ID"),
+        projectTaskID: z.string().describe("Project task ID"),
+      },
+      async ({ projectID, projectTaskID }) => {
+        return this.callTool(() =>
+          handleGetProjectTask(this.env, this.props.acumaticaUsername, { projectID, projectTaskID })
+        );
+      }
+    );
+
+    // Tool 20: Project Budget Lookup
+    this.server.tool(
+      "acumatica_get_project_budget",
+      "Retrieve a project budget line by project, task, and account group. Returns original/revised budgeted amounts, actuals, committed amounts, and completion percentage.",
+      {
+        projectID: z.string().describe("Project ID"),
+        projectTaskID: z.string().describe("Project task ID"),
+        accountGroup: z.string().describe("Account group"),
+        inventoryID: z
+          .string()
+          .optional()
+          .describe("Optional inventory ID for item-level budget"),
+      },
+      async ({ projectID, projectTaskID, accountGroup, inventoryID }) => {
+        return this.callTool(() =>
+          handleGetProjectBudget(this.env, this.props.acumaticaUsername, { projectID, projectTaskID, accountGroup, inventoryID })
+        );
+      }
+    );
+
+    // Tool 21: Project Transaction Lookup
+    this.server.tool(
+      "acumatica_get_project_transaction",
+      "Retrieve a project transaction by module and reference number. Returns detail lines with account, amount, project/task, employee, and quantities.",
+      {
+        module: z.string().describe("Module (e.g., 'PM', 'AR', 'AP', 'GL')"),
+        referenceNbr: z.string().describe("Transaction reference number"),
+      },
+      async ({ module, referenceNbr }) => {
+        return this.callTool(() =>
+          handleGetProjectTransaction(this.env, this.props.acumaticaUsername, { module, referenceNbr })
         );
       }
     );
