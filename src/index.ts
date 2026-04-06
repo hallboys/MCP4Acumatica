@@ -15,6 +15,11 @@ import { handleGetJournalTransaction } from "./tools/journal-transactions";
 import { handleGetPayment } from "./tools/payments";
 import { handleGetAccount } from "./tools/accounts";
 import { handleGetCheck } from "./tools/checks";
+import { handleGetStockItem } from "./tools/stock-items";
+import { handleGetNonStockItem } from "./tools/non-stock-items";
+import { handleGetInventoryQuantityAvailable, handleGetInventorySummary } from "./tools/inventory-availability";
+import { handleGetWarehouse } from "./tools/warehouses";
+import { handleGetItemClass } from "./tools/item-classes";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -22,7 +27,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.2.0",
+    version: "0.3.0",
   });
 
   async init() {
@@ -174,6 +179,106 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, referenceNbr }) => {
         return this.callTool(() =>
           handleGetCheck(this.env, this.props.acumaticaUsername, { type, referenceNbr })
+        );
+      }
+    );
+
+    // Tool 10: Stock Item Lookup
+    this.server.tool(
+      "acumatica_get_stock_item",
+      "Retrieve a stock item by inventory ID. Returns description, item class, pricing (default, MSRP, cost), UOMs, warehouse details with qty on hand, and vendor details.",
+      {
+        inventoryID: z
+          .string()
+          .describe("Inventory ID (e.g., 'AALEGO500')"),
+      },
+      async ({ inventoryID }) => {
+        return this.callTool(() =>
+          handleGetStockItem(this.env, this.props.acumaticaUsername, { inventoryID })
+        );
+      }
+    );
+
+    // Tool 11: Non-Stock Item Lookup
+    this.server.tool(
+      "acumatica_get_non_stock_item",
+      "Retrieve a non-stock item (service, labor, expense) by inventory ID. Returns description, item class, pricing, UOMs, and posting settings.",
+      {
+        inventoryID: z
+          .string()
+          .describe("Inventory ID for the non-stock item"),
+      },
+      async ({ inventoryID }) => {
+        return this.callTool(() =>
+          handleGetNonStockItem(this.env, this.props.acumaticaUsername, { inventoryID })
+        );
+      }
+    );
+
+    // Tool 12: Inventory Quantity Available
+    this.server.tool(
+      "acumatica_get_inventory_quantity_available",
+      "Retrieve real-time available quantity for an inventory item across all warehouses. Returns on-hand, available, and allocated quantities.",
+      {
+        inventoryID: z
+          .string()
+          .describe("Inventory ID to check availability for"),
+      },
+      async ({ inventoryID }) => {
+        return this.callTool(() =>
+          handleGetInventoryQuantityAvailable(this.env, this.props.acumaticaUsername, { inventoryID })
+        );
+      }
+    );
+
+    // Tool 13: Inventory Summary Inquiry
+    this.server.tool(
+      "acumatica_get_inventory_summary",
+      "Retrieve aggregated inventory balances for an item, optionally filtered by warehouse. Returns summary rows with on-hand, available, and other quantity breakdowns.",
+      {
+        inventoryID: z
+          .string()
+          .describe("Inventory ID to summarize"),
+        warehouseID: z
+          .string()
+          .optional()
+          .describe("Optional warehouse ID to filter by"),
+      },
+      async ({ inventoryID, warehouseID }) => {
+        return this.callTool(() =>
+          handleGetInventorySummary(this.env, this.props.acumaticaUsername, { inventoryID, warehouseID })
+        );
+      }
+    );
+
+    // Tool 14: Warehouse Lookup
+    this.server.tool(
+      "acumatica_get_warehouse",
+      "Retrieve a warehouse by ID. Returns description, active status, default locations (receiving, shipping, drop-ship), and all warehouse locations.",
+      {
+        warehouseID: z
+          .string()
+          .describe("Warehouse ID (e.g., 'MAIN', 'WHOLESALE')"),
+      },
+      async ({ warehouseID }) => {
+        return this.callTool(() =>
+          handleGetWarehouse(this.env, this.props.acumaticaUsername, { warehouseID })
+        );
+      }
+    );
+
+    // Tool 15: Item Class Lookup
+    this.server.tool(
+      "acumatica_get_item_class",
+      "Retrieve an item class by class ID. Returns item type, default UOMs, warehouse, valuation method, posting class, and availability calculation rule.",
+      {
+        classID: z
+          .string()
+          .describe("Item class ID (e.g., 'STOCKITEM', 'INTANGIBLE')"),
+      },
+      async ({ classID }) => {
+        return this.callTool(() =>
+          handleGetItemClass(this.env, this.props.acumaticaUsername, { classID })
         );
       }
     );

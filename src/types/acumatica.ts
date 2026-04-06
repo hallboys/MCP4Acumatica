@@ -337,6 +337,115 @@ export interface Check extends Entity {
   LastModifiedDateTime?: DateTimeValue;
 }
 
+/** Stock Item entity */
+export interface StockItem extends Entity {
+  InventoryID?: StringValue;
+  Description?: StringValue;
+  ItemClass?: StringValue;
+  ItemStatus?: StringValue;
+  ItemType?: StringValue;
+  BaseUOM?: StringValue;
+  SalesUOM?: StringValue;
+  PurchaseUOM?: StringValue;
+  DefaultPrice?: DecimalValue;
+  CurrentStdCost?: DecimalValue;
+  LastCost?: DecimalValue;
+  AverageCost?: DecimalValue;
+  MSRP?: DecimalValue;
+  DefaultWarehouseID?: StringValue;
+  LotSerialClass?: StringValue;
+  ValuationMethod?: StringValue;
+  PostingClass?: StringValue;
+  PriceClass?: StringValue;
+  TaxCategory?: StringValue;
+  DimensionWeight?: DecimalValue;
+  DimensionVolume?: DecimalValue;
+  ABCCode?: StringValue;
+  SubjectToCommission?: BooleanValue;
+  IsAKit?: BooleanValue;
+  WarehouseDetails?: StockItemWarehouseDetail[];
+  VendorDetails?: StockItemVendorDetail[];
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+export interface StockItemWarehouseDetail extends Entity {
+  WarehouseID?: StringValue;
+  QtyOnHand?: DecimalValue;
+  Status?: StringValue;
+  IsDefault?: BooleanValue;
+  DefaultIssueLocationID?: StringValue;
+  DefaultReceiptLocationID?: StringValue;
+  PreferredVendor?: StringValue;
+}
+
+export interface StockItemVendorDetail extends Entity {
+  VendorID?: StringValue;
+  VendorName?: StringValue;
+  Default?: BooleanValue;
+  LeadTimeDays?: IntValue;
+  LastVendorPrice?: DecimalValue;
+}
+
+/** Non-Stock Item entity */
+export interface NonStockItem extends Entity {
+  InventoryID?: StringValue;
+  Description?: StringValue;
+  ItemClass?: StringValue;
+  ItemStatus?: StringValue;
+  ItemType?: StringValue;
+  BaseUnit?: StringValue;
+  SalesUnit?: StringValue;
+  PurchaseUnit?: StringValue;
+  DefaultPrice?: DecimalValue;
+  CurrentStdCost?: DecimalValue;
+  LastCost?: DecimalValue;
+  PendingCost?: DecimalValue;
+  PostingClass?: StringValue;
+  PriceClass?: StringValue;
+  TaxCategory?: StringValue;
+  RequireReceipt?: BooleanValue;
+  RequireShipment?: BooleanValue;
+  IsAKit?: BooleanValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Warehouse entity */
+export interface Warehouse extends Entity {
+  WarehouseID?: StringValue;
+  Description?: StringValue;
+  Active?: BooleanValue;
+  ReceivingLocationID?: StringValue;
+  ShippingLocationID?: StringValue;
+  DropShipLocationID?: StringValue;
+  Locations?: WarehouseLocation[];
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+export interface WarehouseLocation extends Entity {
+  LocationID?: StringValue;
+  Description?: StringValue;
+  Active?: BooleanValue;
+}
+
+/** Item Class entity */
+export interface ItemClassEntity extends Entity {
+  ClassID?: StringValue;
+  Description?: StringValue;
+  ItemType?: StringValue;
+  StockItem?: BooleanValue;
+  BaseUOM?: StringValue;
+  SalesUOM?: StringValue;
+  PurchaseUOM?: StringValue;
+  DefaultWarehouseID?: StringValue;
+  ValuationMethod?: StringValue;
+  PostingClass?: StringValue;
+  PriceClass?: StringValue;
+  LotSerialClass?: StringValue;
+  TaxCategoryID?: StringValue;
+  AvailabilityCalculationRule?: StringValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
 /** Env bindings for the Cloudflare Worker */
 export interface Env {
   // Acumatica
