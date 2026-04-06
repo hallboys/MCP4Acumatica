@@ -35,9 +35,15 @@ Claude (claude.ai / Desktop / API)
         Default/25.200.001
 ```
 
+## OAuth Flow
+
+Single-step: Claude → Worker `/authorize` → Acumatica login → Worker `/callback` → token stored → MCP session active.
+
+Acumatica is the sole identity provider. Users log in with their Acumatica credentials (or via whatever SSO their Acumatica instance is configured with). The MCP server does not manage identity separately — it delegates entirely to Acumatica.
+
 ## Key Design Decisions
 
-1. **Acumatica is the sole OAuth identity provider.** No Entra ID dependency. Users log in to Acumatica directly (which may itself use Entra SSO). This was simplified from an earlier two-login design (Entra + Acumatica chained).
+1. **Acumatica as sole OAuth provider.** The MCP server redirects directly to Acumatica for login. No separate identity provider layer. See "Historical Note" below for why.
 
 2. **Per-user Acumatica tokens.** Each MCP user gets their own Acumatica OAuth token stored in KV keyed by `user_token:{acumaticaUsername}`. The user's Acumatica role governs record-level access — the MCP server does not enforce permissions itself.
 
@@ -47,27 +53,36 @@ Claude (claude.ai / Desktop / API)
 
 5. **Acumatica field values** are wrapped as `{value: X}`. The `unwrapFields()` utility recursively strips these before returning data to Claude.
 
+## Historical Note: Why We Removed Microsoft Entra ID
+
+The initial design used a two-login chained OAuth flow: users first authenticated via Microsoft Entra ID (to identify who they are), then were chained to Acumatica OAuth (to get API permissions). This required a separate Entra app registration, three callback routes, and intermediate state management in KV.
+
+We removed Entra ID entirely because:
+- **It was redundant.** Since every user must authenticate with Acumatica anyway (to get a per-user API token with their role-based permissions), the Entra login added no value — Acumatica already knows who the user is.
+- **Acumatica can use Entra SSO natively.** If an Acumatica instance is configured with Entra SSO, users still get the Microsoft login experience — it just happens through Acumatica's own login page, not through our MCP server.
+- **Simpler flow.** One login instead of two. One callback route instead of three. No Entra secrets to manage.
+
+Old Entra-related secrets (`ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, `ENTRA_TENANT_ID`) may still exist on the Cloudflare side and should be cleaned up with `wrangler secret delete`.
+
 ## File Structure
 
 ```
 src/
-├── index.ts                  # Entry point — OAuthProvider + AcumaticaMcpServer (McpAgent DO)
+├── index.ts                       # Entry point — OAuthProvider + AcumaticaMcpServer (McpAgent DO)
 ├── auth/
-│   ├── entra-handler.ts      # Auth handler (misnamed — actually Acumatica-only OAuth flow)
-│   └── acumatica-oauth.ts    # Per-user token retrieval + refresh from KV
+│   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, health checks)
+│   └── acumatica-oauth.ts         # Per-user token retrieval + refresh from KV
 ├── lib/
-│   ├── acumatica-client.ts   # HTTP client for Acumatica REST API
-│   ├── rate-limiter.ts       # 3 concurrent, 40/min limits
-│   └── logger.ts             # Structured JSON audit logging
+│   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
+│   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
+│   └── logger.ts                  # Structured JSON audit logging
 ├── tools/
-│   ├── customers.ts          # acumatica_get_customer
-│   ├── vendors.ts            # acumatica_get_vendor
-│   └── sales-orders.ts       # acumatica_get_sales_order
+│   ├── customers.ts               # acumatica_get_customer
+│   ├── vendors.ts                 # acumatica_get_vendor
+│   └── sales-orders.ts            # acumatica_get_sales_order
 └── types/
-    └── acumatica.ts          # All TypeScript types, Env interface, AuthProps
+    └── acumatica.ts               # All TypeScript types, Env interface, AuthProps
 ```
-
-**Note:** `src/auth/entra-handler.ts` is a legacy filename from when Entra ID was involved. It now contains only the Acumatica OAuth flow. Consider renaming to `acumatica-auth-handler.ts` in a future cleanup.
 
 ## Configuration
 
@@ -120,9 +135,9 @@ npx wrangler kv namespace create X  # Create KV namespace
 
 ## Known Issues / Tech Debt
 
-- `src/auth/entra-handler.ts` should be renamed to `src/auth/acumatica-auth-handler.ts`
 - The user info endpoint (`/entity/auth/25.200.001/UserSecurityInfo`) used to get the Acumatica username after login has not been fully validated — if it fails, the code falls back to a UUID-based key which would break token reuse across sessions
 - `@anthropic-ai/sdk` is in dependencies but not used — can be removed
+- Old Entra ID secrets may still exist on Cloudflare — clean up with `wrangler secret delete ENTRA_CLIENT_ID`, etc.
 
 ## TODO — Remaining Project Work
 
@@ -135,7 +150,6 @@ npx wrangler kv namespace create X  # Create KV namespace
 
 ### Medium Priority
 - [ ] Add search/list tools with pagination, filtering, and $filter support
-- [ ] Rename `entra-handler.ts` → `acumatica-auth-handler.ts`
 - [ ] Remove unused `@anthropic-ai/sdk` dependency
 - [ ] Add Generic Inquiry (GI) tool for custom reports
 - [ ] Add Attachment upload/download tools
