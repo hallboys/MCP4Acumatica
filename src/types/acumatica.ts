@@ -446,6 +446,91 @@ export interface ItemClassEntity extends Entity {
   LastModifiedDateTime?: DateTimeValue;
 }
 
+/** Purchase Order detail line */
+export interface PurchaseOrderDetail extends Entity {
+  Account?: StringValue;
+  BranchID?: StringValue;
+  Completed?: BooleanValue;
+  Description?: StringValue;
+  ExtendedCost?: DecimalValue;
+  InventoryID?: StringValue;
+  LineNbr?: IntValue;
+  LineType?: StringValue;
+  OrderQty?: DecimalValue;
+  OrderedQty?: DecimalValue;
+  Project?: StringValue;
+  ProjectTask?: StringValue;
+  QtyOnReceipts?: DecimalValue;
+  Subaccount?: StringValue;
+  UOM?: StringValue;
+  UnitCost?: DecimalValue;
+  WarehouseID?: StringValue;
+}
+
+/** Purchase Order entity */
+export interface PurchaseOrder extends Entity {
+  Type?: StringValue;
+  OrderNbr?: StringValue;
+  Status?: StringValue;
+  Hold?: BooleanValue;
+  Date?: DateTimeValue;
+  PromisedOn?: DateTimeValue;
+  VendorID?: StringValue;
+  VendorRef?: StringValue;
+  Description?: StringValue;
+  CurrencyID?: StringValue;
+  ControlTotal?: DecimalValue;
+  LineTotal?: DecimalValue;
+  OrderTotal?: DecimalValue;
+  TaxTotal?: DecimalValue;
+  Terms?: StringValue;
+  Branch?: StringValue;
+  Location?: StringValue;
+  Owner?: StringValue;
+  Project?: StringValue;
+  Details?: PurchaseOrderDetail[];
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Purchase Receipt detail line */
+export interface PurchaseReceiptDetail extends Entity {
+  Account?: StringValue;
+  Branch?: StringValue;
+  Description?: StringValue;
+  ExtendedCost?: DecimalValue;
+  InventoryID?: StringValue;
+  LineNbr?: IntValue;
+  LineType?: StringValue;
+  POOrderNbr?: StringValue;
+  POOrderType?: StringValue;
+  ReceiptQty?: DecimalValue;
+  Subaccount?: StringValue;
+  TransactionDescription?: StringValue;
+  UOM?: StringValue;
+  UnitCost?: DecimalValue;
+  Warehouse?: StringValue;
+}
+
+/** Purchase Receipt entity */
+export interface PurchaseReceipt extends Entity {
+  Type?: StringValue;
+  ReceiptNbr?: StringValue;
+  Status?: StringValue;
+  Hold?: BooleanValue;
+  Date?: DateTimeValue;
+  VendorID?: StringValue;
+  VendorRef?: StringValue;
+  CurrencyID?: StringValue;
+  TotalCost?: DecimalValue;
+  TotalQty?: DecimalValue;
+  Branch?: StringValue;
+  Location?: StringValue;
+  PostPeriod?: StringValue;
+  Warehouse?: StringValue;
+  Details?: PurchaseReceiptDetail[];
+  LastModifiedDateTime?: DateTimeValue;
+}
+
 /** Env bindings for the Cloudflare Worker */
 export interface Env {
   // Acumatica

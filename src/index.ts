@@ -20,6 +20,8 @@ import { handleGetNonStockItem } from "./tools/non-stock-items";
 import { handleGetInventoryQuantityAvailable, handleGetInventorySummary } from "./tools/inventory-availability";
 import { handleGetWarehouse } from "./tools/warehouses";
 import { handleGetItemClass } from "./tools/item-classes";
+import { handleGetPurchaseOrder } from "./tools/purchase-orders";
+import { handleGetPurchaseReceipt } from "./tools/purchase-receipts";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -27,7 +29,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.3.0",
+    version: "0.4.0",
   });
 
   async init() {
@@ -279,6 +281,42 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ classID }) => {
         return this.callTool(() =>
           handleGetItemClass(this.env, this.props.acumaticaUsername, { classID })
+        );
+      }
+    );
+
+    // Tool 16: Purchase Order Lookup
+    this.server.tool(
+      "acumatica_get_purchase_order",
+      "Retrieve a purchase order by type and order number. Returns vendor, line items with quantities and costs, totals, terms, status, and promised date.",
+      {
+        type: z
+          .string()
+          .default("Normal")
+          .describe("PO type (e.g., 'Normal', 'DropShip', 'Blanket')"),
+        orderNbr: z.string().describe("Purchase order number"),
+      },
+      async ({ type, orderNbr }) => {
+        return this.callTool(() =>
+          handleGetPurchaseOrder(this.env, this.props.acumaticaUsername, { type, orderNbr })
+        );
+      }
+    );
+
+    // Tool 17: Purchase Receipt Lookup
+    this.server.tool(
+      "acumatica_get_purchase_receipt",
+      "Retrieve a purchase receipt by type and receipt number. Returns vendor, line items with received quantities and costs, linked PO references, and warehouse.",
+      {
+        type: z
+          .string()
+          .default("Receipt")
+          .describe("Receipt type (e.g., 'Receipt', 'Return')"),
+        receiptNbr: z.string().describe("Purchase receipt number"),
+      },
+      async ({ type, receiptNbr }) => {
+        return this.callTool(() =>
+          handleGetPurchaseReceipt(this.env, this.props.acumaticaUsername, { type, receiptNbr })
         );
       }
     );
