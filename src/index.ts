@@ -36,6 +36,7 @@ import { handleGetSalesInvoice } from "./tools/sales-invoices";
 import { handleGetEmployee } from "./tools/employees";
 import { handleGetExpenseClaim } from "./tools/expense-claims";
 import { handleGetTimeEntry } from "./tools/time-entries";
+import { handleGetEmail, handleGetEvent, handleGetActivity, handleGetTask } from "./tools/crm-activities";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -43,7 +44,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.9.0",
+    version: "0.10.0",
   });
 
   async init() {
@@ -591,6 +592,62 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ timeEntryID }) => {
         return this.callTool(() =>
           handleGetTimeEntry(this.env, this.props.acumaticaUsername, { timeEntryID })
+        );
+      }
+    );
+
+    // Tool 35: Email Activity Lookup
+    this.server.tool(
+      "acumatica_get_email",
+      "Retrieve a CRM email activity by note ID. Returns subject, from/to/cc/bcc, body, mail status, related entity, and timestamps.",
+      {
+        noteID: z.string().describe("Email note ID (GUID)"),
+      },
+      async ({ noteID }) => {
+        return this.callTool(() =>
+          handleGetEmail(this.env, this.props.acumaticaUsername, { noteID })
+        );
+      }
+    );
+
+    // Tool 36: Event Lookup
+    this.server.tool(
+      "acumatica_get_event",
+      "Retrieve a CRM event by note ID. Returns summary, start/end dates, location, priority, category, attendees, related entity, and show-as status.",
+      {
+        noteID: z.string().describe("Event note ID (GUID)"),
+      },
+      async ({ noteID }) => {
+        return this.callTool(() =>
+          handleGetEvent(this.env, this.props.acumaticaUsername, { noteID })
+        );
+      }
+    );
+
+    // Tool 37: Activity Lookup
+    this.server.tool(
+      "acumatica_get_activity",
+      "Retrieve a CRM activity by note ID. Returns summary, type, status, date, owner, related entity, and body.",
+      {
+        noteID: z.string().describe("Activity note ID (GUID)"),
+      },
+      async ({ noteID }) => {
+        return this.callTool(() =>
+          handleGetActivity(this.env, this.props.acumaticaUsername, { noteID })
+        );
+      }
+    );
+
+    // Tool 38: Task Lookup
+    this.server.tool(
+      "acumatica_get_task",
+      "Retrieve a CRM task by note ID. Returns summary, status, priority, due date, completion percentage, related activities/tasks, and owner.",
+      {
+        noteID: z.string().describe("Task note ID (GUID)"),
+      },
+      async ({ noteID }) => {
+        return this.callTool(() =>
+          handleGetTask(this.env, this.props.acumaticaUsername, { noteID })
         );
       }
     );

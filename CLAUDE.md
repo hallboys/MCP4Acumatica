@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.9.0`
+- **Current tag:** `25R2-0.10.0`
 - **Deployed at:** `https://acumatica-mcp-server.it-495.workers.dev`
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -24,7 +24,7 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /callback  ← Acumatica   │
 │    ├─ /token, /register (DCR)   │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ 34 read-only tools      │
+│       ├─ 38 read-only tools      │
 │       │  (see Tools section)     │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
@@ -75,7 +75,7 @@ src/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   └── logger.ts                  # Structured JSON audit logging
-├── tools/                         # 34 read-only tools across 8 modules
+├── tools/                         # 38 read-only tools across 9 modules
 │   ├── accounts.ts                # acumatica_get_account (GL)
 │   ├── appointments.ts            # acumatica_get_appointment (Field Service)
 │   ├── bills.ts                   # acumatica_get_bill (AP)
@@ -83,6 +83,7 @@ src/
 │   ├── cases.ts                   # acumatica_get_case (Support)
 │   ├── checks.ts                  # acumatica_get_check (AP)
 │   ├── contacts.ts                # acumatica_get_contact (CRM)
+│   ├── crm-activities.ts          # acumatica_get_email, _event, _activity, _task
 │   ├── customers.ts               # acumatica_get_customer
 │   ├── employees.ts               # acumatica_get_employee (HR)
 │   ├── expense-claims.ts          # acumatica_get_expense_claim (HR)
@@ -167,7 +168,7 @@ npx wrangler kv namespace create X  # Create KV namespace
 
 ## TODO — Remaining Project Work
 
-### Completed — Read-Only Tools (34 total, 0.2.0–0.9.0)
+### Completed — Read-Only Tools (38 total, 0.1.0–0.10.0)
 - [x] Core: Customer, Vendor, SalesOrder (0.1.0)
 - [x] Financial/Accounting: Invoice, Bill, JournalTransaction, Payment, Account, Check (0.2.0)
 - [x] Inventory & Warehouse: StockItem, NonStockItem, InventoryQuantityAvailable, InventorySummaryInquiry, Warehouse, ItemClass (0.3.0)
@@ -177,6 +178,7 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [x] Sales & CRM: Contact, BusinessAccount, Opportunity, Lead, Salesperson (0.7.0)
 - [x] Shipping & Fulfillment: Shipment, SalesInvoice (0.8.0)
 - [x] HR & Payroll: Employee, ExpenseClaim, TimeEntry (0.9.0)
+- [x] CRM Activities: Email, Event, Activity, Task (0.10.0)
 
 ### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
@@ -224,7 +226,6 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [ ] Appointment — scheduled field service visits
 
 **Other:**
-- [ ] Email / Event / Activity / Task — CRM activity records
 - [ ] FinancialPeriod / FinancialYear — fiscal calendar
 - [ ] Currency — currency master data
 - [ ] ShipVia / ShippingTerm / ShippingZones — shipping config

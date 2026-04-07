@@ -981,6 +981,90 @@ export interface TimeEntry extends Entity {
   LastModifiedDateTime?: DateTimeValue;
 }
 
+/** CRM Email activity entity */
+export interface EmailActivity extends Entity {
+  Subject?: StringValue;
+  Description?: StringValue;
+  Body?: StringValue;
+  From?: StringValue;
+  To?: StringValue;
+  Cc?: StringValue;
+  Bcc?: StringValue;
+  MailStatus?: StringValue;
+  Incoming?: BooleanValue;
+  Internal?: BooleanValue;
+  Type?: StringValue;
+  StartDate?: DateTimeValue;
+  Owner?: StringValue;
+  Workgroup?: StringValue;
+  RelatedEntityType?: StringValue;
+  RelatedEntityDescription?: StringValue;
+  ParentSummary?: StringValue;
+  CreatedByID?: StringValue;
+  CreatedDateTime?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** CRM Event entity */
+export interface EventActivity extends Entity {
+  Summary?: StringValue;
+  Body?: StringValue;
+  Status?: StringValue;
+  Category?: StringValue;
+  Priority?: StringValue;
+  Location?: StringValue;
+  StartDate?: DateTimeValue;
+  EndDateTime?: DateTimeValue;
+  AllDay?: BooleanValue;
+  ShowAs?: StringValue;
+  Internal?: BooleanValue;
+  RelatedEntityType?: StringValue;
+  RelatedEntityDescription?: StringValue;
+  CreatedByID?: StringValue;
+  CreatedDateTime?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** CRM Activity entity */
+export interface ActivityRecord extends Entity {
+  Summary?: StringValue;
+  Body?: StringValue;
+  Type?: StringValue;
+  Status?: StringValue;
+  Date?: DateTimeValue;
+  Internal?: BooleanValue;
+  Owner?: StringValue;
+  Workgroup?: StringValue;
+  Task?: StringValue;
+  RelatedEntityType?: StringValue;
+  RelatedEntityDescription?: StringValue;
+  CreatedByID?: StringValue;
+  CreatedDateTime?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** CRM Task entity */
+export interface TaskRecord extends Entity {
+  Summary?: StringValue;
+  Body?: StringValue;
+  Status?: StringValue;
+  Priority?: StringValue;
+  Category?: StringValue;
+  StartDate?: DateTimeValue;
+  DueDate?: DateTimeValue;
+  CompletedAt?: DateTimeValue;
+  CompletionPercentage?: IntValue;
+  Internal?: BooleanValue;
+  Owner?: StringValue;
+  WorkgroupID?: StringValue;
+  ParentSummary?: StringValue;
+  RelatedEntityType?: StringValue;
+  RelatedEntityDescription?: StringValue;
+  CreatedByID?: StringValue;
+  CreatedDateTime?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
 /** Env bindings for the Cloudflare Worker */
 export interface Env {
   // Acumatica
