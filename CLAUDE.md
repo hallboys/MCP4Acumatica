@@ -220,11 +220,6 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [ ] TransferOrder — inter-warehouse transfers
 - [ ] InventoryAdjustment / InventoryIssue / InventoryReceipt — inventory transactions
 
-**Service & Field:**
-- [ ] Case — support case tracking
-- [ ] ServiceOrder — field service work orders
-- [ ] Appointment — scheduled field service visits
-
 **Other:**
 - [ ] FinancialPeriod / FinancialYear — fiscal calendar
 - [ ] Currency — currency master data
@@ -234,7 +229,6 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [ ] Remove unused `@anthropic-ai/sdk` dependency
 - [ ] Add Generic Inquiry (GI) tool for custom reports
 - [ ] Add Attachment upload/download tools
-- [ ] README.md (to be written when project is more complete)
 - [ ] Remove old Entra ID secrets from Cloudflare (`wrangler secret delete`)
 - [ ] Consider removing `OAUTH_KV` namespace if it can share `TOKEN_STORE`
 - [ ] Add unit tests
