@@ -70,7 +70,7 @@ Old Entra-related secrets (`ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, `ENTRA_TENA
 src/
 ├── index.ts                       # Entry point — OAuthProvider + AcumaticaMcpServer (McpAgent DO)
 ├── auth/
-│   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, health checks)
+│   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, OIDC discovery, health)
 │   └── acumatica-oauth.ts         # Per-user token retrieval + refresh from KV
 ├── docs/
 │   ├── docs-handler.ts            # Hono sub-app: renders markdown docs to HTML
@@ -174,6 +174,8 @@ npx wrangler kv namespace create X  # Create KV namespace
 - `@anthropic-ai/sdk` is in dependencies but not used — can be removed
 - Old Entra ID secrets may still exist on Cloudflare — clean up with `wrangler secret delete ENTRA_CLIENT_ID`, etc.
 - **Zod schema constraint:** MCP tool parameter schemas MUST use only simple types (`z.string()`, `z.string().optional()`, `z.string().default("value")`). Complex types like `z.record()`, `z.unknown()`, `z.number()` cause MCP SDK JSON Schema serialization failures and tools won't appear in client discovery. Use `z.string()` with manual `parseInt()` in the handler for numeric parameters.
+- **ChatGPT CIMD bug (as of April 2026):** ChatGPT's MCP client sees `client_id_metadata_document_supported: true` in our metadata but fails to complete CIMD (it doesn't have its own metadata document URL) and does not auto-fallback to DCR. Users must manually select DCR when adding the server in ChatGPT. Our server correctly advertises both — this is a ChatGPT client-side issue.
+- **Claude.ai tool list caching:** Claude.ai may cache the tool list from a previous Durable Object session. If tools appear stale, disconnect and reconnect the MCP server in Claude.ai to force a fresh `init()` call.
 
 ## TODO — Remaining Project Work
 
@@ -197,6 +199,7 @@ npx wrangler kv namespace create X  # Create KV namespace
 ### Completed — Documentation & Infrastructure
 - [x] Documentation site served from `/docs` on the same worker (0.14.0)
 - [x] docs/tool-reference.md, example-prompts.md, odata-filtering.md, architecture.md
+- [x] CIMD support enabled alongside DCR, OpenID Connect discovery endpoint added (0.15.0)
 
 ### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
@@ -249,6 +252,22 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [ ] Consider removing `OAUTH_KV` namespace if it can share `TOKEN_STORE`
 - [ ] Add unit tests
 - [ ] Add CI/CD pipeline
+
+## MCP Client Compatibility (as of April 2026)
+
+| Client | Registration | Status |
+|--------|-------------|--------|
+| Claude.ai (Team/Pro/Max/Enterprise) | DCR | ✅ Works — uses `/register` |
+| Claude Code (v2.1.81+) | CIMD preferred, DCR fallback | ✅ Works — publishes metadata at `https://claude.ai/oauth/claude-code-client-metadata` |
+| Claude Desktop | DCR | ✅ Works — uses `/register` |
+| ChatGPT | DCR (manual selection required) | ⚠️ Works with manual DCR — CIMD auto-detection broken on their side |
+
+### OAuth Discovery Endpoints
+
+The server responds on three well-known paths (all return identical metadata):
+- `/.well-known/oauth-protected-resource` (and `/mcp` suffixed variant) — RFC 9728
+- `/.well-known/oauth-authorization-server` — RFC 8414
+- `/.well-known/openid-configuration` — added for ChatGPT compatibility (proxies to oauth-authorization-server)
 
 ## Acumatica API Patterns
 
