@@ -6,7 +6,7 @@ Each user authenticates with their own Acumatica credentials. Their Acumatica ro
 
 ## Features
 
-- **38 read-only tools** across 10 modules (see [Available Tools](#available-tools))
+- **41 tools** -- 38 read-only lookups + 3 utility/discovery tools (see [Available Tools](#available-tools))
 - **Per-user OAuth** -- users log in with their Acumatica credentials (or SSO)
 - **Role-based access** -- Acumatica's security model governs what each user sees
 - **Rate limiting** -- 3 concurrent requests, 40 requests/minute per user
@@ -24,7 +24,7 @@ Claude (claude.ai / Desktop / API)
 |    /authorize -> Acumatica login |
 |    /callback  <- Acumatica       |
 |    /token, /register (DCR)       |
-|    /mcp -> McpAgent DO (38 tools)|
+|    /mcp -> McpAgent DO (41 tools)|
 +---------------+------------------+
                 |  Bearer token (per-user)
                 v
@@ -117,7 +117,7 @@ npx wrangler dev
 1. Go to **Settings > MCP Servers** (or Claude Desktop's MCP configuration)
 2. Add a new remote MCP server with the URL: `https://<your-worker-url>/mcp`
 3. On first use, you'll be redirected to your Acumatica login page
-4. After authenticating, Claude will have access to all 38 tools
+4. After authenticating, Claude will have access to all 41 tools
 
 ### Claude Code (CLI)
 
@@ -208,6 +208,24 @@ When using the Anthropic API with MCP, point the MCP client to `https://<your-wo
 | `acumatica_get_event` | Calendar event with attendees |
 | `acumatica_get_activity` | General CRM activity |
 | `acumatica_get_task` | CRM task with related activities |
+
+### Utility / Discovery
+| Tool | Description |
+|------|-------------|
+| `acumatica_run_inquiry` | Execute any configured Generic Inquiry (GI) with filtering |
+| `acumatica_list_entities` | List/search any entity with OData filtering, sorting, field selection |
+| `acumatica_describe_entity` | Discover fields, types, and sub-entities for any entity |
+
+> **Tip:** Use `acumatica_describe_entity` first to discover available fields, then `acumatica_list_entities` to search/filter. See [docs/example-prompts.md](docs/example-prompts.md) for usage patterns.
+
+## Documentation
+
+Detailed documentation is available in the [`docs/`](docs/) folder:
+
+- **[Tool Reference](docs/tool-reference.md)** -- Complete specification for all 41 tools with parameters and endpoints
+- **[Example Prompts](docs/example-prompts.md)** -- Example prompts for Claude and other MCP clients organized by use case
+- **[OData Filtering Guide](docs/odata-filtering.md)** -- Guide to `$filter`, `$orderby`, `$select`, `$expand`, and `$top` query parameters
+- **[Architecture](docs/architecture.md)** -- Detailed architecture, OAuth flow, security model, and design decisions
 
 ## Security
 

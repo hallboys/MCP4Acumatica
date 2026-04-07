@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.10.0`
+- **Current tag:** `25R2-0.13.0`
 - **Deployed at:** `https://acumatica-mcp-server.it-495.workers.dev`
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -24,8 +24,8 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /callback  ← Acumatica   │
 │    ├─ /token, /register (DCR)   │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ 38 read-only tools      │
-│       │  (see Tools section)     │
+│       ├─ 41 tools (38 read-only  │
+│       │   + 3 utility/discovery) │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
                ▼
@@ -75,7 +75,7 @@ src/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   └── logger.ts                  # Structured JSON audit logging
-├── tools/                         # 38 read-only tools across 9 modules
+├── tools/                         # 41 tools across 10 modules + 3 utility
 │   ├── accounts.ts                # acumatica_get_account (GL)
 │   ├── appointments.ts            # acumatica_get_appointment (Field Service)
 │   ├── bills.ts                   # acumatica_get_bill (AP)
@@ -85,8 +85,11 @@ src/
 │   ├── contacts.ts                # acumatica_get_contact (CRM)
 │   ├── crm-activities.ts          # acumatica_get_email, _event, _activity, _task
 │   ├── customers.ts               # acumatica_get_customer
+│   ├── entity-list.ts             # acumatica_list_entities (Utility)
+│   ├── entity-schema.ts           # acumatica_describe_entity (Utility)
 │   ├── employees.ts               # acumatica_get_employee (HR)
 │   ├── expense-claims.ts          # acumatica_get_expense_claim (HR)
+│   ├── generic-inquiries.ts       # acumatica_run_inquiry (Utility)
 │   ├── inventory-availability.ts  # acumatica_get_inventory_quantity_available, _summary
 │   ├── invoices.ts                # acumatica_get_invoice (AR)
 │   ├── item-classes.ts            # acumatica_get_item_class (Inventory)
@@ -165,6 +168,21 @@ npx wrangler kv namespace create X  # Create KV namespace
 - The user info endpoint (`/entity/auth/25.200.001/UserSecurityInfo`) used to get the Acumatica username after login has not been fully validated — if it fails, the code falls back to a UUID-based key which would break token reuse across sessions
 - `@anthropic-ai/sdk` is in dependencies but not used — can be removed
 - Old Entra ID secrets may still exist on Cloudflare — clean up with `wrangler secret delete ENTRA_CLIENT_ID`, etc.
+- **Zod schema constraint:** MCP tool parameter schemas MUST use only simple types (`z.string()`, `z.string().optional()`, `z.string().default("value")`). Complex types like `z.record()`, `z.unknown()`, `z.number()` cause MCP SDK JSON Schema serialization failures and tools won't appear in client discovery. Use `z.string()` with manual `parseInt()` in the handler for numeric parameters.
+
+## Session Status (2026-04-07)
+
+**Uncommitted changes** — the following changes were made but NOT yet committed, pushed, or tagged:
+- Updated `CLAUDE.md` — version bump to 0.13.0, 41 tools, added utility tools to file structure/TODO, Zod constraint in Known Issues
+- Updated `README.md` — 41 tools, added Utility/Discovery tools table, added Documentation section linking to `docs/`
+- Updated `package.json` — version bumped to 0.13.0
+- Created `docs/tool-reference.md` — complete spec for all 41 tools
+- Created `docs/example-prompts.md` — example prompts by use case
+- Created `docs/odata-filtering.md` — OData query parameter guide
+- Created `docs/architecture.md` — detailed architecture documentation
+- Modified `src/tools/generic-inquiries.ts` — minor change (may be from earlier session)
+
+**Next action:** Commit, push, and tag these documentation changes (suggest tag `25R2-0.13.1` or fold into next feature version).
 
 ## TODO — Remaining Project Work
 
@@ -180,10 +198,14 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [x] HR & Payroll: Employee, ExpenseClaim, TimeEntry (0.9.0)
 - [x] CRM Activities: Email, Event, Activity, Task (0.10.0)
 
+### Completed — Utility/Discovery Tools (3 total, 0.11.0–0.13.0)
+- [x] Generic Inquiry: acumatica_run_inquiry (0.11.0)
+- [x] Entity List/Search: acumatica_list_entities (0.12.0)
+- [x] Entity Schema Discovery: acumatica_describe_entity (0.13.0)
+
 ### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
 - [ ] Add action tools: Release Invoice, Confirm Shipment (per project brief Phase 3)
-- [ ] Add search/list tools with pagination, filtering, and $filter support
 - [ ] Validate the Acumatica user info endpoint works reliably for username retrieval
 - [ ] Better error message when refresh token expires (tell user to reconnect)
 
@@ -227,7 +249,6 @@ npx wrangler kv namespace create X  # Create KV namespace
 
 ### Low Priority — Infrastructure
 - [ ] Remove unused `@anthropic-ai/sdk` dependency
-- [ ] Add Generic Inquiry (GI) tool for custom reports
 - [ ] Add Attachment upload/download tools
 - [ ] Remove old Entra ID secrets from Cloudflare (`wrangler secret delete`)
 - [ ] Consider removing `OAUTH_KV` namespace if it can share `TOKEN_STORE`
