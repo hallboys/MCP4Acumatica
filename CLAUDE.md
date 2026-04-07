@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.15.0`
+- **Current tag:** `25R2-0.16.0`
 - **Deployed at:** `https://acumatica-mcp-server.it-495.workers.dev`
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -25,8 +25,8 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /token, /register (DCR+CIMD) │
 │    ├─ /docs → Documentation site │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ 41 tools (38 read-only  │
-│       │   + 3 utility/discovery) │
+│       ├─ 43 tools (38 read-only  │
+│       │   + 5 utility/discovery) │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
                ▼
@@ -94,6 +94,7 @@ src/
 │   ├── employees.ts               # acumatica_get_employee (HR)
 │   ├── expense-claims.ts          # acumatica_get_expense_claim (HR)
 │   ├── generic-inquiries.ts       # acumatica_run_inquiry (Utility)
+│   ├── generic-inquiry-discovery.ts # acumatica_list_generic_inquiries, _describe_inquiry (Utility)
 │   ├── inventory-availability.ts  # acumatica_get_inventory_quantity_available, _summary
 │   ├── invoices.ts                # acumatica_get_invoice (AR)
 │   ├── item-classes.ts            # acumatica_get_item_class (Inventory)
@@ -191,10 +192,11 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [x] HR & Payroll: Employee, ExpenseClaim, TimeEntry (0.9.0)
 - [x] CRM Activities: Email, Event, Activity, Task (0.10.0)
 
-### Completed — Utility/Discovery Tools (3 total, 0.11.0–0.13.0)
+### Completed — Utility/Discovery Tools (5 total, 0.11.0–0.16.0)
 - [x] Generic Inquiry: acumatica_run_inquiry (0.11.0)
 - [x] Entity List/Search: acumatica_list_entities (0.12.0)
 - [x] Entity Schema Discovery: acumatica_describe_entity (0.13.0)
+- [x] GI Discovery: acumatica_list_generic_inquiries, acumatica_describe_inquiry (0.16.0)
 
 ### Completed — Documentation & Infrastructure
 - [x] Documentation site served from `/docs` on the same worker (0.14.0)

@@ -328,6 +328,33 @@ These examples show multi-step workflows where Claude chains multiple tools toge
 
 ## Generic Inquiries
 
+### Discover available GIs
+
+> "What Generic Inquiries are available in Acumatica?"
+
+**Tools invoked:** `acumatica_list_generic_inquiries`
+
+### Find GIs by topic
+
+> "Are there any Generic Inquiries related to projects?"
+
+**Tools invoked:** `acumatica_list_generic_inquiries` (titleFilter: `project`)
+
+### Understand a GI before running it
+
+> "What fields does the AR-Aging inquiry return?"
+
+**Tools invoked:** `acumatica_describe_inquiry` (inquiryName: `AR-Aging`)
+
+### Full GI discovery workflow
+
+> "I need to run a report on open AP bills. Help me find the right GI and run it."
+
+**Tools invoked (multi-step):**
+1. `acumatica_list_generic_inquiries` (titleFilter: `AP`) -- discover relevant GIs
+2. `acumatica_describe_inquiry` (inquiryName: `OpenAPBills`) -- learn available fields
+3. `acumatica_run_inquiry` (inquiryName: `OpenAPBills`, filterExpression: `Status eq 'Open'`)
+
 ### Run a custom report
 
 > "Run the AR Aging inquiry filtered to branch BTC"
@@ -340,4 +367,4 @@ These examples show multi-step workflows where Claude chains multiple tools toge
 
 **Tools invoked:** `acumatica_run_inquiry` (inquiryName: `OpenOrders`, selectFields: `CustomerID,OrderTotal,Status`)
 
-> **Note:** Generic Inquiry names depend on what your Acumatica administrator has configured. Ask your admin for available GI names, or check the Generic Inquiries screen (SM208000) in Acumatica.
+> **Tip:** Use `acumatica_list_generic_inquiries` to discover available GI names and `acumatica_describe_inquiry` to see what fields each GI returns before querying it.

@@ -40,6 +40,7 @@ import { handleGetEmail, handleGetEvent, handleGetActivity, handleGetTask } from
 import { handleRunInquiry } from "./tools/generic-inquiries";
 import { handleListEntities } from "./tools/entity-list";
 import { handleDescribeEntity } from "./tools/entity-schema";
+import { handleListGenericInquiries, handleDescribeInquiry } from "./tools/generic-inquiry-discovery";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -47,7 +48,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.15.0",
+    version: "0.16.0",
   });
 
   async init() {
@@ -658,7 +659,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
     // Tool 39: Generic Inquiry
     this.server.tool(
       "acumatica_run_inquiry",
-      "Execute any configured Generic Inquiry (GI) in Acumatica and return filtered results. Use this for custom reports, cross-entity queries, or any GI screen.",
+      "Execute any configured Generic Inquiry (GI) in Acumatica and return filtered results. Use this for custom reports, cross-entity queries, or any GI screen. Use acumatica_list_generic_inquiries to discover GI names and acumatica_describe_inquiry to get field schema before calling this tool.",
       {
         inquiryName: z
           .string()
@@ -743,6 +744,46 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ entityName }) => {
         return this.callTool(() =>
           handleDescribeEntity(this.env, this.props.acumaticaUsername, { entityName })
+        );
+      }
+    );
+
+    // Tool 42: List Generic Inquiries
+    this.server.tool(
+      "acumatica_list_generic_inquiries",
+      "List all Generic Inquiries (GIs) configured in Acumatica. Returns inquiry names, titles, and screen IDs. Use this to discover available GI names before calling acumatica_run_inquiry.",
+      {
+        titleFilter: z
+          .string()
+          .optional()
+          .describe("Optional partial title match to narrow results (case-insensitive contains). E.g., 'project' returns all GIs with 'project' in the title."),
+        topN: z
+          .string()
+          .default("200")
+          .describe("Maximum number of GIs to return (default '200')"),
+      },
+      async ({ titleFilter, topN }) => {
+        return this.callTool(() =>
+          handleListGenericInquiries(this.env, this.props.acumaticaUsername, {
+            titleFilter,
+            topN: parseInt(topN, 10) || 200,
+          })
+        );
+      }
+    );
+
+    // Tool 43: Describe Generic Inquiry Schema
+    this.server.tool(
+      "acumatica_describe_inquiry",
+      "Returns the field schema for a specific Generic Inquiry (GI) — field names and inferred types. Use this before calling acumatica_run_inquiry to know which fields are available for filtering and selection.",
+      {
+        inquiryName: z
+          .string()
+          .describe("Generic Inquiry name as configured in Acumatica (e.g., 'ProjectBudgetSummary'). Use acumatica_list_generic_inquiries to discover names."),
+      },
+      async ({ inquiryName }) => {
+        return this.callTool(() =>
+          handleDescribeInquiry(this.env, this.props.acumaticaUsername, { inquiryName })
         );
       }
     );

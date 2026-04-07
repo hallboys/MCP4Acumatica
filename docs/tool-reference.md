@@ -1,6 +1,6 @@
 # Acumatica MCP Server -- Tool Reference
 
-Complete specification for all 41 tools available in the Acumatica MCP Server (v0.13.0).
+Complete specification for all 43 tools available in the Acumatica MCP Server (v0.16.0).
 
 ## Table of Contents
 
@@ -51,7 +51,7 @@ List or search any Acumatica entity with OData filtering, sorting, and field sel
 
 ### `acumatica_run_inquiry`
 
-Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom reports and cross-entity queries configured by your Acumatica administrator.
+Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom reports and cross-entity queries configured by your Acumatica administrator. Use `acumatica_list_generic_inquiries` to discover GI names and `acumatica_describe_inquiry` to get field schema before calling this tool.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -61,6 +61,40 @@ Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom re
 | `selectFields` | string | No | -- | Comma-separated field names to return |
 
 **Endpoint:** `GET /entity/Default/25.200.001/{inquiryName}?$filter=...&$top=...&$select=...`
+
+---
+
+### `acumatica_list_generic_inquiries`
+
+List all Generic Inquiries (GIs) configured in Acumatica. Returns inquiry names, titles, and screen IDs. Use this to discover available GI names before calling `acumatica_run_inquiry`.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `titleFilter` | string | No | -- | Partial title match to narrow results (case-insensitive contains) |
+| `topN` | string | No | `"200"` | Maximum number of GIs to return |
+
+**Endpoint:** `GET /entity/Default/25.200.001/GenericInquiry?$select=InquiryID,InquiryTitle,ScreenID,IsVisible&$filter=IsVisible eq true`
+
+**Returns:** Array of `{ inquiryName, title, screenID }` for each visible GI.
+
+---
+
+### `acumatica_describe_inquiry`
+
+Returns the field schema for a specific Generic Inquiry (GI) — field names and inferred types. Use this before calling `acumatica_run_inquiry` to know which fields are available for filtering and selection.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `inquiryName` | string | Yes | GI name as configured in Acumatica. Use `acumatica_list_generic_inquiries` to discover names. |
+
+**Approach:** Probes the GI with `$top=1` to retrieve a sample row and infers field names and data types from the response.
+
+**Returns:** `{ inquiryName, fields: [{ fieldName, dataType }], sampleRow, note }`.
+
+**Error handling:**
+- GI not found (404): returns descriptive error suggesting `acumatica_list_generic_inquiries`
+- GI requires filters (400): returns guidance to use `acumatica_run_inquiry` with a filter
+- Empty results: returns empty field list with a note
 
 ---
 
