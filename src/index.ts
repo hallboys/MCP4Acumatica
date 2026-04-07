@@ -47,7 +47,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.13.0",
+    version: "0.15.0",
   });
 
   async init() {
@@ -789,5 +789,6 @@ export default new OAuthProvider({
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",
+  clientIdMetadataDocumentEnabled: true,
   scopesSupported: ["api"],
 });
