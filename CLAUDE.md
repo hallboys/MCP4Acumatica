@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.13.0`
+- **Current tag:** `25R2-0.13.1`
 - **Deployed at:** `https://acumatica-mcp-server.it-495.workers.dev`
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -169,20 +169,6 @@ npx wrangler kv namespace create X  # Create KV namespace
 - `@anthropic-ai/sdk` is in dependencies but not used — can be removed
 - Old Entra ID secrets may still exist on Cloudflare — clean up with `wrangler secret delete ENTRA_CLIENT_ID`, etc.
 - **Zod schema constraint:** MCP tool parameter schemas MUST use only simple types (`z.string()`, `z.string().optional()`, `z.string().default("value")`). Complex types like `z.record()`, `z.unknown()`, `z.number()` cause MCP SDK JSON Schema serialization failures and tools won't appear in client discovery. Use `z.string()` with manual `parseInt()` in the handler for numeric parameters.
-
-## Session Status (2026-04-07)
-
-**Uncommitted changes** — the following changes were made but NOT yet committed, pushed, or tagged:
-- Updated `CLAUDE.md` — version bump to 0.13.0, 41 tools, added utility tools to file structure/TODO, Zod constraint in Known Issues
-- Updated `README.md` — 41 tools, added Utility/Discovery tools table, added Documentation section linking to `docs/`
-- Updated `package.json` — version bumped to 0.13.0
-- Created `docs/tool-reference.md` — complete spec for all 41 tools
-- Created `docs/example-prompts.md` — example prompts by use case
-- Created `docs/odata-filtering.md` — OData query parameter guide
-- Created `docs/architecture.md` — detailed architecture documentation
-- Modified `src/tools/generic-inquiries.ts` — minor change (may be from earlier session)
-
-**Next action:** Commit, push, and tag these documentation changes (suggest tag `25R2-0.13.1` or fold into next feature version).
 
 ## TODO — Remaining Project Work
 
