@@ -31,6 +31,8 @@ import { handleGetBusinessAccount } from "./tools/business-accounts";
 import { handleGetOpportunity } from "./tools/opportunities";
 import { handleGetLead } from "./tools/leads";
 import { handleGetSalesperson } from "./tools/salespersons";
+import { handleGetShipment } from "./tools/shipments";
+import { handleGetSalesInvoice } from "./tools/sales-invoices";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -38,7 +40,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.7.0",
+    version: "0.8.0",
   });
 
   async init() {
@@ -512,6 +514,38 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ salespersonID }) => {
         return this.callTool(() =>
           handleGetSalesperson(this.env, this.props.acumaticaUsername, { salespersonID })
+        );
+      }
+    );
+
+    // Tool 30: Shipment Lookup
+    this.server.tool(
+      "acumatica_get_shipment",
+      "Retrieve a shipment by shipment number. Returns customer, warehouse, ship via, shipped quantities/weight/volume, packages with tracking numbers, line items, and freight details.",
+      {
+        shipmentNbr: z.string().describe("Shipment number"),
+      },
+      async ({ shipmentNbr }) => {
+        return this.callTool(() =>
+          handleGetShipment(this.env, this.props.acumaticaUsername, { shipmentNbr })
+        );
+      }
+    );
+
+    // Tool 31: Sales Invoice Lookup
+    this.server.tool(
+      "acumatica_get_sales_invoice",
+      "Retrieve a sales invoice by type and reference number. Returns customer, amounts, balance, line items with SO/shipment linkage, tax details, and due date.",
+      {
+        type: z
+          .string()
+          .default("Invoice")
+          .describe("Document type (e.g., 'Invoice', 'Credit Memo')"),
+        referenceNbr: z.string().describe("Sales invoice reference number"),
+      },
+      async ({ type, referenceNbr }) => {
+        return this.callTool(() =>
+          handleGetSalesInvoice(this.env, this.props.acumaticaUsername, { type, referenceNbr })
         );
       }
     );
