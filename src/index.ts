@@ -23,6 +23,9 @@ import { handleGetItemClass } from "./tools/item-classes";
 import { handleGetPurchaseOrder } from "./tools/purchase-orders";
 import { handleGetPurchaseReceipt } from "./tools/purchase-receipts";
 import { handleGetProject, handleGetProjectTask, handleGetProjectBudget, handleGetProjectTransaction } from "./tools/projects";
+import { handleGetCase } from "./tools/cases";
+import { handleGetServiceOrder } from "./tools/service-orders";
+import { handleGetAppointment } from "./tools/appointments";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -30,7 +33,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.5.0",
+    version: "0.6.0",
   });
 
   async init() {
@@ -384,6 +387,56 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ module, referenceNbr }) => {
         return this.callTool(() =>
           handleGetProjectTransaction(this.env, this.props.acumaticaUsername, { module, referenceNbr })
+        );
+      }
+    );
+
+    // Tool 22: Support Case Lookup
+    this.server.tool(
+      "acumatica_get_case",
+      "Retrieve a support case by case ID. Returns subject, status, priority, severity, business account, contact, owner, SLA, time spent, and resolution details.",
+      {
+        caseID: z.string().describe("Case ID (e.g., 'C000001')"),
+      },
+      async ({ caseID }) => {
+        return this.callTool(() =>
+          handleGetCase(this.env, this.props.acumaticaUsername, { caseID })
+        );
+      }
+    );
+
+    // Tool 23: Service Order Lookup
+    this.server.tool(
+      "acumatica_get_service_order",
+      "Retrieve a field service order by type and number. Returns customer, status, priority, estimated/actual durations, totals, appointments, and line items.",
+      {
+        serviceOrderType: z
+          .string()
+          .default("SL")
+          .describe("Service order type"),
+        serviceOrderNbr: z.string().describe("Service order number"),
+      },
+      async ({ serviceOrderType, serviceOrderNbr }) => {
+        return this.callTool(() =>
+          handleGetServiceOrder(this.env, this.props.acumaticaUsername, { serviceOrderType, serviceOrderNbr })
+        );
+      }
+    );
+
+    // Tool 24: Appointment Lookup
+    this.server.tool(
+      "acumatica_get_appointment",
+      "Retrieve a field service appointment by type and number. Returns scheduled/actual dates and durations, customer, staff, services, cost, profit, and status.",
+      {
+        serviceOrderType: z
+          .string()
+          .default("SL")
+          .describe("Service order type"),
+        appointmentNbr: z.string().describe("Appointment number"),
+      },
+      async ({ serviceOrderType, appointmentNbr }) => {
+        return this.callTool(() =>
+          handleGetAppointment(this.env, this.props.acumaticaUsername, { serviceOrderType, appointmentNbr })
         );
       }
     );

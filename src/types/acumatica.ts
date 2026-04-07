@@ -617,6 +617,97 @@ export interface ProjectTransaction extends Entity {
   LastModifiedDateTime?: DateTimeValue;
 }
 
+/** Support Case entity */
+export interface Case extends Entity {
+  CaseID?: StringValue;
+  Subject?: StringValue;
+  Description?: StringValue;
+  Status?: StringValue;
+  Reason?: StringValue;
+  Priority?: StringValue;
+  Severity?: StringValue;
+  ClassID?: StringValue;
+  BusinessAccount?: StringValue;
+  BusinessAccountName?: StringValue;
+  ContactDisplayName?: StringValue;
+  ContactID?: IntValue;
+  Owner?: StringValue;
+  OwnerEmployeeName?: StringValue;
+  Workgroup?: StringValue;
+  Contract?: StringValue;
+  Location?: StringValue;
+  DateReported?: DateTimeValue;
+  ClosingDate?: DateTimeValue;
+  SLA?: DateTimeValue;
+  InitialResponse?: StringValue;
+  ResolutionTime?: StringValue;
+  TimeSpent?: StringValue;
+  Billable?: BooleanValue;
+  BillableTime?: StringValue;
+  LastActivityDate?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Service Order entity */
+export interface ServiceOrder extends Entity {
+  ServiceOrderType?: StringValue;
+  ServiceOrderNbr?: StringValue;
+  Description?: StringValue;
+  Status?: StringValue;
+  Hold?: BooleanValue;
+  Priority?: StringValue;
+  Severity?: StringValue;
+  Problem?: StringValue;
+  Customer?: StringValue;
+  Location?: StringValue;
+  CustomerOrder?: StringValue;
+  Date?: DateTimeValue;
+  SLA?: DateTimeValue;
+  Project?: StringValue;
+  DefaultProjectTask?: StringValue;
+  BranchLocation?: StringValue;
+  Supervisor?: StringValue;
+  Currency?: StringValue;
+  BillableTotal?: DecimalValue;
+  ServiceOrderTotal?: DecimalValue;
+  TaxTotal?: DecimalValue;
+  ExternalReference?: StringValue;
+  WorkflowStage?: StringValue;
+  EstimatedDuration?: StringValue;
+  AppointmentDuration?: StringValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Appointment entity */
+export interface Appointment extends Entity {
+  AppointmentNbr?: StringValue;
+  ServiceOrderType?: StringValue;
+  ServiceOrderNbr?: StringValue;
+  Description?: StringValue;
+  Status?: StringValue;
+  Hold?: BooleanValue;
+  Customer?: StringValue;
+  Location?: StringValue;
+  Project?: StringValue;
+  DefaultProjectTask?: StringValue;
+  BranchLocation?: StringValue;
+  ScheduledStartDate?: DateTimeValue;
+  ScheduledEndDate?: DateTimeValue;
+  ActualStartDate?: DateTimeValue;
+  ActualEndDate?: DateTimeValue;
+  ScheduledDuration?: StringValue;
+  ActualDuration?: StringValue;
+  ActualServiceDuration?: StringValue;
+  AppointmentTotal?: DecimalValue;
+  CostTotal?: DecimalValue;
+  Profit?: DecimalValue;
+  TaxTotal?: DecimalValue;
+  Confirmed?: BooleanValue;
+  Finished?: BooleanValue;
+  WorkflowStage?: StringValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
 /** Env bindings for the Cloudflare Worker */
 export interface Env {
   // Acumatica
