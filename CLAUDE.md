@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.13.1`
+- **Current tag:** `25R2-0.14.0`
 - **Deployed at:** `https://acumatica-mcp-server.it-495.workers.dev`
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -23,6 +23,7 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /authorize → Acumatica    │
 │    ├─ /callback  ← Acumatica   │
 │    ├─ /token, /register (DCR)   │
+│    ├─ /docs → Documentation site │
 │    └─ /mcp → McpAgent DO        │
 │       ├─ 41 tools (38 read-only  │
 │       │   + 3 utility/discovery) │
@@ -71,6 +72,9 @@ src/
 ├── auth/
 │   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, health checks)
 │   └── acumatica-oauth.ts         # Per-user token retrieval + refresh from KV
+├── docs/
+│   ├── docs-handler.ts            # Hono sub-app: renders markdown docs to HTML
+│   └── markdown.d.ts              # TypeScript declaration for .md text module imports
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
@@ -151,6 +155,7 @@ src/
 - **HTTP routing:** Hono
 - **Language:** TypeScript
 - **Validation:** Zod (tool parameter schemas)
+- **Markdown rendering:** marked (docs site)
 
 ## Common Commands
 
@@ -188,6 +193,10 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [x] Generic Inquiry: acumatica_run_inquiry (0.11.0)
 - [x] Entity List/Search: acumatica_list_entities (0.12.0)
 - [x] Entity Schema Discovery: acumatica_describe_entity (0.13.0)
+
+### Completed — Documentation & Infrastructure
+- [x] Documentation site served from `/docs` on the same worker (0.14.0)
+- [x] docs/tool-reference.md, example-prompts.md, odata-filtering.md, architecture.md
 
 ### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
