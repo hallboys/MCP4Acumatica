@@ -176,6 +176,18 @@ app.get("/callback", async (c) => {
   return c.redirect(redirectTo);
 });
 
+// OpenID Connect discovery — some MCP clients (e.g. ChatGPT) also check this
+// endpoint. Proxy to the OAuth authorization server metadata so CIMD support
+// is advertised consistently across both discovery paths.
+app.get("/.well-known/openid-configuration", async (c) => {
+  const origin = new URL(c.req.url).origin;
+  const resp = await fetch(`${origin}/.well-known/oauth-authorization-server`);
+  return new Response(resp.body, {
+    status: resp.status,
+    headers: { "content-type": "application/json" },
+  });
+});
+
 // Health check
 app.get("/health", (c) => c.json({ status: "ok", service: "acumatica-mcp-server" }));
 
