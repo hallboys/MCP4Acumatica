@@ -54,7 +54,7 @@ The Acumatica MCP Server is a remote [Model Context Protocol](https://modelconte
 │  ┌──────────────┴───────────────────┐       │
 │  │  KV Namespaces                   │       │
 │  │  TOKEN_STORE - per-user tokens   │       │
-│  │  OAUTH_KV    - OAuth state       │       │
+│  │               + OAuth state      │       │
 │  └──────────────────────────────────┘       │
 └─────────────────────┬───────────────────────┘
                       │ HTTPS (Bearer token)
@@ -114,7 +114,7 @@ HTTP client for the Acumatica contract-based REST API. Features:
 | Namespace | Purpose | Key Pattern | TTL |
 |-----------|---------|-------------|-----|
 | `TOKEN_STORE` | Per-user Acumatica OAuth tokens | `user_token:{username}` | None (refreshed on expiry) |
-| `OAUTH_KV` | Temporary OAuth state during login flow | State/code verifier | 10 minutes |
+| `TOKEN_STORE` | Temporary OAuth state during login flow | `acumatica_state:{state}` | 10 minutes |
 
 ---
 
@@ -312,7 +312,7 @@ docs/
 |------|----------|---------|
 | Environment variables | `wrangler.jsonc` `vars` | `ACUMATICA_URL`, `ACUMATICA_ENDPOINT_VERSION` |
 | Secrets | `wrangler secret put` | `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY` |
-| KV bindings | `wrangler.jsonc` `kv_namespaces` | `TOKEN_STORE`, `OAUTH_KV` |
+| KV bindings | `wrangler.jsonc` `kv_namespaces` | `TOKEN_STORE` |
 | DO binding | `wrangler.jsonc` `durable_objects` | `MCP_OBJECT` (must be this name) |
 
 ### Deploy Command

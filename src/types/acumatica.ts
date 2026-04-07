@@ -18,10 +18,6 @@ export interface IntValue {
   value: number | null;
 }
 
-export interface ShortValue {
-  value: number | null;
-}
-
 export interface DateTimeValue {
   value: string | null;
 }
@@ -1076,7 +1072,6 @@ export interface Env {
   TOKEN_STORE: KVNamespace;
   COOKIE_ENCRYPTION_KEY: string;
   // OAuth provider
-  OAUTH_KV: KVNamespace;
   OAUTH_PROVIDER: OAuthProviderHelpers;
   // Durable Object
   MCP_OBJECT: DurableObjectNamespace;

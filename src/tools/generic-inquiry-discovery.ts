@@ -4,12 +4,6 @@
 import type { Env } from "../types/acumatica";
 import { AcumaticaClient, AcumaticaApiError, unwrapFields } from "../lib/acumatica-client";
 
-interface GIListItem {
-  inquiryName: unknown;
-  title: unknown;
-  screenID: unknown;
-}
-
 export async function handleListGenericInquiries(
   env: Env,
   acumaticaUsername: string,

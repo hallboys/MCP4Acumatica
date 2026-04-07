@@ -13,18 +13,25 @@
 	"vars": {
 		"ACUMATICA_ENDPOINT_VERSION": "25.200.001"
 	},
-	// KV namespaces — create with:
+	// KV namespace — create with:
 	//   npx wrangler kv namespace create TOKEN_STORE
-	//   npx wrangler kv namespace create OAUTH_KV
-	// Then replace the IDs below
+	// Then replace the ID below
 	"kv_namespaces": [
 		{
 			"binding": "TOKEN_STORE",
 			"id": "<your-token-store-kv-id>"
-		},
+		}
+	],
+
+	// Keep workers.dev subdomain as fallback
+	"workers_dev": true,
+
+	// Custom domain (requires hallboys.com zone in your Cloudflare account)
+	// Remove or comment out if using only the *.workers.dev subdomain
+	"routes": [
 		{
-			"binding": "OAUTH_KV",
-			"id": "<your-oauth-kv-id>"
+			"pattern": "acumatica-mcp.hallboys.com/*",
+			"zone_name": "hallboys.com"
 		}
 	],
 

@@ -7,8 +7,8 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.16.0`
-- **Deployed at:** `https://acumatica-mcp-server.it-495.workers.dev`
+- **Current tag:** `25R2-0.17.0`
+- **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://acumatica-mcp-server.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
 ## Architecture
@@ -141,11 +141,10 @@ src/
 - `COOKIE_ENCRYPTION_KEY` — random 256-bit hex (`openssl rand -hex 32`)
 
 ### KV Namespaces:
-- `TOKEN_STORE` — per-user Acumatica tokens
-- `OAUTH_KV` — temporary OAuth state during login (10-min TTL)
+- `TOKEN_STORE` — per-user Acumatica tokens and temporary OAuth state during login
 
 ### Acumatica Connected Application (SM303010):
-- **Redirect URI:** `https://<worker-url>/callback`
+- **Redirect URI:** `https://acumatica-mcp.hallboys.com/callback` (add both custom domain and workers.dev URLs if using both)
 - **Scope:** `api`
 
 ## Tech Stack
@@ -172,7 +171,6 @@ npx wrangler kv namespace create X  # Create KV namespace
 ## Known Issues / Tech Debt
 
 - The user info endpoint (`/entity/auth/25.200.001/UserSecurityInfo`) used to get the Acumatica username after login has not been fully validated — if it fails, the code falls back to a UUID-based key which would break token reuse across sessions
-- `@anthropic-ai/sdk` is in dependencies but not used — can be removed
 - Old Entra ID secrets may still exist on Cloudflare — clean up with `wrangler secret delete ENTRA_CLIENT_ID`, etc.
 - **Zod schema constraint:** MCP tool parameter schemas MUST use only simple types (`z.string()`, `z.string().optional()`, `z.string().default("value")`). Complex types like `z.record()`, `z.unknown()`, `z.number()` cause MCP SDK JSON Schema serialization failures and tools won't appear in client discovery. Use `z.string()` with manual `parseInt()` in the handler for numeric parameters.
 - **ChatGPT CIMD bug (as of April 2026):** ChatGPT's MCP client sees `client_id_metadata_document_supported: true` in our metadata but fails to complete CIMD (it doesn't have its own metadata document URL) and does not auto-fallback to DCR. Users must manually select DCR when adding the server in ChatGPT. Our server correctly advertises both — this is a ChatGPT client-side issue.
@@ -248,10 +246,8 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [ ] ShipVia / ShippingTerm / ShippingZones — shipping config
 
 ### Low Priority — Infrastructure
-- [ ] Remove unused `@anthropic-ai/sdk` dependency
 - [ ] Add Attachment upload/download tools
 - [ ] Remove old Entra ID secrets from Cloudflare (`wrangler secret delete`)
-- [ ] Consider removing `OAUTH_KV` namespace if it can share `TOKEN_STORE`
 - [ ] Add unit tests
 - [ ] Add CI/CD pipeline
 

@@ -62,14 +62,13 @@ In your Acumatica instance, navigate to **System > Integration > Connected Appli
 4. Set the scope to `api`
 5. Note the **Client ID** and **Client Secret**
 
-### 3. Create KV namespaces
+### 3. Create KV namespace
 
 ```bash
 npx wrangler kv namespace create TOKEN_STORE
-npx wrangler kv namespace create OAUTH_KV
 ```
 
-Note the namespace IDs from the output.
+Note the namespace ID from the output.
 
 ### 4. Configure wrangler
 
@@ -78,7 +77,7 @@ cp wrangler.jsonc.example wrangler.jsonc
 ```
 
 Edit `wrangler.jsonc` and fill in:
-- Your KV namespace IDs from step 3
+- Your KV namespace ID from step 3
 - `ACUMATICA_URL` -- your Acumatica instance URL (e.g., `https://yourcompany.acumatica.com`)
 - `ACUMATICA_COMPANY` -- your Acumatica company/tenant name
 

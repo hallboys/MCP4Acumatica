@@ -17,7 +17,6 @@ type AuthEnv = Env & {
       props: Record<string, unknown>;
     }): Promise<{ redirectTo: string }>;
   };
-  OAUTH_KV: KVNamespace;
 };
 
 interface OAuthReqInfo {
@@ -44,7 +43,7 @@ app.get("/authorize", async (c) => {
 
   const state = crypto.randomUUID();
 
-  await c.env.OAUTH_KV.put(
+  await c.env.TOKEN_STORE.put(
     `acumatica_state:${state}`,
     JSON.stringify(oauthReqInfo),
     { expirationTtl: 600 }
@@ -88,12 +87,12 @@ app.get("/callback", async (c) => {
   }
 
   // Retrieve the original MCP OAuth request
-  const stored = await c.env.OAUTH_KV.get(`acumatica_state:${state}`);
+  const stored = await c.env.TOKEN_STORE.get(`acumatica_state:${state}`);
   if (!stored) {
     return c.text("Invalid or expired state. Please try connecting again.", 400);
   }
   const oauthReqInfo: OAuthReqInfo = JSON.parse(stored);
-  await c.env.OAUTH_KV.delete(`acumatica_state:${state}`);
+  await c.env.TOKEN_STORE.delete(`acumatica_state:${state}`);
 
   // Exchange Acumatica code for tokens
   const origin = new URL(c.req.url).origin;
