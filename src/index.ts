@@ -38,6 +38,7 @@ import { handleGetExpenseClaim } from "./tools/expense-claims";
 import { handleGetTimeEntry } from "./tools/time-entries";
 import { handleGetEmail, handleGetEvent, handleGetActivity, handleGetTask } from "./tools/crm-activities";
 import { handleRunInquiry } from "./tools/generic-inquiries";
+import { handleListEntities } from "./tools/entity-list";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -45,7 +46,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.11.0",
+    version: "0.12.0",
   });
 
   async init() {
@@ -661,23 +662,70 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         inquiryName: z
           .string()
           .describe("Generic Inquiry name as configured in Acumatica (e.g., 'GI000001')"),
-        filters: z
-          .record(z.unknown())
+        filterExpression: z
+          .string()
           .optional()
-          .describe("Key-value pairs for OData $filter (e.g., { BranchID: 'BTC', Status: 'Open' })"),
+          .describe("OData $filter expression (e.g., \"BranchID eq 'BTC' and Status eq 'Open'\")"),
         topN: z
-          .number()
-          .int()
-          .default(100)
-          .describe("Maximum number of rows to return (default 100)"),
-        select: z
-          .array(z.string())
+          .string()
+          .default("100")
+          .describe("Maximum number of rows to return (default '100')"),
+        selectFields: z
+          .string()
           .optional()
-          .describe("Specific fields to return (e.g., ['CustomerID', 'Balance'])"),
+          .describe("Comma-separated field names to return (e.g., 'CustomerID,Balance')"),
       },
-      async ({ inquiryName, filters, topN, select }) => {
+      async ({ inquiryName, filterExpression, topN, selectFields }) => {
         return this.callTool(() =>
-          handleRunInquiry(this.env, this.props.acumaticaUsername, { inquiryName, filters, topN, select })
+          handleRunInquiry(this.env, this.props.acumaticaUsername, {
+            inquiryName,
+            filterExpression,
+            topN: parseInt(topN, 10) || 100,
+            selectFields,
+          })
+        );
+      }
+    );
+
+    // Tool 40: List/Search Entities
+    this.server.tool(
+      "acumatica_list_entities",
+      "List or search any Acumatica entity with filtering, sorting, and field selection. Use this to find records matching criteria (e.g., all open invoices over $10,000, customers in a state, stock items below reorder point). Supported entity names include: Customer, Vendor, SalesOrder, Invoice, Bill, Payment, Check, StockItem, NonStockItem, PurchaseOrder, PurchaseReceipt, Shipment, SalesInvoice, Project, Case, ServiceOrder, Appointment, Contact, BusinessAccount, Opportunity, Lead, Employee, ExpenseClaim, JournalTransaction, and more.",
+      {
+        entityName: z
+          .string()
+          .describe("Acumatica entity name (e.g., 'Customer', 'Invoice', 'SalesOrder', 'StockItem')"),
+        filterExpression: z
+          .string()
+          .optional()
+          .describe("OData $filter expression (e.g., \"Status eq 'Open' and Amount gt 10000\", \"CustomerClass eq 'LOCAL'\", \"Date gt datetimeoffset'2026-01-01'\")"),
+        topN: z
+          .string()
+          .default("100")
+          .describe("Maximum number of rows to return (default '100')"),
+        selectFields: z
+          .string()
+          .optional()
+          .describe("Comma-separated field names to return (e.g., 'CustomerID,CustomerName,Status')"),
+        orderBy: z
+          .string()
+          .optional()
+          .describe("OData $orderby expression (e.g., 'Amount desc', 'Date asc', 'CustomerName asc')"),
+        expand: z
+          .string()
+          .optional()
+          .describe("Comma-separated sub-entities to include (e.g., 'Details', 'MainContact,BillingContact')"),
+      },
+      async ({ entityName, filterExpression, topN, selectFields, orderBy, expand }) => {
+        return this.callTool(() =>
+          handleListEntities(this.env, this.props.acumaticaUsername, {
+            entityName,
+            filterExpression,
+            topN: parseInt(topN, 10) || 100,
+            selectFields,
+            orderBy,
+            expand,
+          })
         );
       }
     );
