@@ -708,6 +708,118 @@ export interface Appointment extends Entity {
   LastModifiedDateTime?: DateTimeValue;
 }
 
+/** CRM Contact entity (full contact record, not sub-entity) */
+export interface ContactRecord extends Entity {
+  ContactID?: IntValue;
+  DisplayName?: StringValue;
+  FirstName?: StringValue;
+  LastName?: StringValue;
+  MiddleName?: StringValue;
+  Title?: StringValue;
+  Email?: StringValue;
+  Phone1?: StringValue;
+  Phone1Type?: StringValue;
+  Phone2?: StringValue;
+  Phone2Type?: StringValue;
+  Fax?: StringValue;
+  WebSite?: StringValue;
+  JobTitle?: StringValue;
+  CompanyName?: StringValue;
+  BusinessAccount?: StringValue;
+  ParentAccount?: StringValue;
+  ContactClass?: StringValue;
+  ContactMethod?: StringValue;
+  Status?: StringValue;
+  Active?: BooleanValue;
+  Owner?: StringValue;
+  OwnerEmployeeName?: StringValue;
+  Workgroup?: StringValue;
+  Source?: StringValue;
+  Address?: Address;
+  Type?: StringValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Business Account entity */
+export interface BusinessAccount extends Entity {
+  BusinessAccountID?: StringValue;
+  Name?: StringValue;
+  Type?: StringValue;
+  Status?: StringValue;
+  ClassID?: StringValue;
+  ParentAccount?: StringValue;
+  Owner?: StringValue;
+  OwnerEmployeeName?: StringValue;
+  Workgroup?: StringValue;
+  CurrencyID?: StringValue;
+  MainAddress?: Address;
+  MainContact?: Contact;
+  SourceCampaign?: StringValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Opportunity entity */
+export interface Opportunity extends Entity {
+  OpportunityID?: StringValue;
+  Subject?: StringValue;
+  Status?: StringValue;
+  Stage?: StringValue;
+  Reason?: StringValue;
+  Amount?: DecimalValue;
+  Discount?: DecimalValue;
+  Total?: DecimalValue;
+  CurrencyID?: StringValue;
+  BusinessAccount?: StringValue;
+  ContactDisplayName?: StringValue;
+  ContactID?: IntValue;
+  ClassID?: StringValue;
+  Source?: StringValue;
+  SourceCampaign?: StringValue;
+  Branch?: StringValue;
+  Owner?: StringValue;
+  OwnerEmployeeName?: StringValue;
+  Estimation?: DateTimeValue;
+  Location?: StringValue;
+  Project?: StringValue;
+  Details?: StringValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Lead entity */
+export interface Lead extends Entity {
+  LeadID?: IntValue;
+  LeadDisplayName?: StringValue;
+  FirstName?: StringValue;
+  LastName?: StringValue;
+  Email?: StringValue;
+  Phone1?: StringValue;
+  CompanyName?: StringValue;
+  BusinessAccount?: StringValue;
+  LeadClass?: StringValue;
+  Status?: StringValue;
+  Source?: StringValue;
+  SourceCampaign?: StringValue;
+  Description?: StringValue;
+  JobTitle?: StringValue;
+  Owner?: StringValue;
+  OwnerEmployeeName?: StringValue;
+  Workgroup?: StringValue;
+  Address?: Address;
+  QualificationDate?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Salesperson entity */
+export interface Salesperson extends Entity {
+  SalespersonID?: StringValue;
+  Name?: StringValue;
+  IsActive?: BooleanValue;
+  DefaultCommission?: DecimalValue;
+  SalesSubaccount?: StringValue;
+  CreatedDateTime?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
 /** Env bindings for the Cloudflare Worker */
 export interface Env {
   // Acumatica

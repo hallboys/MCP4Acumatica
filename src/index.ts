@@ -26,6 +26,11 @@ import { handleGetProject, handleGetProjectTask, handleGetProjectBudget, handleG
 import { handleGetCase } from "./tools/cases";
 import { handleGetServiceOrder } from "./tools/service-orders";
 import { handleGetAppointment } from "./tools/appointments";
+import { handleGetContact } from "./tools/contacts";
+import { handleGetBusinessAccount } from "./tools/business-accounts";
+import { handleGetOpportunity } from "./tools/opportunities";
+import { handleGetLead } from "./tools/leads";
+import { handleGetSalesperson } from "./tools/salespersons";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -33,7 +38,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.6.0",
+    version: "0.7.0",
   });
 
   async init() {
@@ -437,6 +442,76 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ serviceOrderType, appointmentNbr }) => {
         return this.callTool(() =>
           handleGetAppointment(this.env, this.props.acumaticaUsername, { serviceOrderType, appointmentNbr })
+        );
+      }
+    );
+
+    // Tool 25: Contact Lookup
+    this.server.tool(
+      "acumatica_get_contact",
+      "Retrieve a CRM contact by contact ID. Returns name, email, phone, job title, company, business account, address, status, owner, and source.",
+      {
+        contactID: z.string().describe("Contact ID (numeric)"),
+      },
+      async ({ contactID }) => {
+        return this.callTool(() =>
+          handleGetContact(this.env, this.props.acumaticaUsername, { contactID })
+        );
+      }
+    );
+
+    // Tool 26: Business Account Lookup
+    this.server.tool(
+      "acumatica_get_business_account",
+      "Retrieve a business account (prospect, customer, or vendor) by ID. Returns name, type, status, class, main address, main contact, parent account, and owner.",
+      {
+        businessAccountID: z.string().describe("Business account ID"),
+      },
+      async ({ businessAccountID }) => {
+        return this.callTool(() =>
+          handleGetBusinessAccount(this.env, this.props.acumaticaUsername, { businessAccountID })
+        );
+      }
+    );
+
+    // Tool 27: Opportunity Lookup
+    this.server.tool(
+      "acumatica_get_opportunity",
+      "Retrieve a sales opportunity by ID. Returns subject, stage, status, amount, discount, total, business account, contact, products, source, and estimation date.",
+      {
+        opportunityID: z.string().describe("Opportunity ID"),
+      },
+      async ({ opportunityID }) => {
+        return this.callTool(() =>
+          handleGetOpportunity(this.env, this.props.acumaticaUsername, { opportunityID })
+        );
+      }
+    );
+
+    // Tool 28: Lead Lookup
+    this.server.tool(
+      "acumatica_get_lead",
+      "Retrieve a marketing lead by lead ID. Returns name, email, phone, company, status, source, class, owner, address, and qualification date.",
+      {
+        leadID: z.string().describe("Lead ID (numeric)"),
+      },
+      async ({ leadID }) => {
+        return this.callTool(() =>
+          handleGetLead(this.env, this.props.acumaticaUsername, { leadID })
+        );
+      }
+    );
+
+    // Tool 29: Salesperson Lookup
+    this.server.tool(
+      "acumatica_get_salesperson",
+      "Retrieve a salesperson by ID. Returns name, active status, default commission percentage, and sales subaccount.",
+      {
+        salespersonID: z.string().describe("Salesperson ID"),
+      },
+      async ({ salespersonID }) => {
+        return this.callTool(() =>
+          handleGetSalesperson(this.env, this.props.acumaticaUsername, { salespersonID })
         );
       }
     );
