@@ -820,6 +820,105 @@ export interface Salesperson extends Entity {
   LastModifiedDateTime?: DateTimeValue;
 }
 
+/** Shipment detail line */
+export interface ShipmentDetail extends Entity {
+  InventoryID?: StringValue;
+  Description?: StringValue;
+  LineNbr?: IntValue;
+  OrderType?: StringValue;
+  OrderNbr?: StringValue;
+  OrderLineNbr?: IntValue;
+  ShippedQty?: DecimalValue;
+  OrderedQty?: DecimalValue;
+  OpenQty?: DecimalValue;
+  OriginalQty?: DecimalValue;
+  UOM?: StringValue;
+  LocationID?: StringValue;
+  WarehouseID?: StringValue;
+  LotSerialNbr?: StringValue;
+  ReasonCode?: StringValue;
+}
+
+/** Shipment entity */
+export interface Shipment extends Entity {
+  ShipmentNbr?: StringValue;
+  Type?: StringValue;
+  Status?: StringValue;
+  Hold?: BooleanValue;
+  Operation?: StringValue;
+  CustomerID?: StringValue;
+  LocationID?: StringValue;
+  WarehouseID?: StringValue;
+  ShipVia?: StringValue;
+  ShipmentDate?: DateTimeValue;
+  ShippedQty?: DecimalValue;
+  ShippedWeight?: DecimalValue;
+  ShippedVolume?: DecimalValue;
+  PackageCount?: IntValue;
+  PackageWeight?: DecimalValue;
+  FreightCost?: DecimalValue;
+  FreightPrice?: DecimalValue;
+  ShippingTerms?: StringValue;
+  FOBPoint?: StringValue;
+  Description?: StringValue;
+  Details?: ShipmentDetail[];
+  Packages?: ShipmentPackage[];
+  CreatedDateTime?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+export interface ShipmentPackage extends Entity {
+  BoxID?: StringValue;
+  Description?: StringValue;
+  TrackingNbr?: StringValue;
+  Weight?: DecimalValue;
+  COD?: DecimalValue;
+  DeclaredValue?: DecimalValue;
+}
+
+/** Sales Invoice detail line */
+export interface SalesInvoiceDetail extends Entity {
+  Account?: StringValue;
+  Amount?: DecimalValue;
+  BranchID?: StringValue;
+  Description?: StringValue;
+  InventoryID?: StringValue;
+  LineNbr?: IntValue;
+  OrderNbr?: StringValue;
+  OrderType?: StringValue;
+  ShipmentNbr?: StringValue;
+  Qty?: DecimalValue;
+  UnitPrice?: DecimalValue;
+  DiscountAmount?: DecimalValue;
+  UOM?: StringValue;
+  WarehouseID?: StringValue;
+}
+
+/** Sales Invoice entity */
+export interface SalesInvoice extends Entity {
+  Type?: StringValue;
+  ReferenceNbr?: StringValue;
+  Status?: StringValue;
+  Hold?: BooleanValue;
+  Date?: DateTimeValue;
+  DueDate?: DateTimeValue;
+  CustomerID?: StringValue;
+  CustomerOrder?: StringValue;
+  Description?: StringValue;
+  Currency?: StringValue;
+  Amount?: DecimalValue;
+  Balance?: DecimalValue;
+  DetailTotal?: DecimalValue;
+  DiscountTotal?: DecimalValue;
+  TaxTotal?: DecimalValue;
+  FreightPrice?: DecimalValue;
+  PaymentTotal?: DecimalValue;
+  Project?: StringValue;
+  Details?: SalesInvoiceDetail[];
+  CreatedDate?: DateTimeValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
 /** Env bindings for the Cloudflare Worker */
 export interface Env {
   // Acumatica
