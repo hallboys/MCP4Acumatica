@@ -919,6 +919,68 @@ export interface SalesInvoice extends Entity {
   LastModifiedDateTime?: DateTimeValue;
 }
 
+/** Employee entity */
+export interface Employee extends Entity {
+  EmployeeID?: StringValue;
+  EmployeeName?: StringValue;
+  Status?: StringValue;
+  ContactInfo?: Contact;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Expense Claim detail line */
+export interface ExpenseClaimDetail extends Entity {
+  ClaimAmount?: DecimalValue;
+  Date?: DateTimeValue;
+  Description?: StringValue;
+  EmployeePart?: DecimalValue;
+  ExpenseAccount?: StringValue;
+  InventoryID?: StringValue;
+  Qty?: DecimalValue;
+  RefNbr?: StringValue;
+  UnitCost?: DecimalValue;
+}
+
+/** Expense Claim entity */
+export interface ExpenseClaim extends Entity {
+  RefNbr?: StringValue;
+  Status?: StringValue;
+  Description?: StringValue;
+  ClaimedBy?: StringValue;
+  Date?: DateTimeValue;
+  ClaimTotal?: DecimalValue;
+  TaxTotal?: DecimalValue;
+  CurrencyID?: StringValue;
+  CustomerID?: StringValue;
+  DepartmentID?: StringValue;
+  LocationID?: StringValue;
+  ApprovalDate?: DateTimeValue;
+  Details?: ExpenseClaimDetail[];
+  LastModifiedDateTime?: DateTimeValue;
+}
+
+/** Time Entry entity */
+export interface TimeEntry extends Entity {
+  TimeEntryID?: { value: string | null };
+  Employee?: StringValue;
+  Date?: DateTimeValue;
+  Summary?: StringValue;
+  EarningType?: StringValue;
+  ProjectID?: StringValue;
+  ProjectTaskID?: StringValue;
+  CostCode?: StringValue;
+  LaborItem?: StringValue;
+  TimeSpent?: StringValue;
+  Overtime?: StringValue;
+  BillableTime?: StringValue;
+  BillableOvertime?: StringValue;
+  Billable?: BooleanValue;
+  CostRate?: DecimalValue;
+  ApprovalStatus?: StringValue;
+  Approver?: StringValue;
+  LastModifiedDateTime?: DateTimeValue;
+}
+
 /** Env bindings for the Cloudflare Worker */
 export interface Env {
   // Acumatica

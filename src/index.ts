@@ -33,6 +33,9 @@ import { handleGetLead } from "./tools/leads";
 import { handleGetSalesperson } from "./tools/salespersons";
 import { handleGetShipment } from "./tools/shipments";
 import { handleGetSalesInvoice } from "./tools/sales-invoices";
+import { handleGetEmployee } from "./tools/employees";
+import { handleGetExpenseClaim } from "./tools/expense-claims";
+import { handleGetTimeEntry } from "./tools/time-entries";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -40,7 +43,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.8.0",
+    version: "0.9.0",
   });
 
   async init() {
@@ -546,6 +549,48 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, referenceNbr }) => {
         return this.callTool(() =>
           handleGetSalesInvoice(this.env, this.props.acumaticaUsername, { type, referenceNbr })
+        );
+      }
+    );
+
+    // Tool 32: Employee Lookup
+    this.server.tool(
+      "acumatica_get_employee",
+      "Retrieve an employee by employee ID. Returns name, status, contact info, employee settings, and financial settings.",
+      {
+        employeeID: z.string().describe("Employee ID (e.g., 'EP00000001')"),
+      },
+      async ({ employeeID }) => {
+        return this.callTool(() =>
+          handleGetEmployee(this.env, this.props.acumaticaUsername, { employeeID })
+        );
+      }
+    );
+
+    // Tool 33: Expense Claim Lookup
+    this.server.tool(
+      "acumatica_get_expense_claim",
+      "Retrieve an expense claim by reference number. Returns claimant, date, total, line items with amounts, tax details, approval status, and customer/department.",
+      {
+        refNbr: z.string().describe("Expense claim reference number"),
+      },
+      async ({ refNbr }) => {
+        return this.callTool(() =>
+          handleGetExpenseClaim(this.env, this.props.acumaticaUsername, { refNbr })
+        );
+      }
+    );
+
+    // Tool 34: Time Entry Lookup
+    this.server.tool(
+      "acumatica_get_time_entry",
+      "Retrieve a time entry by ID. Returns employee, date, project/task, time spent, billable time, overtime, earning type, cost rate, and approval status.",
+      {
+        timeEntryID: z.string().describe("Time entry ID (GUID)"),
+      },
+      async ({ timeEntryID }) => {
+        return this.callTool(() =>
+          handleGetTimeEntry(this.env, this.props.acumaticaUsername, { timeEntryID })
         );
       }
     );
