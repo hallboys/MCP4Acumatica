@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.2.0`
+- **Current tag:** `25R2-0.9.0`
 - **Deployed at:** `https://acumatica-mcp-server.it-495.workers.dev`
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -24,15 +24,8 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /callback  ← Acumatica   │
 │    ├─ /token, /register (DCR)   │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ acumatica_get_customer │
-│       ├─ acumatica_get_vendor   │
-│       ├─ acumatica_get_sales_order │
-│       ├─ acumatica_get_invoice  │
-│       ├─ acumatica_get_bill     │
-│       ├─ acumatica_get_journal_transaction │
-│       ├─ acumatica_get_payment  │
-│       ├─ acumatica_get_account  │
-│       └─ acumatica_get_check    │
+│       ├─ 34 read-only tools      │
+│       │  (see Tools section)     │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
                ▼
@@ -82,16 +75,37 @@ src/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   └── logger.ts                  # Structured JSON audit logging
-├── tools/
-│   ├── accounts.ts                # acumatica_get_account
-│   ├── bills.ts                   # acumatica_get_bill
-│   ├── checks.ts                  # acumatica_get_check
+├── tools/                         # 34 read-only tools across 8 modules
+│   ├── accounts.ts                # acumatica_get_account (GL)
+│   ├── appointments.ts            # acumatica_get_appointment (Field Service)
+│   ├── bills.ts                   # acumatica_get_bill (AP)
+│   ├── business-accounts.ts       # acumatica_get_business_account (CRM)
+│   ├── cases.ts                   # acumatica_get_case (Support)
+│   ├── checks.ts                  # acumatica_get_check (AP)
+│   ├── contacts.ts                # acumatica_get_contact (CRM)
 │   ├── customers.ts               # acumatica_get_customer
-│   ├── invoices.ts                # acumatica_get_invoice
-│   ├── journal-transactions.ts    # acumatica_get_journal_transaction
-│   ├── payments.ts                # acumatica_get_payment
+│   ├── employees.ts               # acumatica_get_employee (HR)
+│   ├── expense-claims.ts          # acumatica_get_expense_claim (HR)
+│   ├── inventory-availability.ts  # acumatica_get_inventory_quantity_available, _summary
+│   ├── invoices.ts                # acumatica_get_invoice (AR)
+│   ├── item-classes.ts            # acumatica_get_item_class (Inventory)
+│   ├── journal-transactions.ts    # acumatica_get_journal_transaction (GL)
+│   ├── leads.ts                   # acumatica_get_lead (CRM)
+│   ├── non-stock-items.ts         # acumatica_get_non_stock_item (Inventory)
+│   ├── opportunities.ts           # acumatica_get_opportunity (CRM)
+│   ├── payments.ts                # acumatica_get_payment (AR)
+│   ├── projects.ts                # acumatica_get_project, _task, _budget, _transaction
+│   ├── purchase-orders.ts         # acumatica_get_purchase_order
+│   ├── purchase-receipts.ts       # acumatica_get_purchase_receipt
+│   ├── sales-invoices.ts          # acumatica_get_sales_invoice
 │   ├── sales-orders.ts            # acumatica_get_sales_order
-│   └── vendors.ts                 # acumatica_get_vendor
+│   ├── salespersons.ts            # acumatica_get_salesperson (CRM)
+│   ├── service-orders.ts          # acumatica_get_service_order (Field Service)
+│   ├── shipments.ts               # acumatica_get_shipment
+│   ├── stock-items.ts             # acumatica_get_stock_item (Inventory)
+│   ├── time-entries.ts            # acumatica_get_time_entry (HR)
+│   ├── vendors.ts                 # acumatica_get_vendor
+│   └── warehouses.ts              # acumatica_get_warehouse (Inventory)
 └── types/
     └── acumatica.ts               # All TypeScript types, Env interface, AuthProps
 ```
@@ -153,44 +167,16 @@ npx wrangler kv namespace create X  # Create KV namespace
 
 ## TODO — Remaining Project Work
 
-### Completed
-- [x] Add Financial/Accounting read-only tools: Invoice, Bill, JournalTransaction, Payment, Account, Check (0.2.0)
-
-### High Priority — Read-Only Tools by Module
-
-**Inventory & Warehouse:**
-- [ ] StockItem — inventory items with cost, price, qty on hand
-- [ ] NonStockItem — service/labor/expense items
-- [ ] InventoryQuantityAvailable — real-time available qty inquiry
-- [ ] InventorySummaryInquiry — aggregated inventory balances
-- [ ] Warehouse — warehouse/location master data
-- [ ] ItemClass — item classification and defaults
-
-**Purchasing:**
-- [ ] PurchaseOrder — PO header + lines, vendor, status
-- [ ] PurchaseReceipt — goods received against POs
-
-**Shipping & Fulfillment:**
-- [ ] Shipment — shipment header, packages, tracking
-- [ ] SalesInvoice — invoice generated from shipment
-
-**Sales & CRM:**
-- [ ] Contact — contact records (name, email, phone, address)
-- [ ] BusinessAccount — prospect/customer/vendor unified record
-- [ ] Opportunity — sales pipeline deals with stages and amounts
-- [ ] Lead — marketing leads with status and source
-- [ ] Salesperson — sales rep master data with commissions
-
-**Projects:**
-- [ ] Project — project header, status, billing rules
-- [ ] ProjectTask — tasks within a project
-- [ ] ProjectBudget — project budget lines (revenue, cost)
-- [ ] ProjectTransaction — project cost/revenue transactions
-
-**HR & Payroll:**
-- [ ] Employee — employee master data
-- [ ] ExpenseClaim — employee expense reports
-- [ ] TimeEntry — time tracking entries
+### Completed — Read-Only Tools (34 total, 0.2.0–0.9.0)
+- [x] Core: Customer, Vendor, SalesOrder (0.1.0)
+- [x] Financial/Accounting: Invoice, Bill, JournalTransaction, Payment, Account, Check (0.2.0)
+- [x] Inventory & Warehouse: StockItem, NonStockItem, InventoryQuantityAvailable, InventorySummaryInquiry, Warehouse, ItemClass (0.3.0)
+- [x] Purchasing: PurchaseOrder, PurchaseReceipt (0.4.0)
+- [x] Projects: Project, ProjectTask, ProjectBudget, ProjectTransaction (0.5.0)
+- [x] Service & Field: Case, ServiceOrder, Appointment (0.6.0)
+- [x] Sales & CRM: Contact, BusinessAccount, Opportunity, Lead, Salesperson (0.7.0)
+- [x] Shipping & Fulfillment: Shipment, SalesInvoice (0.8.0)
+- [x] HR & Payroll: Employee, ExpenseClaim, TimeEntry (0.9.0)
 
 ### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
