@@ -12,7 +12,8 @@
     "@cloudflare/workers-oauth-provider": "^0.3.2",
     "@cloudflare/workers-types": "^4.20250312.0",
     "agents": "^0.0.98",
-    "hono": "^4.12.9"
+    "hono": "^4.12.9",
+    "marked": "^18.0.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

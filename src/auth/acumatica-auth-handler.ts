@@ -3,6 +3,7 @@
 
 import { Hono } from "hono";
 import type { Env } from "../types/acumatica";
+import { docsApp } from "../docs/docs-handler";
 
 type AuthEnv = Env & {
   COOKIE_ENCRYPTION_KEY: string;
@@ -176,7 +177,10 @@ app.get("/callback", async (c) => {
 });
 
 // Health check
-app.get("/", (c) => c.json({ status: "ok", service: "acumatica-mcp-server" }));
 app.get("/health", (c) => c.json({ status: "ok", service: "acumatica-mcp-server" }));
+
+// Documentation site
+app.route("/docs", docsApp);
+app.get("/", (c) => c.redirect("/docs"));
 
 export { app as AcumaticaAuthHandler };
