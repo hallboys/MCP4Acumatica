@@ -37,6 +37,7 @@ import { handleGetEmployee } from "./tools/employees";
 import { handleGetExpenseClaim } from "./tools/expense-claims";
 import { handleGetTimeEntry } from "./tools/time-entries";
 import { handleGetEmail, handleGetEvent, handleGetActivity, handleGetTask } from "./tools/crm-activities";
+import { handleRunInquiry } from "./tools/generic-inquiries";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -44,7 +45,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.10.0",
+    version: "0.11.0",
   });
 
   async init() {
@@ -648,6 +649,35 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ noteID }) => {
         return this.callTool(() =>
           handleGetTask(this.env, this.props.acumaticaUsername, { noteID })
+        );
+      }
+    );
+
+    // Tool 39: Generic Inquiry
+    this.server.tool(
+      "acumatica_run_inquiry",
+      "Execute any configured Generic Inquiry (GI) in Acumatica and return filtered results. Use this for custom reports, cross-entity queries, or any GI screen.",
+      {
+        inquiryName: z
+          .string()
+          .describe("Generic Inquiry name as configured in Acumatica (e.g., 'GI000001')"),
+        filters: z
+          .record(z.unknown())
+          .optional()
+          .describe("Key-value pairs for OData $filter (e.g., { BranchID: 'BTC', Status: 'Open' })"),
+        topN: z
+          .number()
+          .int()
+          .default(100)
+          .describe("Maximum number of rows to return (default 100)"),
+        select: z
+          .array(z.string())
+          .optional()
+          .describe("Specific fields to return (e.g., ['CustomerID', 'Balance'])"),
+      },
+      async ({ inquiryName, filters, topN, select }) => {
+        return this.callTool(() =>
+          handleRunInquiry(this.env, this.props.acumaticaUsername, { inquiryName, filters, topN, select })
         );
       }
     );
