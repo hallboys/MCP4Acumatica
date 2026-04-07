@@ -39,6 +39,7 @@ import { handleGetTimeEntry } from "./tools/time-entries";
 import { handleGetEmail, handleGetEvent, handleGetActivity, handleGetTask } from "./tools/crm-activities";
 import { handleRunInquiry } from "./tools/generic-inquiries";
 import { handleListEntities } from "./tools/entity-list";
+import { handleDescribeEntity } from "./tools/entity-schema";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
@@ -46,7 +47,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.12.0",
+    version: "0.13.0",
   });
 
   async init() {
@@ -726,6 +727,22 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
             orderBy,
             expand,
           })
+        );
+      }
+    );
+
+    // Tool 41: Describe Entity Schema
+    this.server.tool(
+      "acumatica_describe_entity",
+      "Describe the fields and structure of any Acumatica entity. Call this before using acumatica_list_entities to discover available field names, types, and sub-entities for filtering, sorting, and selection.",
+      {
+        entityName: z
+          .string()
+          .describe("Acumatica entity name (e.g., 'Customer', 'Invoice', 'SalesOrder', 'StockItem')"),
+      },
+      async ({ entityName }) => {
+        return this.callTool(() =>
+          handleDescribeEntity(this.env, this.props.acumaticaUsername, { entityName })
         );
       }
     );
