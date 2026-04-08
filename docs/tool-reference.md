@@ -60,7 +60,7 @@ Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom re
 | `topN` | string | No | `"100"` | Maximum rows to return |
 | `selectFields` | string | No | -- | Comma-separated field names to return |
 
-**Endpoint:** `GET /entity/Default/25.200.001/{inquiryName}?$filter=...&$top=...&$select=...`
+**Endpoint:** `GET /t/{Company}/api/odata/gi/{inquiryName}?$filter=...&$top=...&$select=...`
 
 ---
 
@@ -73,9 +73,9 @@ List all Generic Inquiries (GIs) configured in Acumatica. Returns inquiry names,
 | `titleFilter` | string | No | -- | Partial title match to narrow results (case-insensitive contains) |
 | `topN` | string | No | `"200"` | Maximum number of GIs to return |
 
-**Endpoint:** `GET /entity/Default/25.200.001/GenericInquiry?$select=InquiryID,InquiryTitle,ScreenID,IsVisible&$filter=IsVisible eq true`
+**Endpoint:** `GET /t/{Company}/api/odata/gi` (OData service document)
 
-**Returns:** Array of `{ inquiryName, title, screenID }` for each visible GI.
+**Returns:** Array of `{ inquiryName, url }` for each OData-exposed GI. Client-side title filtering is applied when `titleFilter` is provided.
 
 ---
 
@@ -87,7 +87,9 @@ Returns the field schema for a specific Generic Inquiry (GI) — field names and
 |-----------|------|----------|-------------|
 | `inquiryName` | string | Yes | GI name as configured in Acumatica. Use `acumatica_list_generic_inquiries` to discover names. |
 
-**Approach:** Probes the GI with `$top=1` to retrieve a sample row and infers field names and data types from the response.
+**Endpoint:** `GET /t/{Company}/api/odata/gi/{inquiryName}?$top=1`
+
+**Approach:** Probes the GI via OData with `$top=1` to retrieve a sample row and infers field names and data types from the response.
 
 **Returns:** `{ inquiryName, fields: [{ fieldName, dataType }], sampleRow, note }`.
 

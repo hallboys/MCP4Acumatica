@@ -2,7 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Env } from "../types/acumatica";
-import { AcumaticaClient, AcumaticaApiError, unwrapFields } from "../lib/acumatica-client";
+import { AcumaticaClient, AcumaticaApiError } from "../lib/acumatica-client";
+
+/** OData service document entry */
+interface ODataServiceEntry {
+  name: string;
+  url: string;
+}
+
+/** OData service document response */
+interface ODataServiceDocument {
+  value: ODataServiceEntry[];
+}
 
 export async function handleListGenericInquiries(
   env: Env,
@@ -16,43 +27,49 @@ export async function handleListGenericInquiries(
   const client = new AcumaticaClient(env, acumaticaUsername);
   const effectiveTop = Math.min(args.topN ?? 200, MAX_TOP);
 
-  const query: Record<string, string> = {
-    $select: "InquiryID,InquiryTitle,ScreenID,IsVisible",
-    $filter: "IsVisible eq true",
-    $top: String(effectiveTop),
-  };
-
-  if (args.titleFilter) {
-    query.$filter = `IsVisible eq true and substringof('${args.titleFilter}', InquiryTitle)`;
-  }
-
   try {
-    const results = await client.get<unknown[]>(
-      "GenericInquiry",
+    // OData service document lists all exposed GIs
+    const serviceDoc = await client.getOData<ODataServiceDocument>(
+      "",
       "acumatica_list_generic_inquiries",
-      { titleFilter: args.titleFilter, topN: args.topN },
-      query
+      { titleFilter: args.titleFilter, topN: effectiveTop }
     );
 
-    const unwrapped = Array.isArray(results) ? results.map(unwrapFields) : [];
-
-    // Reshape to cleaner output
-    const items = (unwrapped as Record<string, unknown>[]).map((row) => ({
-      inquiryName: row.InquiryID,
-      title: row.InquiryTitle,
-      screenID: row.ScreenID,
+    let items = (serviceDoc.value || []).map((entry) => ({
+      inquiryName: entry.name,
+      url: entry.url,
     }));
 
+    // Client-side title filter (OData service document doesn't support $filter)
+    if (args.titleFilter) {
+      const filter = args.titleFilter.toLowerCase();
+      items = items.filter((item) =>
+        item.inquiryName.toLowerCase().includes(filter)
+      );
+    }
+
+    // Apply top limit
+    if (items.length > effectiveTop) {
+      items = items.slice(0, effectiveTop);
+    }
+
     if (items.length === 0) {
-      return { results: [], note: "No visible Generic Inquiries found matching the criteria." };
+      return { results: [], note: "No Generic Inquiries found matching the criteria." };
     }
 
     return items;
   } catch (error) {
-    if (error instanceof AcumaticaApiError && error.statusCode === 404) {
-      return {
-        error: "GenericInquiry entity not available. Check API user permissions or Acumatica version.",
-      };
+    if (error instanceof AcumaticaApiError) {
+      if (error.statusCode === 401 || error.statusCode === 403) {
+        return {
+          error: "OData GI endpoint requires authentication. The Bearer token may not be accepted by the OData interface — check Acumatica API user permissions.",
+        };
+      }
+      if (error.statusCode === 404) {
+        return {
+          error: "OData GI endpoint not available. Ensure Generic Inquiries are exposed via OData in your Acumatica instance.",
+        };
+      }
     }
     throw error;
   }
@@ -72,6 +89,11 @@ function inferType(value: unknown): string {
   return "object";
 }
 
+/** OData query response with value array */
+interface ODataQueryResponse {
+  value: Record<string, unknown>[];
+}
+
 export async function handleDescribeInquiry(
   env: Env,
   acumaticaUsername: string,
@@ -81,16 +103,16 @@ export async function handleDescribeInquiry(
 
   // Probe with $top=1 to get a sample row and infer fields
   try {
-    const results = await client.get<unknown[]>(
+    const response = await client.getOData<ODataQueryResponse>(
       args.inquiryName,
       "acumatica_describe_inquiry",
       { inquiryName: args.inquiryName },
       { $top: "1" }
     );
 
-    const unwrapped = Array.isArray(results) ? results.map(unwrapFields) : [];
+    const rows = response.value || [];
 
-    if (unwrapped.length === 0) {
+    if (rows.length === 0) {
       return {
         inquiryName: args.inquiryName,
         fields: [],
@@ -99,12 +121,15 @@ export async function handleDescribeInquiry(
       };
     }
 
-    const sampleRow = unwrapped[0] as Record<string, unknown>;
+    const sampleRow = rows[0];
 
-    const fields = Object.entries(sampleRow).map(([fieldName, value]) => ({
-      fieldName,
-      dataType: inferType(value),
-    }));
+    // Filter out OData metadata fields
+    const fields = Object.entries(sampleRow)
+      .filter(([key]) => !key.startsWith("@odata"))
+      .map(([fieldName, value]) => ({
+        fieldName,
+        dataType: inferType(value),
+      }));
 
     return {
       inquiryName: args.inquiryName,
@@ -116,7 +141,7 @@ export async function handleDescribeInquiry(
     if (error instanceof AcumaticaApiError) {
       if (error.statusCode === 404) {
         return {
-          error: `GI '${args.inquiryName}' not found. Use acumatica_list_generic_inquiries to verify the name.`,
+          error: `GI '${args.inquiryName}' not found. Use acumatica_list_generic_inquiries to discover available GI names.`,
         };
       }
       if (error.statusCode === 400) {
