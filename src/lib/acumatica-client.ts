@@ -130,6 +130,43 @@ export class AcumaticaClient {
     });
   }
 
+  /**
+   * Fetch the OData GI $metadata document as raw XML text.
+   */
+  async getODataMetadata(toolName: string): Promise<string> {
+    return withRateLimit(async () => {
+      const start = Date.now();
+      const url = `${this.env.ACUMATICA_URL}/t/${this.env.ACUMATICA_TENANT}/api/odata/gi/$metadata`;
+
+      let token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
+      let response = await this.doFetch(url, token);
+
+      if (response.status === 401) {
+        token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
+        response = await this.doFetch(url, token);
+      }
+
+      const durationMs = Date.now() - start;
+      logToolInvocation({
+        timestamp: new Date().toISOString(),
+        tool: toolName,
+        params: {},
+        endpoint: "GET odata/gi/$metadata",
+        statusCode: response.status,
+        durationMs,
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        const message = this.friendlyError(response.status, body, "odata/gi/$metadata");
+        logError(toolName, message);
+        throw new AcumaticaApiError(response.status, body, message);
+      }
+
+      return response.text();
+    });
+  }
+
   private buildUrl(path: string, query: Record<string, string>): string {
     const url = new URL(`${this.baseUrl}/${path}`);
     for (const [key, value] of Object.entries(query)) {
