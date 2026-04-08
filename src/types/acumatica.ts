@@ -1071,7 +1071,8 @@ export interface Env {
   ACUMATICA_CLIENT_SECRET: string;
   TOKEN_STORE: KVNamespace;
   COOKIE_ENCRYPTION_KEY: string;
-  // OAuth provider
+  // OAuth provider — OAUTH_KV is required by @cloudflare/workers-oauth-provider internally
+  OAUTH_KV: KVNamespace;
   OAUTH_PROVIDER: OAuthProviderHelpers;
   // Durable Object
   MCP_OBJECT: DurableObjectNamespace;

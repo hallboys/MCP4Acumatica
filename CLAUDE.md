@@ -142,6 +142,7 @@ src/
 
 ### KV Namespaces:
 - `TOKEN_STORE` — per-user Acumatica tokens and temporary OAuth state during login
+- `OAUTH_KV` — required by `@cloudflare/workers-oauth-provider` internally (points to the same physical namespace as `TOKEN_STORE`)
 
 ### Acumatica Connected Application (SM303010):
 - **Redirect URI:** `https://acumatica-mcp.hallboys.com/callback` (add both custom domain and workers.dev URLs if using both)

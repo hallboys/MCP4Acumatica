@@ -13,13 +13,18 @@
 	"vars": {
 		"ACUMATICA_ENDPOINT_VERSION": "25.200.001"
 	},
-	// KV namespace — create with:
+	// KV namespaces — create ONE namespace, use the same ID for both bindings.
+	// TOKEN_STORE is used by our code. OAUTH_KV is required by @cloudflare/workers-oauth-provider.
 	//   npx wrangler kv namespace create TOKEN_STORE
-	// Then replace the ID below
+	// Then use the returned ID for BOTH bindings below.
 	"kv_namespaces": [
 		{
 			"binding": "TOKEN_STORE",
-			"id": "<your-token-store-kv-id>"
+			"id": "<your-kv-namespace-id>"
+		},
+		{
+			"binding": "OAUTH_KV",
+			"id": "<your-kv-namespace-id>"
 		}
 	],
 

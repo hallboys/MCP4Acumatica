@@ -68,7 +68,7 @@ In your Acumatica instance, navigate to **System > Integration > Connected Appli
 npx wrangler kv namespace create TOKEN_STORE
 ```
 
-Note the namespace ID from the output.
+Note the namespace ID from the output. You'll use this same ID for both the `TOKEN_STORE` and `OAUTH_KV` bindings in the next step.
 
 ### 4. Configure wrangler
 
@@ -77,7 +77,7 @@ cp wrangler.jsonc.example wrangler.jsonc
 ```
 
 Edit `wrangler.jsonc` and fill in:
-- Your KV namespace ID from step 3
+- Your KV namespace ID from step 3 (for both `TOKEN_STORE` and `OAUTH_KV` bindings)
 - `ACUMATICA_URL` -- your Acumatica instance URL (e.g., `https://yourcompany.acumatica.com`)
 - `ACUMATICA_COMPANY` -- your Acumatica company/tenant name
 

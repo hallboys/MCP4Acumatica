@@ -111,10 +111,13 @@ HTTP client for the Acumatica contract-based REST API. Features:
 
 ### 5. KV Namespaces
 
-| Namespace | Purpose | Key Pattern | TTL |
-|-----------|---------|-------------|-----|
+Both bindings point to the same physical KV namespace (one namespace, two bindings).
+
+| Binding | Purpose | Key Pattern | TTL |
+|---------|---------|-------------|-----|
 | `TOKEN_STORE` | Per-user Acumatica OAuth tokens | `user_token:{username}` | None (refreshed on expiry) |
 | `TOKEN_STORE` | Temporary OAuth state during login flow | `acumatica_state:{state}` | 10 minutes |
+| `OAUTH_KV` | Used internally by `@cloudflare/workers-oauth-provider` for client registrations and authorization codes | Managed by library | Managed by library |
 
 ---
 
@@ -313,7 +316,7 @@ docs/
 |------|----------|---------|
 | Environment variables | `wrangler.jsonc` `vars` | `ACUMATICA_URL`, `ACUMATICA_ENDPOINT_VERSION` |
 | Secrets | `wrangler secret put` | `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY` |
-| KV bindings | `wrangler.jsonc` `kv_namespaces` | `TOKEN_STORE` |
+| KV bindings | `wrangler.jsonc` `kv_namespaces` | `TOKEN_STORE`, `OAUTH_KV` (same namespace) |
 | DO binding | `wrangler.jsonc` `durable_objects` | `MCP_OBJECT` (must be this name) |
 
 ### Deploy Command
