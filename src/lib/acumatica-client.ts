@@ -75,57 +75,8 @@ export class AcumaticaClient {
     });
   }
 
-  /**
-   * Make a GET request to the Acumatica OData GI endpoint.
-   * Uses /t/{COMPANY}/api/odata/gi/{path} instead of the contract-based REST path.
-   * OData responses do NOT use {value: X} wrapping — do not run unwrapFields().
-   */
-  async getOData<T>(
-    path: string,
-    toolName: string,
-    params: Record<string, unknown> = {},
-    query: Record<string, string> = {}
-  ): Promise<T> {
-    return withRateLimit(async () => {
-      const start = Date.now();
-      const odataBase = `${this.env.ACUMATICA_URL}/t/${this.env.ACUMATICA_COMPANY}/api/odata/gi`;
-      const url = this.buildUrl(path, query, odataBase);
-
-      let token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
-      let response = await this.doFetch(url, token);
-
-      if (response.status === 401) {
-        token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
-        response = await this.doFetch(url, token);
-      }
-
-      const durationMs = Date.now() - start;
-      const endpoint = `GET odata/gi/${path}`;
-
-      logToolInvocation({
-        timestamp: new Date().toISOString(),
-        tool: toolName,
-        params,
-        endpoint,
-        statusCode: response.status,
-        durationMs,
-      });
-
-      if (!response.ok) {
-        const body = await response.text();
-        const message = this.friendlyError(response.status, body, `odata/gi/${path}`);
-        logError(toolName, message);
-        throw new AcumaticaApiError(response.status, body, message);
-      }
-
-      return (await response.json()) as T;
-    });
-  }
-
-  private buildUrl(path: string, query: Record<string, string>, baseUrl?: string): string {
-    const base = baseUrl ?? this.baseUrl;
-    const separator = path ? "/" : "";
-    const url = new URL(`${base}${separator}${path}`);
+  private buildUrl(path: string, query: Record<string, string>): string {
+    const url = new URL(`${this.baseUrl}/${path}`);
     for (const [key, value] of Object.entries(query)) {
       if (value) {
         url.searchParams.set(key, value);
