@@ -58,6 +58,7 @@ export class AcumaticaClient {
       logToolInvocation({
         timestamp: new Date().toISOString(),
         tool: toolName,
+        acumaticaUsername: this.acumaticaUsername,
         params,
         endpoint,
         statusCode: response.status,
@@ -113,6 +114,7 @@ export class AcumaticaClient {
       logToolInvocation({
         timestamp: new Date().toISOString(),
         tool: toolName,
+        acumaticaUsername: this.acumaticaUsername,
         params,
         endpoint,
         statusCode: response.status,
@@ -150,6 +152,7 @@ export class AcumaticaClient {
       logToolInvocation({
         timestamp: new Date().toISOString(),
         tool: toolName,
+        acumaticaUsername: this.acumaticaUsername,
         params: {},
         endpoint: "GET odata/gi/$metadata",
         statusCode: response.status,

@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.18.1`
+- **Current tag:** `25R2-0.19.0`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://acumatica-mcp-server.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -37,15 +37,25 @@ Claude (claude.ai / Desktop / API)
 
 ## OAuth Flow
 
-Single-step: Claude → Worker `/authorize` → Acumatica login → Worker `/callback` → token stored → MCP session active.
+Claude → Worker `/authorize` → Acumatica login (with `openid profile email api` scopes) → Worker `/callback` → OIDC userinfo → canary GI role check → `/consent` interstitial → token stored → MCP session active.
 
 Acumatica is the sole identity provider. Users log in with their Acumatica credentials (or via whatever SSO their Acumatica instance is configured with). The MCP server does not manage identity separately — it delegates entirely to Acumatica.
+
+### Access Control & Governance
+
+1. **Role gate (canary GI):** After login, the callback queries the `MCPAccess` Generic Inquiry via OData. This GI is assigned only to the `MCP Access` role in Acumatica. If the OData query returns 200, the user has the role; if 403, they don't. This avoids exposing user/role data — the GI content is irrelevant, it's purely an access gate. Users without the role see a 403 page directing them to contact their Acumatica admin. The role name is configurable via `ACUMATICA_MCP_ROLE` env var.
+
+2. **Consent interstitial:** Users who pass the role check see a consent page explaining that data will be processed by AI, access is logged, and sensitive fields are redacted. They must acknowledge before the MCP session activates.
+
+3. **Sensitive field redaction:** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) using pattern matching. Matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` (add) and `REDACT_SKIP` (whitelist) env vars. See `src/lib/redact.ts`.
+
+4. **Enhanced audit logging:** All tool invocations include the Acumatica username. Auth events (login success, access denied, consent accepted) and field redaction events are logged separately. View with `npx wrangler tail`.
 
 ## Key Design Decisions
 
 1. **Acumatica as sole OAuth provider.** The MCP server redirects directly to Acumatica for login. No separate identity provider layer. See "Historical Note" below for why.
 
-2. **Per-user Acumatica tokens.** Each MCP user gets their own Acumatica OAuth token stored in KV keyed by `user_token:{acumaticaUsername}`. The user's Acumatica role governs record-level access — the MCP server does not enforce permissions itself.
+2. **Per-user Acumatica tokens.** Each MCP user gets their own Acumatica OAuth token stored in KV keyed by `user_token:{acumaticaUsername}`. The user's Acumatica role governs record-level access. The MCP server additionally requires the `MCP Access` role (gate check) and applies sensitive field redaction before returning data to Claude.
 
 3. **`@cloudflare/workers-oauth-provider`** wraps the entire worker. It acts as an OAuth 2.1 server for Claude, handling both CIMD (Client ID Metadata Documents, preferred) and DCR (Dynamic Client Registration, fallback) for client registration, plus token issuance, etc. The `defaultHandler` (Hono app) manages the Acumatica OAuth redirect flow. The `apiHandler` (McpAgent DO) handles `/mcp` requests with bearer token auth. CIMD requires the `global_fetch_strictly_public` compatibility flag in wrangler.jsonc for SSRF protection.
 
@@ -70,7 +80,7 @@ Old Entra-related secrets (`ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, `ENTRA_TENA
 src/
 ├── index.ts                       # Entry point — OAuthProvider + AcumaticaMcpServer (McpAgent DO)
 ├── auth/
-│   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, OIDC discovery, health)
+│   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, /consent, role gate, OIDC discovery)
 │   └── acumatica-oauth.ts         # Per-user token retrieval + refresh from KV
 ├── docs/
 │   ├── docs-handler.ts            # Hono sub-app: renders markdown docs to HTML
@@ -78,7 +88,8 @@ src/
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
-│   └── logger.ts                  # Structured JSON audit logging
+│   ├── logger.ts                  # Structured JSON audit logging (tool, auth, redaction events)
+│   └── redact.ts                  # Pattern-based sensitive field redaction
 ├── tools/                         # 41 tools across 10 modules + 3 utility
 │   ├── accounts.ts                # acumatica_get_account (GL)
 │   ├── appointments.ts            # acumatica_get_appointment (Field Service)
@@ -135,6 +146,9 @@ src/
 - `ACUMATICA_TENANT` — Acumatica tenant/login company name (e.g., `Production`). Used for OData GI endpoint URL.
 - `ACUMATICA_ENDPOINT_VERSION` — `25.200.001`
 - `ACUMATICA_MAX_RECORDS` — max rows per query (default `1000`)
+- `ACUMATICA_MCP_ROLE` — Acumatica role name required to use MCP (default `"MCP Access"`)
+- `REDACT_PATTERNS` — comma-separated additional field name patterns to redact (e.g., `CustomSSN,EmployeeNotes`)
+- `REDACT_SKIP` — comma-separated field name patterns to whitelist from redaction (e.g., `BirthDate`)
 
 ### Secrets (via `wrangler secret put` or `.dev.vars`):
 - `ACUMATICA_CLIENT_ID` — from Acumatica Connected Application (SM303010)
@@ -147,7 +161,12 @@ src/
 
 ### Acumatica Connected Application (SM303010):
 - **Redirect URI:** `https://acumatica-mcp.hallboys.com/callback` (add both custom domain and workers.dev URLs if using both)
-- **Scope:** `api`
+- **Scope:** `api openid profile email`
+
+### Acumatica Role & GI Prerequisites:
+- **Role:** Create `MCP Access` role (SM201005). No permissions needed — it's a marker role for the canary GI gate check.
+- **Generic Inquiry:** Create `MCPAccess` GI (SM208000). Can be trivial (any single column). Assign it only to the `MCP Access` role. Enable **Expose via OData**.
+- **User assignment:** Assign the `MCP Access` role to users who should have AI assistant access.
 
 ## Tech Stack
 
@@ -172,7 +191,9 @@ npx wrangler kv namespace create X  # Create KV namespace
 
 ## Known Issues / Tech Debt
 
-- The user info endpoint (`/entity/auth/25.200.001/UserSecurityInfo`) used to get the Acumatica username after login has not been fully validated — if it fails, the code falls back to a UUID-based key which would break token reuse across sessions
+- **User identity retrieval:** The OIDC `/identity/connect/userinfo` endpoint (with `openid profile email` scopes) is the primary method. Falls back to `/entity/auth/25.200.001/UserSecurityInfo` which may not exist on all instances. If both fail, username defaults to a UUID-based key (breaks token reuse across sessions).
+- **Acumatica system entities not available via contract API:** `User`, `UserRole`, and screen-based API (`/entity/Default/.../screen/SM201010`) all return 404 on SaaS instances. The canary GI approach for role checking was adopted because of this limitation.
+- **`$select` on some entities causes Acumatica 500:** Some entities (e.g., Payment) return internal server errors when `$select` is used with certain field names. The `acumatica_list_entities` tool auto-retries without `$select` when this occurs.
 - Old Entra ID secrets may still exist on Cloudflare — clean up with `wrangler secret delete ENTRA_CLIENT_ID`, etc.
 - **Zod schema constraint:** MCP tool parameter schemas MUST use only simple types (`z.string()`, `z.string().optional()`, `z.string().default("value")`). Complex types like `z.record()`, `z.unknown()`, `z.number()` cause MCP SDK JSON Schema serialization failures and tools won't appear in client discovery. Use `z.string()` with manual `parseInt()` in the handler for numeric parameters.
 - **ChatGPT CIMD bug (as of April 2026):** ChatGPT's MCP client sees `client_id_metadata_document_supported: true` in our metadata but fails to complete CIMD (it doesn't have its own metadata document URL) and does not auto-fallback to DCR. Users must manually select DCR when adding the server in ChatGPT. Our server correctly advertises both — this is a ChatGPT client-side issue.
@@ -203,10 +224,17 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [x] docs/tool-reference.md, example-prompts.md, odata-filtering.md, architecture.md
 - [x] CIMD support enabled alongside DCR, OpenID Connect discovery endpoint added (0.15.0)
 
+### Completed — Access Control & Governance (0.19.0)
+- [x] Role gate via canary GI (`MCPAccess` GI assigned to `MCP Access` role, queried via OData)
+- [x] Consent interstitial page between role check and MCP session activation
+- [x] Sensitive field redaction (pattern-based, configurable via REDACT_PATTERNS/REDACT_SKIP)
+- [x] Enhanced audit logging (username in all entries, auth events, redaction events)
+- [x] OIDC userinfo for identity (openid profile email scopes)
+- [x] Auto-retry without $select on entity list 500 errors
+
 ### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
 - [ ] Add action tools: Release Invoice, Confirm Shipment (per project brief Phase 3)
-- [ ] Validate the Acumatica user info endpoint works reliably for username retrieval
 - [ ] Better error message when refresh token expires (tell user to reconnect)
 
 ### Low Priority — Read-Only Tools

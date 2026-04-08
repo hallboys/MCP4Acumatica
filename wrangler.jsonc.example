@@ -13,7 +13,10 @@
 	"vars": {
 		"ACUMATICA_TENANT": "YourTenant",
 		"ACUMATICA_ENDPOINT_VERSION": "25.200.001",
-		"ACUMATICA_MAX_RECORDS": "1000"
+		"ACUMATICA_MAX_RECORDS": "1000",
+		"ACUMATICA_MCP_ROLE": "MCP Access",
+		"REDACT_PATTERNS": "",
+		"REDACT_SKIP": ""
 	},
 	// KV namespaces — create ONE namespace, use the same ID for both bindings.
 	// TOKEN_STORE is used by our code. OAUTH_KV is required by @cloudflare/workers-oauth-provider.

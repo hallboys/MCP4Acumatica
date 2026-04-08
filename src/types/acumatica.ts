@@ -1077,6 +1077,12 @@ export interface Env {
   OAUTH_PROVIDER: OAuthProviderHelpers;
   // Durable Object
   MCP_OBJECT: DurableObjectNamespace;
+  // Access control — Acumatica role required to use MCP (default: "MCP Access")
+  ACUMATICA_MCP_ROLE?: string;
+  // Field redaction — comma-separated additional field name patterns to redact
+  REDACT_PATTERNS?: string;
+  // Field redaction — comma-separated field name patterns to skip (whitelist)
+  REDACT_SKIP?: string;
 }
 
 /** Helpers injected by @cloudflare/workers-oauth-provider */
