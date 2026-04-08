@@ -191,14 +191,15 @@ MCP Client (Claude)                Worker                      Acumatica
 
 ### Rate Limiting
 
-Two-tier rate limiting protects the Acumatica instance:
+Multiple safeguards protect the Acumatica instance:
 
 | Limit | Value | Scope |
 |-------|-------|-------|
 | Concurrent requests | 3 | Per user |
 | Requests per minute | 40 | Per user |
+| Max records per query (`$top`) | 500 | Per request |
 
-When a rate limit is exceeded, the tool returns a friendly error message asking the user to wait.
+When a rate limit is exceeded, the tool returns a friendly error message asking the user to wait. When query results hit the 500-record cap, a note is included in the response indicating there may be more records.
 
 ---
 

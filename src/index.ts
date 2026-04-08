@@ -671,7 +671,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         topN: z
           .string()
           .default("100")
-          .describe("Maximum number of rows to return (default '100')"),
+          .describe("Maximum number of rows to return (default '100', max '500')"),
         selectFields: z
           .string()
           .optional()
@@ -704,7 +704,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         topN: z
           .string()
           .default("100")
-          .describe("Maximum number of rows to return (default '100')"),
+          .describe("Maximum number of rows to return (default '100', max '500')"),
         selectFields: z
           .string()
           .optional()
@@ -760,7 +760,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         topN: z
           .string()
           .default("200")
-          .describe("Maximum number of GIs to return (default '200')"),
+          .describe("Maximum number of GIs to return (default '200', max '500')"),
       },
       async ({ titleFilter, topN }) => {
         return this.callTool(() =>

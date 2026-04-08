@@ -234,7 +234,7 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 - **Per-user tokens.** Each user's Acumatica access token is stored in Cloudflare KV, scoped to their username. Tokens are automatically refreshed when expired.
 - **Role-based access.** The user's Acumatica role determines which records they can read. If a user doesn't have access to a record in Acumatica, they won't be able to access it through the MCP server either.
 - **Read-only.** All current tools are read-only lookups. No data is created, modified, or deleted.
-- **Rate limiting.** 3 concurrent requests and 40 requests per minute per user to protect your Acumatica instance.
+- **Rate limiting.** 3 concurrent requests, 40 requests per minute, and a 500-record cap per query to protect your Acumatica instance.
 
 ## Tech Stack
 
