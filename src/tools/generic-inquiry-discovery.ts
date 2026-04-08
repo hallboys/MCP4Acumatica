@@ -2,7 +2,71 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Env } from "../types/acumatica";
-import { AcumaticaClient, AcumaticaApiError, unwrapFields } from "../lib/acumatica-client";
+import { AcumaticaClient, AcumaticaApiError } from "../lib/acumatica-client";
+
+/** OData service document entry */
+interface ODataServiceEntry {
+  name: string;
+  url: string;
+}
+
+/** OData service document response */
+interface ODataServiceDocument {
+  value: ODataServiceEntry[];
+}
+
+export async function handleListGenericInquiries(
+  env: Env,
+  acumaticaUsername: string,
+  args: {
+    titleFilter?: string;
+    topN?: number;
+  }
+): Promise<unknown> {
+  const MAX_TOP = 500;
+  const client = new AcumaticaClient(env, acumaticaUsername);
+  const effectiveTop = Math.min(args.topN ?? 200, MAX_TOP);
+
+  try {
+    // OData service document lists all exposed GIs
+    const serviceDoc = await client.getOData<ODataServiceDocument>(
+      "",
+      "acumatica_list_generic_inquiries",
+      { titleFilter: args.titleFilter, topN: effectiveTop }
+    );
+
+    let items = (serviceDoc.value || []).map((entry) => ({
+      inquiryName: entry.name,
+      url: entry.url,
+    }));
+
+    // Client-side title filter (OData service document doesn't support $filter)
+    if (args.titleFilter) {
+      const filter = args.titleFilter.toLowerCase();
+      items = items.filter((item) =>
+        item.inquiryName.toLowerCase().includes(filter)
+      );
+    }
+
+    // Apply top limit
+    if (items.length > effectiveTop) {
+      items = items.slice(0, effectiveTop);
+    }
+
+    if (items.length === 0) {
+      return { results: [], note: "No Generic Inquiries found matching the criteria." };
+    }
+
+    return items;
+  } catch (error) {
+    if (error instanceof AcumaticaApiError) {
+      return {
+        error: `OData GI endpoint returned ${error.statusCode}: ${error.message}`,
+      };
+    }
+    throw error;
+  }
+}
 
 /**
  * Infer a data type string from a sample value.
@@ -18,6 +82,11 @@ function inferType(value: unknown): string {
   return "object";
 }
 
+/** OData query response with value array */
+interface ODataQueryResponse {
+  value: Record<string, unknown>[];
+}
+
 export async function handleDescribeInquiry(
   env: Env,
   acumaticaUsername: string,
@@ -25,18 +94,17 @@ export async function handleDescribeInquiry(
 ): Promise<unknown> {
   const client = new AcumaticaClient(env, acumaticaUsername);
 
-  // Probe with $top=1 to get a sample row and infer fields
   try {
-    const results = await client.get<unknown[]>(
+    const response = await client.getOData<ODataQueryResponse>(
       args.inquiryName,
       "acumatica_describe_inquiry",
       { inquiryName: args.inquiryName },
       { $top: "1" }
     );
 
-    const unwrapped = Array.isArray(results) ? results.map(unwrapFields) : [];
+    const rows = response.value || [];
 
-    if (unwrapped.length === 0) {
+    if (rows.length === 0) {
       return {
         inquiryName: args.inquiryName,
         fields: [],
@@ -45,31 +113,27 @@ export async function handleDescribeInquiry(
       };
     }
 
-    const sampleRow = unwrapped[0] as Record<string, unknown>;
+    const sampleRow = rows[0];
 
-    const fields = Object.entries(sampleRow).map(([fieldName, value]) => ({
-      fieldName,
-      dataType: inferType(value),
-    }));
+    // Filter out OData metadata fields
+    const fields = Object.entries(sampleRow)
+      .filter(([key]) => !key.startsWith("@odata"))
+      .map(([fieldName, value]) => ({
+        fieldName,
+        dataType: inferType(value),
+      }));
 
     return {
       inquiryName: args.inquiryName,
       fields,
       sampleRow,
-      note: "Field list inferred from live sample row. Types may be approximate.",
+      note: "Field list inferred from live sample row via OData. Types may be approximate.",
     };
   } catch (error) {
     if (error instanceof AcumaticaApiError) {
-      if (error.statusCode === 404) {
-        return {
-          error: `GI '${args.inquiryName}' not found. The GI must be added to the Default Web Services endpoint in Acumatica (SM208000) to be accessible via REST API. Check the GI name in the Acumatica UI.`,
-        };
-      }
-      if (error.statusCode === 400) {
-        return {
-          error: "GI may require filter parameters to execute. Try acumatica_run_inquiry with a filter first.",
-        };
-      }
+      return {
+        error: `GI '${args.inquiryName}' — OData returned ${error.statusCode}: ${error.message}`,
+      };
     }
     throw error;
   }

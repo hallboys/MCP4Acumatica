@@ -75,6 +75,61 @@ export class AcumaticaClient {
     });
   }
 
+  /**
+   * Make a GET request to the Acumatica OData GI endpoint.
+   * Uses /t/{COMPANY}/api/odata/gi/{path} instead of the contract-based REST path.
+   * OAuth 2.0 Bearer tokens are supported per Acumatica documentation.
+   * OData responses do NOT use {value: X} wrapping — do not run unwrapFields().
+   */
+  async getOData<T>(
+    path: string,
+    toolName: string,
+    params: Record<string, unknown> = {},
+    query: Record<string, string> = {}
+  ): Promise<T> {
+    return withRateLimit(async () => {
+      const start = Date.now();
+      const odataBase = `${this.env.ACUMATICA_URL}/t/${this.env.ACUMATICA_COMPANY}/api/odata/gi`;
+      const separator = path ? "/" : "";
+      const fullUrl = new URL(`${odataBase}${separator}${path}`);
+      for (const [key, value] of Object.entries(query)) {
+        if (value) {
+          fullUrl.searchParams.set(key, value);
+        }
+      }
+      const url = fullUrl.toString();
+
+      let token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
+      let response = await this.doFetch(url, token);
+
+      if (response.status === 401) {
+        token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
+        response = await this.doFetch(url, token);
+      }
+
+      const durationMs = Date.now() - start;
+      const endpoint = `GET odata/gi${separator}${path}`;
+
+      logToolInvocation({
+        timestamp: new Date().toISOString(),
+        tool: toolName,
+        params,
+        endpoint,
+        statusCode: response.status,
+        durationMs,
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        const message = this.friendlyError(response.status, body, `odata/gi${separator}${path}`);
+        logError(toolName, message);
+        throw new AcumaticaApiError(response.status, body, message);
+      }
+
+      return (await response.json()) as T;
+    });
+  }
+
   private buildUrl(path: string, query: Record<string, string>): string {
     const url = new URL(`${this.baseUrl}/${path}`);
     for (const [key, value] of Object.entries(query)) {
