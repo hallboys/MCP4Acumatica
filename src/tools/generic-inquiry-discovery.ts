@@ -12,12 +12,14 @@ export async function handleListGenericInquiries(
     topN?: number;
   }
 ): Promise<unknown> {
+  const MAX_TOP = 500;
   const client = new AcumaticaClient(env, acumaticaUsername);
+  const effectiveTop = Math.min(args.topN ?? 200, MAX_TOP);
 
   const query: Record<string, string> = {
     $select: "InquiryID,InquiryTitle,ScreenID,IsVisible",
     $filter: "IsVisible eq true",
-    $top: String(args.topN ?? 200),
+    $top: String(effectiveTop),
   };
 
   if (args.titleFilter) {

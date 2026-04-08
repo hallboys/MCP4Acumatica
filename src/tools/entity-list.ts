@@ -16,7 +16,10 @@ export async function handleListEntities(
     expand?: string;
   }
 ): Promise<unknown> {
+  const MAX_TOP = 500;
   const client = new AcumaticaClient(env, acumaticaUsername);
+  const requestedTop = args.topN ?? 100;
+  const effectiveTop = Math.min(requestedTop, MAX_TOP);
 
   const query: Record<string, string> = {};
 
@@ -24,7 +27,7 @@ export async function handleListEntities(
     query.$filter = args.filterExpression;
   }
 
-  query.$top = String(args.topN ?? 100);
+  query.$top = String(effectiveTop);
 
   if (args.selectFields) {
     query.$select = args.selectFields;
@@ -44,7 +47,7 @@ export async function handleListEntities(
     {
       entityName: args.entityName,
       filter: args.filterExpression,
-      topN: args.topN ?? 100,
+      topN: effectiveTop,
       select: args.selectFields,
       orderBy: args.orderBy,
       expand: args.expand,
@@ -52,5 +55,14 @@ export async function handleListEntities(
     query
   );
 
-  return Array.isArray(results) ? results.map(unwrapFields) : unwrapFields(results);
+  const unwrapped = Array.isArray(results) ? results.map(unwrapFields) : unwrapFields(results);
+
+  if (Array.isArray(unwrapped) && unwrapped.length >= effectiveTop) {
+    return {
+      results: unwrapped,
+      note: `Returned ${unwrapped.length} records (limit: ${effectiveTop}). There may be more results — use filterExpression to narrow your query.`,
+    };
+  }
+
+  return unwrapped;
 }
