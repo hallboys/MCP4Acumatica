@@ -711,7 +711,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         topN: z
           .string()
           .default("100")
-          .describe("Maximum number of rows to return (default '100', server-enforced max)"),
+          .describe("Maximum number of rows to return (default '100', max '1000'). If results are truncated, increase this value up to 1000."),
         selectFields: z
           .string()
           .optional()
@@ -745,7 +745,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         topN: z
           .string()
           .default("100")
-          .describe("Maximum number of rows to return (default '100', server-enforced max)"),
+          .describe("Maximum number of rows to return (default '100', max '1000'). If results are truncated, increase this value up to 1000."),
         selectFields: z
           .string()
           .optional()
