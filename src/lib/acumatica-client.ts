@@ -113,8 +113,14 @@ export class AcumaticaClient {
         return `Record not found at ${path}. Verify the ID or reference number is correct.`;
       case 429:
         return "Acumatica rate limit exceeded. Please wait a moment and try again.";
-      case 500:
-        return "Acumatica encountered an internal error. Please try again or check the instance status.";
+      case 500: {
+        try {
+          const parsed = JSON.parse(body);
+          return `Acumatica internal error: ${parsed.message || parsed.exceptionMessage || body}`;
+        } catch {
+          return `Acumatica internal error: ${body || "No details available. Check instance status."}`;
+        }
+      }
       default:
         return `Acumatica API error (${status}): ${body}`;
     }
