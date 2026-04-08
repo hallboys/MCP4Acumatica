@@ -45,7 +45,7 @@ function renderPage(slug: string, html: string): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${title} - Acumatica MCP Server</title>
+  <title>${title} - MCP4Acumatica</title>
   <style>
     :root {
       --bg: #fafafa;
@@ -225,12 +225,12 @@ function renderPage(slug: string, html: string): string {
   <div class="layout">
     <nav>
       <div class="brand">
-        <h1>Acumatica MCP Server</h1>
-        <span>v0.18.0 &middot; 43 tools</span>
+        <h1>MCP4Acumatica</h1>
+        <span>v0.20.0 &middot; 44 tools</span>
       </div>
       ${renderNav(slug)}
       <div class="links">
-        <a href="https://github.com/hallboys/AcumaticaMCP" target="_blank">GitHub</a>
+        <a href="https://github.com/hallboys/MCP4Acumatica" target="_blank">GitHub</a>
         <a href="/health">API Health</a>
         <a href="/mcp">MCP Endpoint</a>
       </div>

@@ -1,5 +1,5 @@
 {
-  "name": "acumatica-mcp-server",
+  "name": "mcp4acumatica",
   "version": "0.20.0",
   "private": true,
   "scripts": {

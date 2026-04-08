@@ -1,6 +1,6 @@
 # OData Filtering Guide
 
-The Acumatica MCP Server uses OData query parameters for filtering, sorting, field selection, and entity expansion. This guide covers the syntax supported by the `acumatica_list_entities` and `acumatica_run_inquiry` tools.
+The MCP4Acumatica uses OData query parameters for filtering, sorting, field selection, and entity expansion. This guide covers the syntax supported by the `acumatica_list_entities` and `acumatica_run_inquiry` tools.
 
 ## Table of Contents
 

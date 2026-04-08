@@ -1,10 +1,10 @@
-# Acumatica MCP Server -- Architecture
+# MCP4Acumatica -- Architecture
 
-Detailed architecture documentation for the Acumatica MCP Server.
+Detailed architecture documentation for the MCP4Acumatica.
 
 ## Overview
 
-The Acumatica MCP Server is a remote [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that runs on [Cloudflare Workers](https://workers.cloudflare.com). It connects AI assistants (Claude, or any MCP-compatible client) to an [Acumatica ERP](https://www.acumatica.com) 2025 R2 instance via the contract-based REST API.
+The MCP4Acumatica is a remote [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that runs on [Cloudflare Workers](https://workers.cloudflare.com). It connects AI assistants (Claude, or any MCP-compatible client) to an [Acumatica ERP](https://www.acumatica.com) 2025 R2 instance via the contract-based REST API.
 
 ```
 ┌─────────────────────┐

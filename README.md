@@ -1,4 +1,4 @@
-# Acumatica MCP Server
+# MCP4Acumatica
 
 A remote [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that connects Claude to [Acumatica ERP](https://www.acumatica.com) 2025 R2. Runs on Cloudflare Workers with per-user OAuth authentication against your Acumatica instance.
 
@@ -47,8 +47,8 @@ Claude (claude.ai / Desktop / API)
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/hallboys/AcumaticaMCP.git
-cd AcumaticaMCP
+git clone https://github.com/hallboys/MCP4Acumatica.git
+cd MCP4Acumatica
 npm install
 ```
 

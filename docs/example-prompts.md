@@ -1,6 +1,6 @@
-# Acumatica MCP Server -- Example Prompts
+# MCP4Acumatica -- Example Prompts
 
-Example prompts for Claude (or any MCP client) using the Acumatica MCP Server. Each example shows the prompt and which tools Claude will invoke.
+Example prompts for Claude (or any MCP client) using the MCP4Acumatica. Each example shows the prompt and which tools Claude will invoke.
 
 ## Table of Contents
 

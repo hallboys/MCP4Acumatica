@@ -309,7 +309,7 @@ app.get("/.well-known/openid-configuration", async (c) => {
 });
 
 // Health check
-app.get("/health", (c) => c.json({ status: "ok", service: "acumatica-mcp-server" }));
+app.get("/health", (c) => c.json({ status: "ok", service: "mcp4acumatica" }));
 
 // Documentation site
 app.route("/docs", docsApp);
