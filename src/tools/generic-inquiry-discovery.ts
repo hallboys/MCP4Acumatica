@@ -28,17 +28,32 @@ export async function handleListGenericInquiries(
   const effectiveTop = Math.min(args.topN ?? 200, MAX_TOP);
 
   try {
-    // OData service document lists all exposed GIs
-    const serviceDoc = await client.getOData<ODataServiceDocument>(
-      "",
-      "acumatica_list_generic_inquiries",
-      { titleFilter: args.titleFilter, topN: effectiveTop }
-    );
+    // Fetch service document and $metadata in parallel
+    const [serviceDoc, metadata] = await Promise.all([
+      client.getOData<ODataServiceDocument>(
+        "",
+        "acumatica_list_generic_inquiries",
+        { titleFilter: args.titleFilter, topN: effectiveTop }
+      ),
+      client.getODataMetadata("acumatica_list_generic_inquiries").catch(() => ""),
+    ]);
 
-    let items = (serviceDoc.value || []).map((entry) => ({
-      inquiryName: entry.name,
-      url: entry.url,
-    }));
+    // Extract parameterized GI names from $metadata FunctionImport entries
+    // Pattern: <FunctionImport Name="GIName_WithParameters" ...>
+    const parameterizedNames = new Set<string>();
+    if (metadata) {
+      const matches = metadata.matchAll(/FunctionImport\s+Name="([^"]+)_WithParameters"/g);
+      for (const match of matches) {
+        parameterizedNames.add(match[1]);
+      }
+    }
+
+    let items = (serviceDoc.value || [])
+      .filter((entry) => !parameterizedNames.has(entry.name))
+      .map((entry) => ({
+        inquiryName: entry.name,
+        url: entry.url,
+      }));
 
     // Client-side title filter (OData service document doesn't support $filter)
     if (args.titleFilter) {
@@ -57,7 +72,11 @@ export async function handleListGenericInquiries(
       return { results: [], note: "No Generic Inquiries found matching the criteria." };
     }
 
-    return items;
+    const note = parameterizedNames.size > 0
+      ? `Excluded ${parameterizedNames.size} parameterized GI(s) that cannot be queried directly via OData.`
+      : undefined;
+
+    return note ? { results: items, note } : items;
   } catch (error) {
     if (error instanceof AcumaticaApiError) {
       return {
