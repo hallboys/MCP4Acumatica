@@ -1083,6 +1083,10 @@ export interface Env {
   REDACT_PATTERNS?: string;
   // Field redaction — comma-separated field name patterns to skip (whitelist)
   REDACT_SKIP?: string;
+  // Pagination guard — comma-separated tool names to protect (empty or unset = disabled)
+  PAGINATION_GUARD_TOOLS?: string;
+  // Pagination guard — cooldown in seconds between calls to same resource (default: 30)
+  PAGINATION_GUARD_COOLDOWN?: string;
 }
 
 /** Helpers injected by @cloudflare/workers-oauth-provider */

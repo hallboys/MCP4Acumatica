@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.20.2`
+- **Current tag:** `25R2-0.21.0`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -88,6 +88,7 @@ src/
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
 │   ├── metadata-cache.ts           # KV-backed cache for entity schemas and GI metadata
+│   ├── pagination-guard.ts        # Per-tool cooldown to prevent pagination/data exfiltration
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   ├── logger.ts                  # Structured JSON audit logging (tool, auth, redaction events)
 │   └── redact.ts                  # Pattern-based sensitive field redaction
@@ -151,6 +152,8 @@ src/
 - `ACUMATICA_MCP_ROLE` — Acumatica role name required to use MCP (default `"MCP Access"`)
 - `REDACT_PATTERNS` — comma-separated additional field name patterns to redact (e.g., `CustomSSN,EmployeeNotes`)
 - `REDACT_SKIP` — comma-separated field name patterns to whitelist from redaction (e.g., `BirthDate`)
+- `PAGINATION_GUARD_TOOLS` — comma-separated tool names to protect from repeated calls (empty = disabled). Example: `acumatica_list_entities,acumatica_run_inquiry`
+- `PAGINATION_GUARD_COOLDOWN` — seconds between allowed calls to the same tool+resource (default `30`)
 
 ### Secrets (via `wrangler secret put` or `.dev.vars`):
 - `ACUMATICA_CLIENT_ID` — from Acumatica Connected Application (SM303010)

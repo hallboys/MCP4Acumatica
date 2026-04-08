@@ -13,6 +13,7 @@ Each user authenticates with their own Acumatica credentials. Their Acumatica ro
 - **Consent interstitial** -- users must acknowledge AI data processing before accessing tools
 - **Sensitive field redaction** -- SSN, bank accounts, salary, and other PII fields are automatically redacted before data leaves the server
 - **Rate limiting** -- 3 concurrent requests, 40 requests/minute per user
+- **Pagination guard** -- optional per-tool cooldown prevents AI models from making repeated calls to exhaust record limits
 - **Structured audit logging** -- all tool invocations, auth events, and field redactions are logged
 
 ## Architecture
@@ -257,6 +258,7 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 - **Role-based access.** The user's Acumatica role determines which records they can read. If a user doesn't have access to a record in Acumatica, they won't be able to access it through the MCP server either.
 - **Read-only.** All current tools are read-only lookups. No data is created, modified, or deleted.
 - **Rate limiting.** 3 concurrent requests, 40 requests per minute, and a configurable record cap per query to protect your Acumatica instance.
+- **Pagination guard.** Optional per-tool cooldown prevents AI models from circumventing record limits by making repeated calls to the same resource. Off by default; enable via `PAGINATION_GUARD_TOOLS` environment variable.
 - **Audit logging.** All tool invocations, auth events (login success/denied, consent accepted), and field redaction events are logged as structured JSON. View with `npx wrangler tail`.
 
 ## Tech Stack

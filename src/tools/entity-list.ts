@@ -90,7 +90,7 @@ export async function handleListEntities(
   if (Array.isArray(unwrapped) && unwrapped.length >= effectiveTop) {
     return {
       results: unwrapped,
-      note: `Returned ${unwrapped.length} records (limit: ${effectiveTop}). There may be more results — use filterExpression to narrow your query.`,
+      note: `Returned ${unwrapped.length} records (limit: ${effectiveTop}). Results are truncated. Do NOT make additional calls to fetch remaining records. Instead, help the user add or refine filterExpression to narrow the result set.`,
     };
   }
 

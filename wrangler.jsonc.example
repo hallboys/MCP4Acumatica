@@ -16,7 +16,9 @@
 		"ACUMATICA_MAX_RECORDS": "1000",
 		"ACUMATICA_MCP_ROLE": "MCP Access",
 		"REDACT_PATTERNS": "",
-		"REDACT_SKIP": ""
+		"REDACT_SKIP": "",
+		"PAGINATION_GUARD_TOOLS": "",
+		"PAGINATION_GUARD_COOLDOWN": "30"
 	},
 	// KV namespaces — create ONE namespace, use the same ID for both bindings.
 	// TOKEN_STORE is used by our code. OAUTH_KV is required by @cloudflare/workers-oauth-provider.

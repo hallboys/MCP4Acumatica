@@ -278,7 +278,23 @@ Multiple safeguards protect the Acumatica instance:
 | Requests per minute | 40 | Per user |
 | Max records per query (`$top`) | 1000 (configurable) | Per request |
 
-When a rate limit is exceeded, the tool returns a friendly error message asking the user to wait. When query results hit the 500-record cap, a note is included in the response indicating there may be more records.
+When a rate limit is exceeded, the tool returns a friendly error message asking the user to wait. When query results hit the record cap, a note is included in the response directing the AI to help the user refine their filter.
+
+### Pagination Guard
+
+An optional per-tool cooldown prevents AI models from circumventing record limits by making repeated calls to the same resource (e.g., paginating through all GL journal transactions).
+
+- **Off by default.** Enabled by setting `PAGINATION_GUARD_TOOLS` to a comma-separated list of tool names.
+- **Per-resource tracking.** For `acumatica_list_entities`, the cooldown tracks by entity name (e.g., listing `Customer` and `Invoice` are independent). For `acumatica_run_inquiry`, it tracks by inquiry name.
+- **Configurable cooldown.** `PAGINATION_GUARD_COOLDOWN` sets the window in seconds (default: 30).
+
+Example configuration:
+```jsonc
+"PAGINATION_GUARD_TOOLS": "acumatica_list_entities,acumatica_run_inquiry",
+"PAGINATION_GUARD_COOLDOWN": "30"
+```
+
+When a guarded call is blocked, the tool returns an error message directing the AI to help the user refine their query filters instead.
 
 ---
 
@@ -302,7 +318,10 @@ MCP Client sends tool call
 AcumaticaMcpServer.init() registered handler
        │
        ▼
-callTool() wrapper (error handling)
+callTool() wrapper
+       │
+       ├── Pagination guard check (if enabled)
+       ├── Error handling + field redaction
        │
        ▼
 Tool handler (e.g., handleGetCustomer)
@@ -354,6 +373,7 @@ src/
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client, unwrapFields()
 │   ├── metadata-cache.ts          # KV-backed cache for schemas and GI metadata
+│   ├── pagination-guard.ts        # Per-tool cooldown to prevent pagination
 │   ├── rate-limiter.ts            # Concurrent + per-minute rate limits
 │   └── logger.ts                  # Structured JSON audit logging
 ├── tools/                         # 42 tools across 32 handler files

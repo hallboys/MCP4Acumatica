@@ -46,15 +46,22 @@ import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { redactFields } from "./lib/redact";
 import { logRedaction } from "./lib/logger";
+import { PaginationGuard } from "./lib/pagination-guard";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.20.0",
+    version: "0.21.0",
   });
 
+  private paginationGuard!: PaginationGuard;
+
   async init() {
+    this.paginationGuard = new PaginationGuard(
+      this.env.PAGINATION_GUARD_TOOLS,
+      this.env.PAGINATION_GUARD_COOLDOWN
+    );
     // Tool 1: Customer Lookup
     this.server.tool(
       "acumatica_get_customer",
@@ -712,7 +719,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         topN: z
           .string()
           .default("100")
-          .describe("Maximum number of rows to return (default '100', max '1000'). If results are truncated, increase this value up to 1000."),
+          .describe("Maximum number of rows to return (default '100', max '1000'). Do NOT paginate or make multiple calls to retrieve all records. If results are truncated, ask the user to narrow their query with filterExpression instead."),
         selectFields: z
           .string()
           .optional()
@@ -726,7 +733,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
             topN: parseInt(topN, 10) || 100,
             selectFields,
           }),
-          "acumatica_run_inquiry"
+          "acumatica_run_inquiry",
+          inquiryName
         );
       }
     );
@@ -734,7 +742,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
     // Tool 40: List/Search Entities
     this.server.tool(
       "acumatica_list_entities",
-      "List or search any Acumatica entity with filtering, sorting, and field selection. Use this to find records matching criteria (e.g., all open invoices over $10,000, customers in a state, stock items below reorder point). Supported entity names include: Customer, Vendor, SalesOrder, Invoice, Bill, Payment, Check, StockItem, NonStockItem, PurchaseOrder, PurchaseReceipt, Shipment, SalesInvoice, Project, Case, ServiceOrder, Appointment, Contact, BusinessAccount, Opportunity, Lead, Employee, ExpenseClaim, JournalTransaction, and more.",
+      "List or search any Acumatica entity with filtering, sorting, and field selection. Use this to find records matching criteria (e.g., all open invoices over $10,000, customers in a state, stock items below reorder point). IMPORTANT: Always use filterExpression to scope queries. Never retrieve all records from large entities (JournalTransaction, Invoice, Bill, etc.). Do NOT paginate by making multiple calls to fetch all data — if results are truncated, help the user refine their filter. Supported entity names include: Customer, Vendor, SalesOrder, Invoice, Bill, Payment, Check, StockItem, NonStockItem, PurchaseOrder, PurchaseReceipt, Shipment, SalesInvoice, Project, Case, ServiceOrder, Appointment, Contact, BusinessAccount, Opportunity, Lead, Employee, ExpenseClaim, JournalTransaction, and more.",
       {
         entityName: z
           .string()
@@ -746,7 +754,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         topN: z
           .string()
           .default("100")
-          .describe("Maximum number of rows to return (default '100', max '1000'). If results are truncated, increase this value up to 1000."),
+          .describe("Maximum number of rows to return (default '100', max '1000'). Do NOT paginate or make multiple calls to retrieve all records. If results are truncated, ask the user to narrow their query with filterExpression instead."),
         selectFields: z
           .string()
           .optional()
@@ -770,7 +778,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
             orderBy,
             expand,
           }),
-          "acumatica_list_entities"
+          "acumatica_list_entities",
+          entityName
         );
       }
     );
@@ -859,10 +868,26 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
    */
   private async callTool(
     fn: () => Promise<unknown>,
-    toolName?: string
+    toolName?: string,
+    discriminator?: string
   ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+    // Pagination guard check (off by default; enabled per-tool via PAGINATION_GUARD_TOOLS)
+    if (toolName && this.paginationGuard.enabled) {
+      const guardResult = this.paginationGuard.check(toolName, discriminator);
+      if (!guardResult.allowed) {
+        return {
+          content: [{ type: "text" as const, text: `Error: ${guardResult.message}` }],
+        };
+      }
+    }
+
     try {
       const result = await fn();
+
+      // Record successful call for pagination guard
+      if (toolName) {
+        this.paginationGuard.record(toolName, discriminator);
+      }
 
       // Apply sensitive field redaction
       const { data, redactedFields: redacted } = redactFields(

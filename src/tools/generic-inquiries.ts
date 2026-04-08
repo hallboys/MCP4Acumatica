@@ -59,7 +59,7 @@ export async function handleRunInquiry(
   if (cleaned.length >= effectiveTop) {
     return {
       results: cleaned,
-      note: `Returned ${cleaned.length} records (limit: ${effectiveTop}). There may be more results — use filterExpression to narrow your query.`,
+      note: `Returned ${cleaned.length} records (limit: ${effectiveTop}). Results are truncated. Do NOT make additional calls to fetch remaining records. Instead, help the user add or refine filterExpression to narrow the result set.`,
     };
   }
 
