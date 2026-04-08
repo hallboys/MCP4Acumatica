@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.17.0`
+- **Current tag:** `25R2-0.18.0`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://acumatica-mcp-server.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -122,7 +122,7 @@ src/
 ## Configuration
 
 ### Gitignored (instance-specific):
-- `wrangler.jsonc` — real KV IDs and instance vars
+- `wrangler.jsonc` — real KV IDs and instance vars (**still edit this file when config changes — do not skip it because it's gitignored**)
 - `.dev.vars` — secrets for local dev
 - `swagger.json` — instance OpenAPI spec
 
@@ -132,7 +132,7 @@ src/
 
 ### Environment Variables (in wrangler.jsonc `vars`):
 - `ACUMATICA_URL` — e.g., `https://your-instance.acumatica.com`
-- `ACUMATICA_TENANT` — e.g., `YourCompany`
+- `ACUMATICA_TENANT` — Acumatica tenant/login company name (e.g., `Production`). Used for OData GI endpoint URL.
 - `ACUMATICA_ENDPOINT_VERSION` — `25.200.001`
 - `ACUMATICA_MAX_RECORDS` — max rows per query (default `1000`)
 

@@ -1,6 +1,6 @@
 # Acumatica MCP Server -- Tool Reference
 
-Complete specification for all 43 tools available in the Acumatica MCP Server (v0.17.0).
+Complete specification for all 43 tools available in the Acumatica MCP Server (v0.18.0).
 
 ## Table of Contents
 
