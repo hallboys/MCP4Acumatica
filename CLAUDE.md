@@ -132,8 +132,9 @@ src/
 
 ### Environment Variables (in wrangler.jsonc `vars`):
 - `ACUMATICA_URL` — e.g., `https://your-instance.acumatica.com`
-- `ACUMATICA_COMPANY` — e.g., `YourCompany`
+- `ACUMATICA_TENANT` — e.g., `YourCompany`
 - `ACUMATICA_ENDPOINT_VERSION` — `25.200.001`
+- `ACUMATICA_MAX_RECORDS` — max rows per query (default `1000`)
 
 ### Secrets (via `wrangler secret put` or `.dev.vars`):
 - `ACUMATICA_CLIENT_ID` — from Acumatica Connected Application (SM303010)

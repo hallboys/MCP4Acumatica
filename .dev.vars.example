@@ -1,6 +1,6 @@
 # Acumatica instance
 ACUMATICA_URL=https://your-instance.acumatica.com
-ACUMATICA_COMPANY=YourCompany
+ACUMATICA_TENANT=YourTenant
 
 # Acumatica Connected Application (SM303010) credentials
 ACUMATICA_CLIENT_ID=your-client-id@Production

@@ -7,11 +7,13 @@
 		"global_fetch_strictly_public"
 	],
 	// Acumatica instance configuration
-	// Set ACUMATICA_URL, ACUMATICA_COMPANY, and secrets via:
+	// Set ACUMATICA_URL, ACUMATICA_TENANT, and secrets via:
 	//   npx wrangler secret put <NAME>
 	// Or define in .dev.vars for local development
 	"vars": {
-		"ACUMATICA_ENDPOINT_VERSION": "25.200.001"
+		"ACUMATICA_TENANT": "YourTenant",
+		"ACUMATICA_ENDPOINT_VERSION": "25.200.001",
+		"ACUMATICA_MAX_RECORDS": "1000"
 	},
 	// KV namespaces — create ONE namespace, use the same ID for both bindings.
 	// TOKEN_STORE is used by our code. OAUTH_KV is required by @cloudflare/workers-oauth-provider.

@@ -19,7 +19,7 @@ export async function handleRunInquiry(
     selectFields?: string;
   }
 ): Promise<unknown> {
-  const MAX_TOP = 500;
+  const MAX_TOP = parseInt(env.ACUMATICA_MAX_RECORDS, 10) || 1000;
   const client = new AcumaticaClient(env, acumaticaUsername);
   const requestedTop = args.topN ?? 100;
   const effectiveTop = Math.min(requestedTop, MAX_TOP);

@@ -23,7 +23,7 @@ export async function handleListGenericInquiries(
     topN?: number;
   }
 ): Promise<unknown> {
-  const MAX_TOP = 500;
+  const MAX_TOP = parseInt(env.ACUMATICA_MAX_RECORDS, 10) || 1000;
   const client = new AcumaticaClient(env, acumaticaUsername);
   const effectiveTop = Math.min(args.topN ?? 200, MAX_TOP);
 

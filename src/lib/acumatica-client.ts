@@ -89,7 +89,7 @@ export class AcumaticaClient {
   ): Promise<T> {
     return withRateLimit(async () => {
       const start = Date.now();
-      const odataBase = `${this.env.ACUMATICA_URL}/t/${this.env.ACUMATICA_COMPANY}/api/odata/gi`;
+      const odataBase = `${this.env.ACUMATICA_URL}/t/${this.env.ACUMATICA_TENANT}/api/odata/gi`;
       const separator = path ? "/" : "";
       const fullUrl = new URL(`${odataBase}${separator}${path}`);
       for (const [key, value] of Object.entries(query)) {

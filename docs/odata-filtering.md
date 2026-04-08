@@ -176,7 +176,7 @@ The `topN` parameter maps to OData `$top`. Controls the maximum number of record
 
 - **Default:** `100`
 - **Minimum:** `1`
-- **Maximum:** `500` (enforced server-side to protect your Acumatica instance)
+- **Maximum:** Configurable via `ACUMATICA_MAX_RECORDS` (default `1000`, enforced server-side)
 
 When results hit the limit, the response includes a note indicating there may be more records. Use `filterExpression` to narrow your query.
 
@@ -187,7 +187,7 @@ When results hit the limit, the response includes a note indicating there may be
 | `5` | Quick sample / spot check |
 | `20` | Top N analysis |
 | `100` | Standard listing (default) |
-| `500` | Maximum — large data pull |
+| `1000` | Maximum (default server limit) |
 
 ---
 
@@ -253,7 +253,7 @@ expand: "Details"
 
 5. **No `$skip` support.** Acumatica's contract-based REST API does not support `$skip` for pagination. Use `$filter` with a key-based cursor pattern if you need to page through large result sets.
 
-6. **`$top` is capped at 500.** Requests for more are silently clamped. When results hit the limit, a note is returned. Use `$filter` and `$select` to keep queries focused.
+6. **`$top` is capped server-side** (default 1000). Requests for more are silently clamped. When results hit the limit, a note is returned. Use `$filter` and `$select` to keep queries focused.
 
 7. **Sub-entity fields** cannot be filtered directly in `$filter`. Filter on header-level fields only.
 

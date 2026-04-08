@@ -1065,8 +1065,9 @@ export interface TaskRecord extends Entity {
 export interface Env {
   // Acumatica
   ACUMATICA_URL: string;
-  ACUMATICA_COMPANY: string;
+  ACUMATICA_TENANT: string;
   ACUMATICA_ENDPOINT_VERSION: string;
+  ACUMATICA_MAX_RECORDS: string;
   ACUMATICA_CLIENT_ID: string;
   ACUMATICA_CLIENT_SECRET: string;
   TOKEN_STORE: KVNamespace;

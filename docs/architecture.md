@@ -200,7 +200,7 @@ Multiple safeguards protect the Acumatica instance:
 |-------|-------|-------|
 | Concurrent requests | 3 | Per user |
 | Requests per minute | 40 | Per user |
-| Max records per query (`$top`) | 500 | Per request |
+| Max records per query (`$top`) | 1000 (configurable) | Per request |
 
 When a rate limit is exceeded, the tool returns a friendly error message asking the user to wait. When query results hit the 500-record cap, a note is included in the response indicating there may be more records.
 
