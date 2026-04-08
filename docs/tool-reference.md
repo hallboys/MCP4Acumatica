@@ -1,6 +1,6 @@
 # Acumatica MCP Server -- Tool Reference
 
-Complete specification for all 42 tools available in the Acumatica MCP Server (v0.17.0).
+Complete specification for all 43 tools available in the Acumatica MCP Server (v0.17.0).
 
 ## Table of Contents
 
@@ -60,26 +60,41 @@ Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom re
 | `topN` | string | No | `"100"` | Maximum rows to return |
 | `selectFields` | string | No | -- | Comma-separated field names to return |
 
-**Endpoint:** `GET /entity/Default/25.200.001/{inquiryName}?$filter=...&$top=...&$select=...`
+**Endpoint:** `GET /t/{Company}/api/odata/gi/{inquiryName}?$filter=...&$top=...&$select=...`
+
+---
+
+### `acumatica_list_generic_inquiries`
+
+List all Generic Inquiries (GIs) exposed via OData in Acumatica. Returns inquiry names. Use this to discover available GI names before calling `acumatica_run_inquiry`.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `titleFilter` | string | No | -- | Partial name match to narrow results (case-insensitive contains) |
+| `topN` | string | No | `"200"` | Maximum number of GIs to return |
+
+**Endpoint:** `GET /t/{Company}/api/odata/gi` (OData service document)
+
+**Returns:** Array of `{ inquiryName, url }` for each OData-exposed GI. Client-side name filtering is applied when `titleFilter` is provided.
 
 ---
 
 ### `acumatica_describe_inquiry`
 
-Returns the field schema for a Generic Inquiry (GI) added to the Default Web Services endpoint — field names and inferred types. Use this before calling `acumatica_run_inquiry` to know which fields are available for filtering and selection.
+Returns the field schema for a Generic Inquiry (GI) exposed via OData — field names and inferred types. Use this before calling `acumatica_run_inquiry` to know which fields are available for filtering and selection.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `inquiryName` | string | Yes | GI name as configured in Acumatica (SM208000). The user must provide this — GIs cannot be listed programmatically via the REST API. |
+| `inquiryName` | string | Yes | GI name. Use `acumatica_list_generic_inquiries` to discover names. |
 
-**Endpoint:** `GET /entity/Default/25.200.001/{inquiryName}?$top=1`
+**Endpoint:** `GET /t/{Company}/api/odata/gi/{inquiryName}?$top=1`
 
-**Approach:** Probes the GI with `$top=1` to retrieve a sample row and infers field names and data types from the response.
+**Approach:** Probes the GI via OData with `$top=1` to retrieve a sample row and infers field names and data types from the response.
 
 **Returns:** `{ inquiryName, fields: [{ fieldName, dataType }], sampleRow, note }`.
 
 **Error handling:**
-- GI not found (404): returns descriptive error explaining the GI must be added to the Default endpoint
+- GI not found (404): returns descriptive error suggesting `acumatica_list_generic_inquiries`
 - GI requires filters (400): returns guidance to use `acumatica_run_inquiry` with a filter
 - Empty results: returns empty field list with a note
 

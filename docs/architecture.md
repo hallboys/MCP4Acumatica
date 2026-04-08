@@ -48,7 +48,7 @@ The Acumatica MCP Server is a remote [Model Context Protocol](https://modelconte
 │  │  /mcp  - MCP protocol endpoint   │       │
 │  │  /sse  - SSE transport           │       │
 │  │                                  │       │
-│  │  42 tools registered in init()   │       │
+│  │  43 tools registered in init()   │       │
 │  └──────────────┬───────────────────┘       │
 │                 │                            │
 │  ┌──────────────┴───────────────────┐       │
@@ -93,7 +93,7 @@ A [Hono](https://hono.dev) application that handles the Acumatica OAuth 2.0 auth
 
 A [Durable Object](https://developers.cloudflare.com/durable-objects/) that extends `McpAgent` from the `agents` SDK. Each MCP session gets its own DO instance with:
 
-- **`init()`** -- Registers all 42 tools with the MCP server
+- **`init()`** -- Registers all 43 tools with the MCP server
 - **`callTool()`** -- Wrapper that catches errors and returns MCP-formatted responses
 - **`this.props.acumaticaUsername`** -- The authenticated user's Acumatica username, set during the OAuth callback
 
@@ -210,7 +210,7 @@ When a rate limit is exceeded, the tool returns a friendly error message asking 
 
 ### Tool Registration
 
-All 42 tools are registered in the `init()` method of `AcumaticaMcpServer`. Each tool has:
+All 43 tools are registered in the `init()` method of `AcumaticaMcpServer`. Each tool has:
 
 1. **Name** -- e.g., `acumatica_get_customer`
 2. **Description** -- Human-readable description for the MCP client

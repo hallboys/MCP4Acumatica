@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Env } from "../types/acumatica";
-import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
+import { AcumaticaClient } from "../lib/acumatica-client";
+
+/** OData query response with value array */
+interface ODataQueryResponse {
+  value: Record<string, unknown>[];
+}
 
 export async function handleRunInquiry(
   env: Env,
@@ -31,21 +36,32 @@ export async function handleRunInquiry(
     query.$select = args.selectFields;
   }
 
-  const results = await client.get<unknown[]>(
+  const response = await client.getOData<ODataQueryResponse>(
     args.inquiryName,
     "acumatica_run_inquiry",
     { inquiryName: args.inquiryName, filter: args.filterExpression, topN: effectiveTop, select: args.selectFields },
     query
   );
 
-  const unwrapped = Array.isArray(results) ? results.map(unwrapFields) : unwrapFields(results);
+  const rows = response.value || [];
 
-  if (Array.isArray(unwrapped) && unwrapped.length >= effectiveTop) {
+  // Strip OData metadata fields from each row
+  const cleaned = rows.map((row) => {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (!key.startsWith("@odata")) {
+        result[key] = value;
+      }
+    }
+    return result;
+  });
+
+  if (cleaned.length >= effectiveTop) {
     return {
-      results: unwrapped,
-      note: `Returned ${unwrapped.length} records (limit: ${effectiveTop}). There may be more results — use filterExpression to narrow your query.`,
+      results: cleaned,
+      note: `Returned ${cleaned.length} records (limit: ${effectiveTop}). There may be more results — use filterExpression to narrow your query.`,
     };
   }
 
-  return unwrapped;
+  return cleaned;
 }

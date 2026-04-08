@@ -25,8 +25,8 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /token, /register (DCR+CIMD) │
 │    ├─ /docs → Documentation site │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ 42 tools (38 read-only  │
-│       │   + 4 utility/discovery) │
+│       ├─ 43 tools (38 read-only  │
+│       │   + 5 utility/discovery) │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
                ▼
@@ -195,7 +195,7 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [x] Generic Inquiry: acumatica_run_inquiry (0.11.0)
 - [x] Entity List/Search: acumatica_list_entities (0.12.0)
 - [x] Entity Schema Discovery: acumatica_describe_entity (0.13.0)
-- [x] GI Discovery: acumatica_describe_inquiry (0.16.0; acumatica_list_generic_inquiries removed — OData GI endpoint requires Basic auth, incompatible with Bearer tokens)
+- [x] GI Discovery: acumatica_list_generic_inquiries, acumatica_describe_inquiry (0.16.0; switched to OData GI endpoint with OAuth 2.0 Bearer tokens)
 
 ### Completed — Documentation & Infrastructure
 - [x] Documentation site served from `/docs` on the same worker (0.14.0)
