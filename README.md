@@ -2,15 +2,18 @@
 
 A remote [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that connects Claude to [Acumatica ERP](https://www.acumatica.com) 2025 R2. Runs on Cloudflare Workers with per-user OAuth authentication against your Acumatica instance.
 
-Each user authenticates with their own Acumatica credentials. Their Acumatica role controls which records they can access -- the MCP server does not enforce permissions itself.
+Each user authenticates with their own Acumatica credentials. Their Acumatica role controls which records they can access. The MCP server additionally requires a specific Acumatica role for access, shows a consent interstitial, and automatically redacts sensitive fields before data reaches the AI model.
 
 ## Features
 
 - **44 tools** -- 38 read-only lookups + 6 utility/discovery tools (see [Available Tools](#available-tools))
 - **Per-user OAuth** -- users log in with their Acumatica credentials (or SSO)
 - **Role-based access** -- Acumatica's security model governs what each user sees
+- **Role gate** -- only users with a designated Acumatica role (e.g., `MCP Access`) can connect
+- **Consent interstitial** -- users must acknowledge AI data processing before accessing tools
+- **Sensitive field redaction** -- SSN, bank accounts, salary, and other PII fields are automatically redacted before data leaves the server
 - **Rate limiting** -- 3 concurrent requests, 40 requests/minute per user
-- **Structured audit logging** for all API calls
+- **Structured audit logging** -- all tool invocations, auth events, and field redactions are logged
 
 ## Architecture
 
@@ -23,6 +26,8 @@ Claude (claude.ai / Desktop / API)
 |  OAuth 2.1 Provider              |
 |    /authorize -> Acumatica login |
 |    /callback  <- Acumatica       |
+|      (role gate + OIDC userinfo) |
+|    /consent   -> AI data consent |
 |    /token, /register (DCR)       |
 |    /mcp -> McpAgent DO (44 tools)|
 +---------------+------------------+
@@ -39,8 +44,10 @@ Claude (claude.ai / Desktop / API)
 - A [Cloudflare](https://cloudflare.com) account (Workers paid plan for Durable Objects)
 - An Acumatica 2025 R2 instance with:
   - A **Connected Application** configured in SM303010
-  - OAuth 2.0 enabled with `api` scope
+  - OAuth 2.0 enabled with `api openid profile email` scopes
   - A redirect URI pointing to your worker's `/callback` endpoint
+  - An **`MCP Access` role** (SM201005) -- a marker role with no permissions required
+  - An **`MCPAccess` Generic Inquiry** (SM208000) -- a trivial GI assigned only to the `MCP Access` role, with **Expose via OData** enabled (see [Architecture docs](docs/architecture.md) for details)
 
 ## Setup
 
@@ -59,7 +66,7 @@ In your Acumatica instance, navigate to **System > Integration > Connected Appli
 1. Create a new Connected Application
 2. Set the **OAuth 2.0 Flow** to **Authorization Code**
 3. Add a redirect URI: `https://<your-worker-url>/callback`
-4. Set the scope to `api`
+4. Set the scope to `api openid profile email`
 5. Note the **Client ID** and **Client Secret**
 
 ### 3. Create KV namespace
@@ -95,13 +102,23 @@ For `COOKIE_ENCRYPTION_KEY`, generate a random 256-bit hex key:
 openssl rand -hex 32
 ```
 
-### 6. Deploy
+### 6. Configure Acumatica role and Generic Inquiry
+
+The MCP server requires users to have a specific Acumatica role before they can access AI tools. This is enforced via a canary Generic Inquiry (GI) that is assigned only to that role.
+
+1. **Create role:** In Acumatica, go to **System > Access Rights > User Roles (SM201005)** and create a role named `MCP Access`. No screen permissions are needed -- it is purely a marker role.
+2. **Create Generic Inquiry:** Go to **System > Customization > Generic Inquiry (SM208000)** and create a GI named `MCPAccess` with any trivial query (e.g., a single column from any table). Assign it only to the `MCP Access` role. Enable **Expose via OData**.
+3. **Assign role to users:** Assign the `MCP Access` role to each Acumatica user who should have AI assistant access.
+
+> **Note:** The role name is configurable via the `ACUMATICA_MCP_ROLE` environment variable in `wrangler.jsonc`.
+
+### 7. Deploy
 
 ```bash
 npx wrangler deploy
 ```
 
-### 7. Local development (optional)
+### 8. Local development (optional)
 
 ```bash
 cp .dev.vars.example .dev.vars
@@ -116,7 +133,8 @@ npx wrangler dev
 1. Go to **Settings > MCP Servers** (or Claude Desktop's MCP configuration)
 2. Add a new remote MCP server with the URL: `https://<your-worker-url>/mcp`
 3. On first use, you'll be redirected to your Acumatica login page
-4. After authenticating, Claude will have access to all 44 tools
+4. If your account has the `MCP Access` role, you'll see a consent page explaining AI data processing
+5. After acknowledging consent, Claude will have access to all 44 tools
 
 ### Claude Code (CLI)
 
@@ -233,9 +251,13 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 
 - **No stored credentials.** The MCP server does not store Acumatica passwords. It uses OAuth 2.0 authorization code flow -- users authenticate directly with Acumatica.
 - **Per-user tokens.** Each user's Acumatica access token is stored in Cloudflare KV, scoped to their username. Tokens are automatically refreshed when expired.
+- **Role gate.** Only users with the `MCP Access` role (configurable) can connect. This is enforced via a canary Generic Inquiry check during login -- users without the role see an access denied page.
+- **Consent interstitial.** After passing the role check, users must acknowledge that their data will be processed by an external AI model before the MCP session activates.
+- **Sensitive field redaction.** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) and matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` and `REDACT_SKIP` environment variables.
 - **Role-based access.** The user's Acumatica role determines which records they can read. If a user doesn't have access to a record in Acumatica, they won't be able to access it through the MCP server either.
 - **Read-only.** All current tools are read-only lookups. No data is created, modified, or deleted.
 - **Rate limiting.** 3 concurrent requests, 40 requests per minute, and a configurable record cap per query to protect your Acumatica instance.
+- **Audit logging.** All tool invocations, auth events (login success/denied, consent accepted), and field redaction events are logged as structured JSON. View with `npx wrangler tail`.
 
 ## Tech Stack
 
@@ -253,6 +275,10 @@ npx wrangler dev       # Start local dev server
 npx tsc --noEmit       # Type check
 npx wrangler tail      # Stream live logs from deployed worker
 ```
+
+## Disclaimer
+
+This project is an independent, community-built integration and is **not affiliated with, endorsed by, or supported by Acumatica, Inc.** "Acumatica" is a registered trademark of Acumatica, Inc. Use of the Acumatica name and API is for interoperability purposes only.
 
 ## License
 

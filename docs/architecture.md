@@ -36,7 +36,9 @@ The MCP4Acumatica is a remote [Model Context Protocol](https://modelcontextproto
 │  │                                  │       │
 │  │  Routes:                         │       │
 │  │  /authorize  - Acumatica redirect│       │
-│  │  /callback   - Token exchange    │       │
+│  │  /callback   - Token exchange +  │       │
+│  │               role gate          │       │
+│  │  /consent    - AI data consent   │       │
 │  │  /health     - Health check      │       │
 │  │  /           - Landing page      │       │
 │  └──────────────────────────────────┘       │
@@ -84,10 +86,12 @@ This layer is transparent to the MCP tools. By the time a request reaches the Mc
 
 A [Hono](https://hono.dev) application that handles the Acumatica OAuth 2.0 authorization code flow:
 
-1. **`/authorize`** -- Builds the Acumatica OAuth authorization URL with `scope=api` and redirects the user to Acumatica's login page
-2. **`/callback`** -- Receives the authorization code from Acumatica, exchanges it for access + refresh tokens, stores them in KV keyed by the Acumatica username, and completes the MCP OAuth flow
-3. **`/health`** -- Returns server status
-4. **`/`** -- Landing page
+1. **`/authorize`** -- Builds the Acumatica OAuth authorization URL with `scope=api openid profile email` and redirects the user to Acumatica's login page
+2. **`/callback`** -- Receives the authorization code from Acumatica, exchanges it for access + refresh tokens, identifies the user via OIDC userinfo, performs the **role gate check** (see below), and redirects to the consent page
+3. **`/consent`** (GET) -- Displays the **consent interstitial** page explaining AI data processing, audit logging, and field redaction
+4. **`/consent`** (POST) -- User acknowledges the consent; tokens are stored in KV and the MCP OAuth flow completes
+5. **`/health`** -- Returns server status
+6. **`/`** -- Landing page
 
 ### 3. McpAgent Durable Object (AcumaticaMcpServer)
 
@@ -117,6 +121,7 @@ Both bindings point to the same physical KV namespace (one namespace, two bindin
 |---------|---------|-------------|-----|
 | `TOKEN_STORE` | Per-user Acumatica OAuth tokens | `user_token:{username}` | None (refreshed on expiry) |
 | `TOKEN_STORE` | Temporary OAuth state during login flow | `acumatica_state:{state}` | 10 minutes |
+| `TOKEN_STORE` | Pending consent data during login flow | `consent:{id}` | 5 minutes |
 | `TOKEN_STORE` | Cached metadata (entity schemas, GI lists) | `cache:{key}` | 1–24 hours |
 | `OAUTH_KV` | Used internally by `@cloudflare/workers-oauth-provider` for client registrations and authorization codes | Managed by library | Managed by library |
 
@@ -151,12 +156,28 @@ MCP Client (Claude)                Worker                      Acumatica
        │                             │──────────────────────────>  │
        │                             │  <── access + refresh token │
        │                             │                             │
-       │                             │  8. Store token in KV       │
-       │                             │  9. Complete OAuth flow     │
+       │                             │  8. OIDC userinfo lookup    │
+       │                             │──────────────────────────>  │
+       │                             │  <── username, display name │
+       │                             │                             │
+       │                             │  9. Role gate: query        │
+       │                             │     MCPAccess canary GI     │
+       │                             │──────────────────────────>  │
+       │                             │  <── 200 (has role) or      │
+       │                             │      403 (denied)           │
+       │                             │                             │
+       │                             │  10. If denied → 403 page   │
+       │                             │  11. If allowed → /consent  │
+       │  <── Consent interstitial ──│                             │
+       │                             │                             │
+       │     User acknowledges       │                             │
+       │──────────────────────────>  │                             │
+       │                             │  12. Store token in KV      │
+       │                             │  13. Complete OAuth flow    │
        │  <── MCP session active ────│                             │
        │                             │                             │
-       │  10. Tool calls via /mcp    │                             │
-       │──────────────────────────>  │  11. API call with token    │
+       │  14. Tool calls via /mcp    │                             │
+       │──────────────────────────>  │  15. API call with token    │
        │                             │──────────────────────────>  │
        │                             │  <── JSON response ─────── │
        │  <── MCP tool result ───────│                             │
@@ -168,6 +189,8 @@ MCP Client (Claude)                Worker                      Acumatica
 - **No stored passwords.** Only OAuth tokens are stored.
 - **Token refresh.** When an access token expires, the server uses the refresh token to get a new one automatically.
 - **Acumatica is the sole identity provider.** No separate identity layer.
+- **Role gate before access.** After login, a canary GI check ensures the user has the required Acumatica role (see Access Control below).
+- **Consent required.** Users must acknowledge an AI data processing consent page before the MCP session activates.
 
 ---
 
@@ -179,12 +202,40 @@ MCP Client (Claude)                Worker                      Acumatica
 2. **The Worker** authenticates with Acumatica via per-user OAuth tokens
 3. **Users** log in with their Acumatica credentials (or SSO configured on the Acumatica instance)
 
-### Authorization
+### Authorization & Access Control
 
-- **Role-based access control** is entirely managed by Acumatica
-- Each user's API token carries their Acumatica role permissions
-- If a user can't access a record in Acumatica's UI, they can't access it through the MCP server
-- The MCP server does not add any additional permission layer
+Acumatica's role-based access control governs what data each user can access -- if a user can't see a record in Acumatica's UI, they can't access it through the MCP server. On top of that, the MCP server adds its own access control layer:
+
+#### Role Gate (Canary GI)
+
+Before a user can access the MCP server, the `/callback` handler checks whether they belong to a specific Acumatica role. This is implemented using a **canary Generic Inquiry (GI)** approach:
+
+1. A trivial GI named `MCPAccess` is created in Acumatica (SM208000). Its content is irrelevant -- it can be any single column.
+2. The `MCPAccess` GI is assigned **only** to the `MCP Access` role in Acumatica.
+3. The GI is enabled for **OData** exposure.
+4. During login, the server queries the GI via OData: `GET /t/{tenant}/api/odata/gi/MCPAccess?$top=1`
+5. If the response is **200**, the user has the role and may proceed.
+6. If the response is **403**, the user does not have the role and sees an access denied page directing them to contact their Acumatica administrator.
+
+This approach avoids exposing user/role membership data -- the GI content itself is never used. It works reliably across Acumatica SaaS instances where direct user/role API endpoints are not available.
+
+The required role name defaults to `MCP Access` and is configurable via the `ACUMATICA_MCP_ROLE` environment variable.
+
+**Acumatica setup required:**
+- **Role:** Create `MCP Access` in Acumatica (SM201005). No screen permissions are needed -- it is purely a marker role.
+- **Generic Inquiry:** Create `MCPAccess` in Acumatica (SM208000) with any trivial query. Assign it only to the `MCP Access` role. Enable **Expose via OData**.
+- **Users:** Assign the `MCP Access` role to each user who should have AI assistant access.
+
+#### Consent Interstitial
+
+Users who pass the role gate are shown a consent page before the MCP session activates. The page explains that:
+
+- Acumatica data will be sent to an external AI model for processing
+- All data access is logged for audit purposes
+- Sensitive fields are automatically redacted
+- AI responses should be verified directly in Acumatica
+
+The user must click "I Understand -- Continue" to proceed. Consent acknowledgment is logged as an audit event.
 
 ### Data Protection
 
@@ -192,6 +243,30 @@ MCP Client (Claude)                Worker                      Acumatica
 - **Per-user isolation** -- Each user's token is stored separately. Users cannot access other users' tokens.
 - **No credential storage** -- The server never stores passwords. Only OAuth tokens (access + refresh) are stored in KV.
 - **Token encryption** -- OAuth state is encrypted with `COOKIE_ENCRYPTION_KEY`
+- **Sensitive field redaction** -- Tool responses are automatically scanned for sensitive field names before data is returned to the AI model. See Sensitive Field Redaction below.
+
+### Sensitive Field Redaction
+
+The `redactFields()` utility (`src/lib/redact.ts`) recursively walks every Acumatica API response and replaces values of fields whose names match sensitive patterns with `[REDACTED]`.
+
+**Built-in patterns** (case-insensitive, matched as substrings of field names):
+`SSN`, `SocialSecurity`, `TaxRegistrationID`, `TaxID`, `BankAccount`, `RoutingNumber`, `IBAN`, `SWIFT`, `CreditCard`, `CardNumber`, `Password`, `Secret`, `Salary`, `PayRate`, `HourlyRate`, `AnnualRate`, `BirthDate`, `DateOfBirth`, `DOB`
+
+**Configuration:**
+- `REDACT_PATTERNS` (env var) -- comma-separated additional field name patterns to redact (e.g., `CustomSSN,EmployeeNotes`)
+- `REDACT_SKIP` (env var) -- comma-separated field name patterns to whitelist from redaction (e.g., `BirthDate`)
+
+When fields are redacted, a structured log entry is emitted with the tool name, username, and list of redacted field paths.
+
+### Audit Logging
+
+All tool invocations and security events are logged as structured JSON via `console.log` (viewable with `npx wrangler tail`). Three log types are emitted:
+
+| Log Type | Events | Key Fields |
+|----------|--------|------------|
+| `tool_invocation` | Every MCP tool call | tool, username, endpoint, status, duration |
+| `auth_event` | `login_success`, `login_denied`, `consent_accepted` | eventType, username, reason (if denied) |
+| `field_redaction` | When sensitive fields are redacted from a response | tool, username, redactedFields, redactedCount |
 
 ### Rate Limiting
 

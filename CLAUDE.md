@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.20.1`
+- **Current tag:** `25R2-0.20.2`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -190,6 +190,16 @@ npx wrangler tail             # Live logs
 npx wrangler secret put X     # Set a secret
 npx wrangler kv namespace create X  # Create KV namespace
 ```
+
+## Commit / Push / Tag Checklist
+
+Before every commit, push, or tag:
+
+1. **Update documentation** — ensure all docs (`README.md`, `docs/*.md`) reflect any changes made in the commit.
+2. **Update version strings in documentation** — if the tag is changing, update the version in:
+   - `CLAUDE.md` → `Current tag` field in Project Overview
+   - `docs/tool-reference.md` → version in the opening paragraph
+   - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
 
 ## Known Issues / Tech Debt
 
