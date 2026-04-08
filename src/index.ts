@@ -41,6 +41,7 @@ import { handleRunInquiry } from "./tools/generic-inquiries";
 import { handleListEntities } from "./tools/entity-list";
 import { handleDescribeEntity } from "./tools/entity-schema";
 import { handleListGenericInquiries, handleDescribeInquiry } from "./tools/generic-inquiry-discovery";
+import { handleClearCache } from "./tools/clear-cache";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { redactFields } from "./lib/redact";
@@ -50,7 +51,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "acumatica-mcp-server",
-    version: "0.19.0",
+    version: "0.20.0",
   });
 
   async init() {
@@ -829,6 +830,24 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         return this.callTool(() =>
           handleDescribeInquiry(this.env, this.props.acumaticaUsername, { inquiryName }),
           "acumatica_describe_inquiry"
+        );
+      }
+    );
+
+    // Tool 44: Clear Metadata Cache
+    this.server.tool(
+      "acumatica_clear_cache",
+      "Clear cached metadata (entity schemas, GI lists, GI field schemas). Use when Acumatica customizations have changed and cached schema data is stale. With no arguments, clears all cached metadata. Optionally specify a target to clear only that cache.",
+      {
+        target: z
+          .string()
+          .optional()
+          .describe("What to clear: 'schema:EntityName' (one entity schema), 'schemas' (all entity schemas), 'gi' (GI list + metadata), 'gi_schema:InquiryName' (one GI schema), or omit to clear everything."),
+      },
+      async ({ target }) => {
+        return this.callTool(() =>
+          handleClearCache(this.env, target),
+          "acumatica_clear_cache"
         );
       }
     );

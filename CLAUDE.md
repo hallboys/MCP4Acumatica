@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.19.1`
+- **Current tag:** `25R2-0.20.0`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://acumatica-mcp-server.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/AcumaticaMCP`
 
@@ -25,8 +25,8 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /token, /register (DCR+CIMD) │
 │    ├─ /docs → Documentation site │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ 43 tools (38 read-only  │
-│       │   + 5 utility/discovery) │
+│       ├─ 44 tools (38 read-only  │
+│       │   + 6 utility/discovery) │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
                ▼
@@ -87,16 +87,18 @@ src/
 │   └── markdown.d.ts              # TypeScript declaration for .md text module imports
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
+│   ├── metadata-cache.ts           # KV-backed cache for entity schemas and GI metadata
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   ├── logger.ts                  # Structured JSON audit logging (tool, auth, redaction events)
 │   └── redact.ts                  # Pattern-based sensitive field redaction
-├── tools/                         # 41 tools across 10 modules + 3 utility
+├── tools/                         # 42 tools across 10 modules + 4 utility
 │   ├── accounts.ts                # acumatica_get_account (GL)
 │   ├── appointments.ts            # acumatica_get_appointment (Field Service)
 │   ├── bills.ts                   # acumatica_get_bill (AP)
 │   ├── business-accounts.ts       # acumatica_get_business_account (CRM)
 │   ├── cases.ts                   # acumatica_get_case (Support)
 │   ├── checks.ts                  # acumatica_get_check (AP)
+│   ├── clear-cache.ts             # acumatica_clear_cache (Utility)
 │   ├── contacts.ts                # acumatica_get_contact (CRM)
 │   ├── crm-activities.ts          # acumatica_get_email, _event, _activity, _task
 │   ├── customers.ts               # acumatica_get_customer
@@ -213,11 +215,12 @@ npx wrangler kv namespace create X  # Create KV namespace
 - [x] HR & Payroll: Employee, ExpenseClaim, TimeEntry (0.9.0)
 - [x] CRM Activities: Email, Event, Activity, Task (0.10.0)
 
-### Completed — Utility/Discovery Tools (5 total, 0.11.0–0.16.0)
+### Completed — Utility/Discovery Tools (6 total, 0.11.0–0.20.0)
 - [x] Generic Inquiry: acumatica_run_inquiry (0.11.0)
 - [x] Entity List/Search: acumatica_list_entities (0.12.0)
 - [x] Entity Schema Discovery: acumatica_describe_entity (0.13.0)
 - [x] GI Discovery: acumatica_list_generic_inquiries, acumatica_describe_inquiry (0.16.0; switched to OData GI endpoint with OAuth 2.0 Bearer tokens)
+- [x] Metadata Cache: KV-backed caching for entity schemas (24h), GI lists (1h), GI field schemas (1h); acumatica_clear_cache tool for on-demand invalidation (0.20.0)
 
 ### Completed — Documentation & Infrastructure
 - [x] Documentation site served from `/docs` on the same worker (0.14.0)

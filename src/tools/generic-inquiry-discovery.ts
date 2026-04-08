@@ -3,6 +3,11 @@
 
 import type { Env } from "../types/acumatica";
 import { AcumaticaClient, AcumaticaApiError } from "../lib/acumatica-client";
+import { getCached, setCached } from "../lib/metadata-cache";
+
+const GI_LIST_TTL_SECONDS = 3600; // 1 hour
+const GI_METADATA_TTL_SECONDS = 3600; // 1 hour
+const GI_SCHEMA_TTL_SECONDS = 3600; // 1 hour
 
 /** OData service document entry */
 interface ODataServiceEntry {
@@ -24,19 +29,52 @@ export async function handleListGenericInquiries(
   }
 ): Promise<unknown> {
   const MAX_TOP = parseInt(env.ACUMATICA_MAX_RECORDS, 10) || 1000;
-  const client = new AcumaticaClient(env, acumaticaUsername);
   const effectiveTop = Math.min(args.topN ?? 200, MAX_TOP);
 
   try {
-    // Fetch service document and $metadata in parallel
-    const [serviceDoc, metadata] = await Promise.all([
-      client.getOData<ODataServiceDocument>(
-        "",
-        "acumatica_list_generic_inquiries",
-        { titleFilter: args.titleFilter, topN: effectiveTop }
-      ),
-      client.getODataMetadata("acumatica_list_generic_inquiries").catch(() => ""),
+    // Try KV cache for both the service document and $metadata
+    const [cachedServiceDoc, cachedMetadata] = await Promise.all([
+      getCached<ODataServiceDocument>(env.TOKEN_STORE, "gi_list"),
+      getCached<string>(env.TOKEN_STORE, "gi_metadata"),
     ]);
+
+    let serviceDoc: ODataServiceDocument;
+    let metadata: string;
+
+    if (cachedServiceDoc && cachedMetadata !== null) {
+      // Full cache hit — skip both API calls
+      serviceDoc = cachedServiceDoc;
+      metadata = cachedMetadata;
+    } else {
+      // Fetch whichever is missing (or both)
+      const client = new AcumaticaClient(env, acumaticaUsername);
+
+      const [fetchedServiceDoc, fetchedMetadata] = await Promise.all([
+        cachedServiceDoc
+          ? Promise.resolve(cachedServiceDoc)
+          : client.getOData<ODataServiceDocument>(
+              "",
+              "acumatica_list_generic_inquiries",
+              { titleFilter: args.titleFilter, topN: effectiveTop }
+            ),
+        cachedMetadata !== null
+          ? Promise.resolve(cachedMetadata)
+          : client.getODataMetadata("acumatica_list_generic_inquiries").catch(() => ""),
+      ]);
+
+      serviceDoc = fetchedServiceDoc;
+      metadata = fetchedMetadata;
+
+      // Store any freshly fetched data in KV
+      const cacheWrites: Promise<void>[] = [];
+      if (!cachedServiceDoc) {
+        cacheWrites.push(setCached(env.TOKEN_STORE, "gi_list", serviceDoc, GI_LIST_TTL_SECONDS));
+      }
+      if (cachedMetadata === null) {
+        cacheWrites.push(setCached(env.TOKEN_STORE, "gi_metadata", metadata, GI_METADATA_TTL_SECONDS));
+      }
+      await Promise.all(cacheWrites);
+    }
 
     // Extract parameterized GI names from $metadata FunctionImport entries
     // Pattern: <FunctionImport Name="GIName_WithParameters" ...>
@@ -101,6 +139,13 @@ function inferType(value: unknown): string {
   return "object";
 }
 
+/** Cached GI schema shape */
+interface CachedGiSchema {
+  inquiryName: string;
+  fields: Array<{ fieldName: string; dataType: string }>;
+  sampleRow: Record<string, unknown>;
+}
+
 /** OData query response with value array */
 interface ODataQueryResponse {
   value: Record<string, unknown>[];
@@ -111,6 +156,17 @@ export async function handleDescribeInquiry(
   acumaticaUsername: string,
   args: { inquiryName: string }
 ): Promise<unknown> {
+  const cacheKey = `gi_schema:${args.inquiryName}`;
+
+  // Check KV cache first
+  const cached = await getCached<CachedGiSchema>(env.TOKEN_STORE, cacheKey);
+  if (cached) {
+    return {
+      ...cached,
+      note: "Field list inferred from live sample row via OData. Types may be approximate.",
+    };
+  }
+
   const client = new AcumaticaClient(env, acumaticaUsername);
 
   try {
@@ -124,6 +180,7 @@ export async function handleDescribeInquiry(
     const rows = response.value || [];
 
     if (rows.length === 0) {
+      // Don't cache empty results — the GI may just not have data right now
       return {
         inquiryName: args.inquiryName,
         fields: [],
@@ -141,6 +198,9 @@ export async function handleDescribeInquiry(
         fieldName,
         dataType: inferType(value),
       }));
+
+    // Cache the schema (fields + sample row) for future calls
+    await setCached(env.TOKEN_STORE, cacheKey, { inquiryName: args.inquiryName, fields, sampleRow }, GI_SCHEMA_TTL_SECONDS);
 
     return {
       inquiryName: args.inquiryName,

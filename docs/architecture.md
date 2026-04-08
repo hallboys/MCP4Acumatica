@@ -48,7 +48,7 @@ The Acumatica MCP Server is a remote [Model Context Protocol](https://modelconte
 │  │  /mcp  - MCP protocol endpoint   │       │
 │  │  /sse  - SSE transport           │       │
 │  │                                  │       │
-│  │  43 tools registered in init()   │       │
+│  │  44 tools registered in init()   │       │
 │  └──────────────┬───────────────────┘       │
 │                 │                            │
 │  ┌──────────────┴───────────────────┐       │
@@ -93,7 +93,7 @@ A [Hono](https://hono.dev) application that handles the Acumatica OAuth 2.0 auth
 
 A [Durable Object](https://developers.cloudflare.com/durable-objects/) that extends `McpAgent` from the `agents` SDK. Each MCP session gets its own DO instance with:
 
-- **`init()`** -- Registers all 43 tools with the MCP server
+- **`init()`** -- Registers all 44 tools with the MCP server
 - **`callTool()`** -- Wrapper that catches errors and returns MCP-formatted responses
 - **`this.props.acumaticaUsername`** -- The authenticated user's Acumatica username, set during the OAuth callback
 
@@ -117,6 +117,7 @@ Both bindings point to the same physical KV namespace (one namespace, two bindin
 |---------|---------|-------------|-----|
 | `TOKEN_STORE` | Per-user Acumatica OAuth tokens | `user_token:{username}` | None (refreshed on expiry) |
 | `TOKEN_STORE` | Temporary OAuth state during login flow | `acumatica_state:{state}` | 10 minutes |
+| `TOKEN_STORE` | Cached metadata (entity schemas, GI lists) | `cache:{key}` | 1–24 hours |
 | `OAUTH_KV` | Used internally by `@cloudflare/workers-oauth-provider` for client registrations and authorization codes | Managed by library | Managed by library |
 
 ---
@@ -210,7 +211,7 @@ When a rate limit is exceeded, the tool returns a friendly error message asking 
 
 ### Tool Registration
 
-All 43 tools are registered in the `init()` method of `AcumaticaMcpServer`. Each tool has:
+All 44 tools are registered in the `init()` method of `AcumaticaMcpServer`. Each tool has:
 
 1. **Name** -- e.g., `acumatica_get_customer`
 2. **Description** -- Human-readable description for the MCP client
@@ -252,7 +253,7 @@ MCP response: { content: [{ type: "text", text: JSON }] }
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| Utility/Discovery | 5 | Schema discovery, entity listing, generic inquiries, GI discovery |
+| Utility/Discovery | 6 | Schema discovery, entity listing, generic inquiries, GI discovery, cache management |
 | Read-Only Lookups | 38 | Single-record lookups by key across 10 modules |
 
 ### Zod Schema Constraint
@@ -277,13 +278,15 @@ src/
 │   └── acumatica-oauth.ts         # Token retrieval + refresh from KV
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client, unwrapFields()
+│   ├── metadata-cache.ts          # KV-backed cache for schemas and GI metadata
 │   ├── rate-limiter.ts            # Concurrent + per-minute rate limits
 │   └── logger.ts                  # Structured JSON audit logging
-├── tools/                         # 41 tools across 31 handler files
+├── tools/                         # 42 tools across 32 handler files
 │   ├── entity-list.ts             # acumatica_list_entities
 │   ├── entity-schema.ts           # acumatica_describe_entity
 │   ├── generic-inquiries.ts       # acumatica_run_inquiry
 │   ├── generic-inquiry-discovery.ts # acumatica_list_generic_inquiries, _describe_inquiry
+│   ├── clear-cache.ts             # acumatica_clear_cache
 │   ├── customers.ts               # acumatica_get_customer
 │   ├── vendors.ts                 # acumatica_get_vendor
 │   ├── ... (29 more handler files)

@@ -1,6 +1,6 @@
 # Acumatica MCP Server -- Tool Reference
 
-Complete specification for all 43 tools available in the Acumatica MCP Server (v0.18.0).
+Complete specification for all 44 tools available in the Acumatica MCP Server (v0.20.0).
 
 ## Table of Contents
 
@@ -97,6 +97,20 @@ Returns the field schema for a Generic Inquiry (GI) exposed via OData — field 
 - GI not found (404): returns descriptive error suggesting `acumatica_list_generic_inquiries`
 - GI requires filters (400): returns guidance to use `acumatica_run_inquiry` with a filter
 - Empty results: returns empty field list with a note
+
+---
+
+### `acumatica_clear_cache`
+
+Clear cached metadata (entity schemas, GI lists, GI field schemas). Use when Acumatica customizations have changed and cached schema data is stale. With no arguments, clears all cached metadata.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `target` | string | No | What to clear: `schema:EntityName` (one entity schema), `schemas` (all entity schemas), `gi` (GI list + metadata), `gi_schema:InquiryName` (one GI schema), or omit to clear everything |
+
+**Caching details:** Entity schemas are cached for 24 hours. GI lists, GI metadata, and GI field schemas are cached for 1 hour. Cache is stored in KV with `cache:` key prefix.
+
+**Returns:** `{ cleared: [...] }` listing the cache keys that were removed.
 
 ---
 

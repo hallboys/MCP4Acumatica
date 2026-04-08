@@ -3,12 +3,23 @@
 
 import type { Env } from "../types/acumatica";
 import { AcumaticaClient } from "../lib/acumatica-client";
+import { getCached, setCached } from "../lib/metadata-cache";
+
+const SCHEMA_TTL_SECONDS = 86400; // 24 hours
 
 export async function handleDescribeEntity(
   env: Env,
   acumaticaUsername: string,
   args: { entityName: string }
 ): Promise<unknown> {
+  const cacheKey = `schema:${args.entityName}`;
+
+  // Check KV cache first
+  const cached = await getCached<Record<string, unknown>>(env.TOKEN_STORE, cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const client = new AcumaticaClient(env, acumaticaUsername);
 
   const schema = await client.get<Record<string, unknown>>(
@@ -16,6 +27,9 @@ export async function handleDescribeEntity(
     "acumatica_describe_entity",
     { entityName: args.entityName }
   );
+
+  // Store in KV for future calls
+  await setCached(env.TOKEN_STORE, cacheKey, schema, SCHEMA_TTL_SECONDS);
 
   return schema;
 }
