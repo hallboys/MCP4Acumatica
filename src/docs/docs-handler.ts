@@ -4,6 +4,7 @@
 import { Hono } from "hono";
 import { marked } from "marked";
 import type { Env } from "../types/acumatica";
+import { adminApp } from "../admin/admin-handler";
 
 // Import markdown files as text modules (wrangler Text rule)
 import readmeContent from "../../README.md";
@@ -226,10 +227,11 @@ function renderPage(slug: string, html: string): string {
     <nav>
       <div class="brand">
         <h1>MCP4Acumatica</h1>
-        <span>v0.21.0 &middot; 44 tools</span>
+        <span>v0.22.0 &middot; 44 tools</span>
       </div>
       ${renderNav(slug)}
       <div class="links">
+        <a href="/docs/admin">Admin Console</a>
         <a href="https://github.com/hallboys/MCP4Acumatica" target="_blank">GitHub</a>
         <a href="/health">API Health</a>
         <a href="/mcp">MCP Endpoint</a>
@@ -250,6 +252,9 @@ docsApp.get("/", (c) => {
   const html = marked.parse(readmeContent) as string;
   return c.html(renderPage("", html));
 });
+
+// Admin console (mounted before /:slug catch-all)
+docsApp.route("/admin", adminApp);
 
 // Doc pages
 docsApp.get("/:slug", (c) => {

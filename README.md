@@ -15,6 +15,8 @@ Each user authenticates with their own Acumatica credentials. Their Acumatica ro
 - **Rate limiting** -- 3 concurrent requests, 40 requests/minute per user
 - **Pagination guard** -- optional per-tool cooldown prevents AI models from making repeated calls to exhaust record limits
 - **Structured audit logging** -- all tool invocations, auth events, and field redactions are logged
+- **Admin console** -- web-based admin interface at `/docs/admin` for viewing logs and managing runtime settings without redeploying
+- **Long-term log retention** -- R2-backed log storage via Cloudflare Logpush with searchable log viewer
 
 ## Architecture
 

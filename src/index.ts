@@ -47,21 +47,27 @@ import { RateLimitError } from "./lib/rate-limiter";
 import { redactFields } from "./lib/redact";
 import { logRedaction } from "./lib/logger";
 import { PaginationGuard } from "./lib/pagination-guard";
+import { getConfig } from "./lib/config";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.21.0",
+    version: "0.22.0",
   });
 
   private paginationGuard!: PaginationGuard;
+  private redactPatterns?: string;
+  private redactSkip?: string;
 
   async init() {
-    this.paginationGuard = new PaginationGuard(
-      this.env.PAGINATION_GUARD_TOOLS,
-      this.env.PAGINATION_GUARD_COOLDOWN
-    );
+    // Read runtime config from KV with env var fallback
+    const guardTools = await getConfig(this.env.TOKEN_STORE, "pagination_guard_tools", this.env.PAGINATION_GUARD_TOOLS);
+    const guardCooldown = await getConfig(this.env.TOKEN_STORE, "pagination_guard_cooldown", this.env.PAGINATION_GUARD_COOLDOWN);
+    this.paginationGuard = new PaginationGuard(guardTools, guardCooldown);
+
+    this.redactPatterns = await getConfig(this.env.TOKEN_STORE, "redact_patterns", this.env.REDACT_PATTERNS);
+    this.redactSkip = await getConfig(this.env.TOKEN_STORE, "redact_skip", this.env.REDACT_SKIP);
     // Tool 1: Customer Lookup
     this.server.tool(
       "acumatica_get_customer",
@@ -889,11 +895,11 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         this.paginationGuard.record(toolName, discriminator);
       }
 
-      // Apply sensitive field redaction
+      // Apply sensitive field redaction (uses KV config with env var fallback)
       const { data, redactedFields: redacted } = redactFields(
         result,
-        this.env.REDACT_PATTERNS,
-        this.env.REDACT_SKIP
+        this.redactPatterns,
+        this.redactSkip
       );
 
       if (redacted.length > 0) {

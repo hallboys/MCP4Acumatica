@@ -296,6 +296,32 @@ Example configuration:
 
 When a guarded call is blocked, the tool returns an error message directing the AI to help the user refine their query filters instead.
 
+### Admin Console
+
+A web-based admin interface at `/docs/admin` for managing the MCP server without the wrangler CLI.
+
+- **Authentication:** `ADMIN_SECRET` env var (set via `wrangler secret put`). HMAC-signed session cookie (24h expiry), signed with `COOKIE_ENCRYPTION_KEY`. No KV session storage needed.
+- **Settings page** (`/docs/admin/settings`): View and edit runtime config (pagination guard, redaction patterns, max records). Values stored in KV with `config:` prefix. KV overrides take precedence over env vars. Changes take effect when the next DO instance starts.
+- **Log viewer** (`/docs/admin/logs`): Browse logs from R2 (Logpush). Filter by date range, log type, username, and tool name. Expandable rows show full JSON payload.
+
+### Long-Term Log Retention (R2 + Logpush)
+
+Cloudflare Logpush captures Workers Trace Events and writes NDJSON files to an R2 bucket for permanent retention.
+
+- **Setup:** `logpush: true` in `wrangler.jsonc` + Logpush job configured in Cloudflare dashboard
+- **R2 bucket:** `mcp4acumatica-logs` (binding: `mcp4acumatica_logs`)
+- **Format:** Gzipped NDJSON. Our structured `console.log()` output is nested inside Logpush's `Logs[].Message[]` array.
+- **Querying:** The admin log viewer lists R2 objects by upload date, reads and decompresses them, extracts our structured log entries, and applies filters.
+
+### Runtime Config (KV-Backed)
+
+Settings can be changed without redeploying via the admin console or direct KV writes.
+
+- Config keys stored in KV with `config:` prefix (e.g., `config:pagination_guard_tools`)
+- `getConfig(kv, key, envFallback)` reads KV first, falls back to env var
+- The DO reads config in `init()` and stores resolved values as instance properties
+- Changes take effect when the DO instance recycles (idle eviction, typically within minutes)
+
 ---
 
 ## Tool Architecture
@@ -367,11 +393,14 @@ Complex types (`z.record()`, `z.unknown()`, `z.number()`) cause MCP SDK JSON Sch
 ```
 src/
 ├── index.ts                       # Entry point, OAuthProvider + McpAgent DO
+├── admin/
+│   └── admin-handler.ts           # Admin console: auth, settings, log viewer
 ├── auth/
 │   ├── acumatica-auth-handler.ts  # Hono app: OAuth flow, health, landing
 │   └── acumatica-oauth.ts         # Token retrieval + refresh from KV
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client, unwrapFields()
+│   ├── config.ts                  # KV-backed runtime config with env var fallback
 │   ├── metadata-cache.ts          # KV-backed cache for schemas and GI metadata
 │   ├── pagination-guard.ts        # Per-tool cooldown to prevent pagination
 │   ├── rate-limiter.ts            # Concurrent + per-minute rate limits

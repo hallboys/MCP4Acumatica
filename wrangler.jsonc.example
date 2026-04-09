@@ -61,5 +61,32 @@
 			"tag": "v1",
 			"new_sqlite_classes": ["AcumaticaMcpServer"]
 		}
+	],
+
+	// Logpush — emit trace events for Logpush to capture and send to R2
+	// Requires Workers Paid plan ($5/month)
+	"logpush": true,
+
+	// Workers Logs — 3-day retention, queryable in Cloudflare dashboard
+	"observability": {
+		"enabled": true
+	},
+
+	// Allow importing .md files as text modules for the docs site
+	"rules": [
+		{
+			"type": "Text",
+			"globs": ["**/*.md"],
+			"fallthrough": true
+		}
+	],
+
+	// R2 bucket for long-term log storage via Logpush
+	// Create with: npx wrangler r2 bucket create mcp4acumatica-logs
+	"r2_buckets": [
+		{
+			"binding": "mcp4acumatica_logs",
+			"bucket_name": "mcp4acumatica-logs"
+		}
 	]
 }

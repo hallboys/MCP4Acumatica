@@ -1087,6 +1087,10 @@ export interface Env {
   PAGINATION_GUARD_TOOLS?: string;
   // Pagination guard — cooldown in seconds between calls to same resource (default: 30)
   PAGINATION_GUARD_COOLDOWN?: string;
+  // Admin interface — secret for admin login (set via wrangler secret put ADMIN_SECRET)
+  ADMIN_SECRET?: string;
+  // R2 bucket for long-term log storage via Logpush
+  mcp4acumatica_logs?: R2Bucket;
 }
 
 /** Helpers injected by @cloudflare/workers-oauth-provider */

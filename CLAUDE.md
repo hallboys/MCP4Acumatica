@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.21.0`
+- **Current tag:** `25R2-0.22.0`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -84,11 +84,14 @@ src/
 ├── auth/
 │   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, /consent, role gate, OIDC discovery)
 │   └── acumatica-oauth.ts         # Per-user token retrieval + refresh from KV
+├── admin/
+│   └── admin-handler.ts           # Admin console: auth, settings, log viewer (Hono sub-app)
 ├── docs/
-│   ├── docs-handler.ts            # Hono sub-app: renders markdown docs to HTML
+│   ├── docs-handler.ts            # Hono sub-app: renders markdown docs to HTML, mounts admin
 │   └── markdown.d.ts              # TypeScript declaration for .md text module imports
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
+│   ├── config.ts                  # KV-backed runtime config with env var fallback
 │   ├── metadata-cache.ts           # KV-backed cache for entity schemas and GI metadata
 │   ├── pagination-guard.ts        # Per-tool cooldown to prevent pagination/data exfiltration
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
@@ -161,10 +164,20 @@ src/
 - `ACUMATICA_CLIENT_ID` — from Acumatica Connected Application (SM303010)
 - `ACUMATICA_CLIENT_SECRET` — from Acumatica Connected Application
 - `COOKIE_ENCRYPTION_KEY` — random 256-bit hex (`openssl rand -hex 32`)
+- `ADMIN_SECRET` — password for the admin console at `/docs/admin`
 
 ### KV Namespaces:
-- `TOKEN_STORE` — per-user Acumatica tokens and temporary OAuth state during login
+- `TOKEN_STORE` — per-user Acumatica tokens, temporary OAuth state, metadata cache, and runtime config overrides (`config:*` prefix)
 - `OAUTH_KV` — required by `@cloudflare/workers-oauth-provider` internally (points to the same physical namespace as `TOKEN_STORE`)
+
+### R2 Buckets:
+- `mcp4acumatica_logs` — long-term log storage via Logpush (requires Workers Paid plan for Logpush; R2 free tier: 10 GB)
+
+### Runtime Config (KV-backed):
+Settings can be changed at runtime via the admin console at `/docs/admin/settings` without redeploying. KV overrides take precedence over env vars. Changes take effect when the next DO instance starts (DOs recycle within minutes on idle). Config keys stored in KV with `config:` prefix:
+- `config:pagination_guard_tools`, `config:pagination_guard_cooldown`
+- `config:redact_patterns`, `config:redact_skip`
+- `config:acumatica_max_records`
 
 ### Acumatica Connected Application (SM303010):
 - **Redirect URI:** `https://acumatica-mcp.hallboys.com/callback` (add both custom domain and workers.dev URLs if using both)
