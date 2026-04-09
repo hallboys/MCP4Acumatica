@@ -34,18 +34,20 @@ Discover the fields, types, and sub-entities for any Acumatica entity. Use this 
 
 ### `acumatica_list_entities`
 
-List or search any Acumatica entity with OData filtering, sorting, and field selection. Works with all entities in the Default endpoint.
+List or search any Acumatica entity with OData filtering, sorting, and field selection. Works with all entities in the Default endpoint. Always use `filterExpression` to scope queries — do not retrieve all records from large entities.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `entityName` | string | Yes | -- | Entity name (e.g., `Customer`, `Invoice`, `StockItem`) |
 | `filterExpression` | string | No | -- | OData `$filter` expression (e.g., `Status eq 'Open'`) |
-| `topN` | string | No | `"100"` | Maximum rows to return |
+| `topN` | string | No | `"100"` | Maximum rows to return (max 1000). If truncated, refine filters — do not paginate. |
 | `selectFields` | string | No | -- | Comma-separated field names (e.g., `CustomerID,CustomerName`) |
 | `orderBy` | string | No | -- | OData `$orderby` expression (e.g., `Amount desc`) |
 | `expand` | string | No | -- | Comma-separated sub-entities (e.g., `Details,MainContact`) |
 
 **Endpoint:** `GET /entity/Default/25.200.001/{entityName}?$filter=...&$top=...&$select=...&$orderby=...&$expand=...`
+
+> **Pagination guard:** When enabled via `PAGINATION_GUARD_TOOLS`, repeated calls to the same entity within the cooldown window are blocked. The cooldown tracks by entity name, so querying `Customer` then `Invoice` is unaffected.
 
 ---
 
@@ -57,10 +59,12 @@ Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom re
 |-----------|------|----------|---------|-------------|
 | `inquiryName` | string | Yes | -- | Generic Inquiry name as configured in Acumatica |
 | `filterExpression` | string | No | -- | OData `$filter` expression |
-| `topN` | string | No | `"100"` | Maximum rows to return |
+| `topN` | string | No | `"100"` | Maximum rows to return (max 1000). If truncated, refine filters — do not paginate. |
 | `selectFields` | string | No | -- | Comma-separated field names to return |
 
 **Endpoint:** `GET /t/{Company}/api/odata/gi/{inquiryName}?$filter=...&$top=...&$select=...`
+
+> **Pagination guard:** When enabled via `PAGINATION_GUARD_TOOLS`, repeated calls to the same inquiry within the cooldown window are blocked. The cooldown tracks by inquiry name.
 
 ---
 

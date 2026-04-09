@@ -51,6 +51,8 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 4. **Enhanced audit logging:** All tool invocations include the Acumatica username. Auth events (login success, access denied, consent accepted) and field redaction events are logged separately. View with `npx wrangler tail`.
 
+5. **Pagination guard:** Optional per-tool cooldown that prevents AI models from circumventing record limits by making repeated calls to the same resource (e.g., paginating through all GL journal transactions). Off by default; enabled per-tool via `PAGINATION_GUARD_TOOLS` env var. For `acumatica_list_entities` the cooldown tracks by entity name, for `acumatica_run_inquiry` by inquiry name, so querying different resources is unaffected. Cooldown window is configurable via `PAGINATION_GUARD_COOLDOWN` (default 30s). See `src/lib/pagination-guard.ts`.
+
 ## Key Design Decisions
 
 1. **Acumatica as sole OAuth provider.** The MCP server redirects directly to Acumatica for login. No separate identity provider layer. See "Historical Note" below for why.
@@ -247,6 +249,8 @@ Before every commit, push, or tag:
 - [x] Enhanced audit logging (username in all entries, auth events, redaction events)
 - [x] OIDC userinfo for identity (openid profile email scopes)
 - [x] Auto-retry without $select on entity list 500 errors
+- [x] Pagination guard — per-tool cooldown to prevent repeated calls to same resource (0.21.0)
+- [x] Anti-pagination tool descriptions and truncation notes (0.21.0)
 
 ### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
