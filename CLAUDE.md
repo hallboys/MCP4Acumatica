@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.22.0`
+- **Current tag:** `25R2-0.22.1`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -218,6 +218,23 @@ Before every commit, push, or tag:
    - `CLAUDE.md` → `Current tag` field in Project Overview
    - `docs/tool-reference.md` → version in the opening paragraph
    - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
+   - `src/index.ts` → McpServer version string
+
+## Close Session Procedure
+
+When the user says **"close session"**, perform all of the following:
+
+1. **Update CLAUDE.md** — ensure it reflects all changes made during the session
+2. **Increment version** — bump the patch version (e.g., 0.22.0 → 0.22.1) unless a minor/major bump is warranted
+3. **Update version strings** in:
+   - `CLAUDE.md` → `Current tag` field in Project Overview
+   - `docs/tool-reference.md` → version in the opening paragraph
+   - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
+   - `src/index.ts` → McpServer version string
+4. **Commit** all changes with a descriptive message
+5. **Push** to `origin/main`
+6. **Tag** with `25R2-X.Y.Z` format
+7. **Deploy** with `npx wrangler deploy` and verify the deployment succeeds
 
 ## Known Issues / Tech Debt
 
