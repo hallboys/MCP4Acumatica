@@ -12,6 +12,7 @@ import toolRefContent from "../../docs/tool-reference.md";
 import examplePromptsContent from "../../docs/example-prompts.md";
 import odataContent from "../../docs/odata-filtering.md";
 import architectureContent from "../../docs/architecture.md";
+import selfHostingContent from "../../docs/self-hosting-guide.md";
 
 interface DocPage {
   slug: string;
@@ -25,6 +26,7 @@ const pages: DocPage[] = [
   { slug: "example-prompts", title: "Example Prompts", content: examplePromptsContent },
   { slug: "odata-filtering", title: "OData Filtering", content: odataContent },
   { slug: "architecture", title: "Architecture", content: architectureContent },
+  { slug: "self-hosting-guide", title: "Self-Hosting", content: selfHostingContent },
 ];
 
 function renderNav(activeSlug: string): string {
@@ -227,7 +229,7 @@ function renderPage(slug: string, html: string): string {
     <nav>
       <div class="brand">
         <h1>MCP4Acumatica</h1>
-        <span>v0.22.1 &middot; 44 tools</span>
+        <span>v0.23.0 &middot; 44 tools</span>
       </div>
       ${renderNav(slug)}
       <div class="links">

@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.22.1`
+- **Current tag:** `25R2-0.23.0`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -34,6 +34,15 @@ Claude (claude.ai / Desktop / API)
         Contract-Based REST API
         Default/25.200.001
 ```
+
+### Storage Abstraction (Platform Portability)
+
+Tool handlers, the Acumatica HTTP client, config, and caching are decoupled from Cloudflare via two abstractions:
+
+- **`IKeyValueStore`** (`src/lib/kv-store.ts`) — Platform-agnostic interface for key-value storage (get, put, delete, list). Cloudflare Workers uses `CloudflareKVStore` which wraps `KVNamespace`.
+- **`AppEnv`** (`src/types/acumatica.ts`) — Portable environment type containing Acumatica connection settings and a `store: IKeyValueStore`. All tool handlers and shared libraries use `AppEnv`. The Cloudflare-specific `Env` extends `AppEnv` with CF bindings (`TOKEN_STORE`, `OAUTH_KV`, `MCP_OBJECT`, etc.).
+
+This design allows future self-hosted adapters (Node.js + Redis/SQLite) to reuse all tool handlers without modification. See `docs/self-hosting-guide.md`.
 
 ## OAuth Flow
 
@@ -65,6 +74,8 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 5. **Acumatica field values** are wrapped as `{value: X}`. The `unwrapFields()` utility recursively strips these before returning data to Claude.
 
+6. **`AppEnv` / `IKeyValueStore` abstraction.** Tool handlers and shared libraries (`config.ts`, `metadata-cache.ts`, `acumatica-oauth.ts`, `acumatica-client.ts`) use the platform-agnostic `AppEnv` type (which has `store: IKeyValueStore`) instead of the Cloudflare-specific `Env`. The CF entry point (`index.ts`) initializes `env.store = new CloudflareKVStore(env.TOKEN_STORE)` in `init()`. CF-specific code (auth handler, admin handler) continues to use raw `Env` / `KVNamespace` directly. This keeps the Cloudflare deployment unchanged while enabling future Node.js self-hosting.
+
 ## Historical Note: Why We Removed Microsoft Entra ID
 
 The initial design used a two-login chained OAuth flow: users first authenticated via Microsoft Entra ID (to identify who they are), then were chained to Acumatica OAuth (to get API permissions). This required a separate Entra app registration, three callback routes, and intermediate state management in KV.
@@ -83,7 +94,7 @@ src/
 ├── index.ts                       # Entry point — OAuthProvider + AcumaticaMcpServer (McpAgent DO)
 ├── auth/
 │   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, /consent, role gate, OIDC discovery)
-│   └── acumatica-oauth.ts         # Per-user token retrieval + refresh from KV
+│   └── acumatica-oauth.ts         # Token retrieval + refresh (uses AppEnv.store)
 ├── admin/
 │   └── admin-handler.ts           # Admin console: auth, settings, log viewer (Hono sub-app)
 ├── docs/
@@ -91,12 +102,15 @@ src/
 │   └── markdown.d.ts              # TypeScript declaration for .md text module imports
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
-│   ├── config.ts                  # KV-backed runtime config with env var fallback
-│   ├── metadata-cache.ts           # KV-backed cache for entity schemas and GI metadata
+│   ├── config.ts                  # KV-backed runtime config (uses IKeyValueStore)
+│   ├── kv-store.ts                # IKeyValueStore interface (platform-agnostic storage)
+│   ├── metadata-cache.ts           # KV-backed cache (uses IKeyValueStore)
 │   ├── pagination-guard.ts        # Per-tool cooldown to prevent pagination/data exfiltration
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   ├── logger.ts                  # Structured JSON audit logging (tool, auth, redaction events)
 │   └── redact.ts                  # Pattern-based sensitive field redaction
+├── platform/
+│   └── cloudflare-kv-store.ts     # CloudflareKVStore — wraps KVNamespace as IKeyValueStore
 ├── tools/                         # 42 tools across 10 modules + 4 utility
 │   ├── accounts.ts                # acumatica_get_account (GL)
 │   ├── appointments.ts            # acumatica_get_appointment (Field Service)
@@ -135,7 +149,7 @@ src/
 │   ├── vendors.ts                 # acumatica_get_vendor
 │   └── warehouses.ts              # acumatica_get_warehouse (Inventory)
 └── types/
-    └── acumatica.ts               # All TypeScript types, Env interface, AuthProps
+    └── acumatica.ts               # All TypeScript types, AppEnv, Env, AuthProps
 ```
 
 ## Configuration
@@ -269,7 +283,7 @@ When the user says **"close session"**, perform all of the following:
 
 ### Completed — Documentation & Infrastructure
 - [x] Documentation site served from `/docs` on the same worker (0.14.0)
-- [x] docs/tool-reference.md, example-prompts.md, odata-filtering.md, architecture.md
+- [x] docs/tool-reference.md, example-prompts.md, odata-filtering.md, architecture.md, self-hosting-guide.md
 - [x] CIMD support enabled alongside DCR, OpenID Connect discovery endpoint added (0.15.0)
 
 ### Completed — Access Control & Governance (0.19.0)
@@ -281,6 +295,8 @@ When the user says **"close session"**, perform all of the following:
 - [x] Auto-retry without $select on entity list 500 errors
 - [x] Pagination guard — per-tool cooldown to prevent repeated calls to same resource (0.21.0)
 - [x] Anti-pagination tool descriptions and truncation notes (0.21.0)
+- [x] Storage abstraction layer — `IKeyValueStore` interface + `AppEnv` type for platform portability (0.23.0)
+- [x] Self-hosting documentation — `docs/self-hosting-guide.md` with Node.js adapter guide
 
 ### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)

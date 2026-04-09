@@ -48,12 +48,13 @@ import { redactFields } from "./lib/redact";
 import { logRedaction } from "./lib/logger";
 import { PaginationGuard } from "./lib/pagination-guard";
 import { getConfig } from "./lib/config";
+import { CloudflareKVStore } from "./platform/cloudflare-kv-store";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.22.1",
+    version: "0.23.0",
   });
 
   private paginationGuard!: PaginationGuard;
@@ -61,13 +62,17 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
   private redactSkip?: string;
 
   async init() {
+    // Initialize the platform-agnostic store from the Cloudflare KV binding.
+    // This makes all tool handlers, config, caching, and token storage portable.
+    this.env.store = new CloudflareKVStore(this.env.TOKEN_STORE);
+
     // Read runtime config from KV with env var fallback
-    const guardTools = await getConfig(this.env.TOKEN_STORE, "pagination_guard_tools", this.env.PAGINATION_GUARD_TOOLS);
-    const guardCooldown = await getConfig(this.env.TOKEN_STORE, "pagination_guard_cooldown", this.env.PAGINATION_GUARD_COOLDOWN);
+    const guardTools = await getConfig(this.env.store, "pagination_guard_tools", this.env.PAGINATION_GUARD_TOOLS);
+    const guardCooldown = await getConfig(this.env.store, "pagination_guard_cooldown", this.env.PAGINATION_GUARD_COOLDOWN);
     this.paginationGuard = new PaginationGuard(guardTools, guardCooldown);
 
-    this.redactPatterns = await getConfig(this.env.TOKEN_STORE, "redact_patterns", this.env.REDACT_PATTERNS);
-    this.redactSkip = await getConfig(this.env.TOKEN_STORE, "redact_skip", this.env.REDACT_SKIP);
+    this.redactPatterns = await getConfig(this.env.store, "redact_patterns", this.env.REDACT_PATTERNS);
+    this.redactSkip = await getConfig(this.env.store, "redact_skip", this.env.REDACT_SKIP);
     // Tool 1: Customer Lookup
     this.server.tool(
       "acumatica_get_customer",

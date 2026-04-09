@@ -1,21 +1,21 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Env } from "../types/acumatica";
+import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient } from "../lib/acumatica-client";
 import { getCached, setCached } from "../lib/metadata-cache";
 
 const SCHEMA_TTL_SECONDS = 86400; // 24 hours
 
 export async function handleDescribeEntity(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { entityName: string }
 ): Promise<unknown> {
   const cacheKey = `schema:${args.entityName}`;
 
   // Check KV cache first
-  const cached = await getCached<Record<string, unknown>>(env.TOKEN_STORE, cacheKey);
+  const cached = await getCached<Record<string, unknown>>(env.store, cacheKey);
   if (cached) {
     return cached;
   }
@@ -29,7 +29,7 @@ export async function handleDescribeEntity(
   );
 
   // Store in KV for future calls
-  await setCached(env.TOKEN_STORE, cacheKey, schema, SCHEMA_TTL_SECONDS);
+  await setCached(env.store, cacheKey, schema, SCHEMA_TTL_SECONDS);
 
   return schema;
 }

@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { BusinessAccount, Env } from "../types/acumatica";
+import type { BusinessAccount, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetBusinessAccount(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { businessAccountID: string }
 ): Promise<unknown> {

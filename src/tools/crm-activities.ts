@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { EmailActivity, EventActivity, ActivityRecord, TaskRecord, Env } from "../types/acumatica";
+import type { EmailActivity, EventActivity, ActivityRecord, TaskRecord, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetEmail(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { noteID: string }
 ): Promise<unknown> {
@@ -19,7 +19,7 @@ export async function handleGetEmail(
 }
 
 export async function handleGetEvent(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { noteID: string }
 ): Promise<unknown> {
@@ -34,7 +34,7 @@ export async function handleGetEvent(
 }
 
 export async function handleGetActivity(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { noteID: string }
 ): Promise<unknown> {
@@ -48,7 +48,7 @@ export async function handleGetActivity(
 }
 
 export async function handleGetTask(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { noteID: string }
 ): Promise<unknown> {

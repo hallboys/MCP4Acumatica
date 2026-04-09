@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Lead, Env } from "../types/acumatica";
+import type { Lead, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetLead(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { leadID: string }
 ): Promise<unknown> {

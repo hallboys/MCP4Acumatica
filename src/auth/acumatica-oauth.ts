@@ -1,19 +1,19 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Env, StoredToken } from "../types/acumatica";
+import type { AppEnv, StoredToken } from "../types/acumatica";
 
 /**
  * Get an Acumatica access token for a specific user.
- * Tokens are stored per-user in KV, keyed by their Acumatica username.
+ * Tokens are stored per-user in the platform key-value store, keyed by their Acumatica username.
  * Automatically refreshes expired tokens.
  */
 export async function getAcumaticaTokenForUser(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string
 ): Promise<string> {
   const tokenKey = `user_token:${acumaticaUsername}`;
-  const raw = await env.TOKEN_STORE.get(tokenKey, "text");
+  const raw = await env.store.get(tokenKey);
 
   if (!raw) {
     throw new Error(
@@ -33,7 +33,7 @@ export async function getAcumaticaTokenForUser(
 }
 
 async function refreshUserToken(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   refreshToken: string
 ): Promise<string> {
@@ -70,7 +70,7 @@ async function refreshUserToken(
   };
 
   const tokenKey = `user_token:${acumaticaUsername}`;
-  await env.TOKEN_STORE.put(tokenKey, JSON.stringify(stored));
+  await env.store.put(tokenKey, JSON.stringify(stored));
 
   return tokens.access_token;
 }

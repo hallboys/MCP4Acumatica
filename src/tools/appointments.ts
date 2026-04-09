@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Appointment, Env } from "../types/acumatica";
+import type { Appointment, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetAppointment(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { serviceOrderType?: string; appointmentNbr: string }
 ): Promise<unknown> {

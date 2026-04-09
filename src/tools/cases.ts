@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Case, Env } from "../types/acumatica";
+import type { Case, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetCase(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { caseID: string }
 ): Promise<unknown> {

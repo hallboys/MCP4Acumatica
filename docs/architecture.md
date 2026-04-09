@@ -107,13 +107,15 @@ The DO binding must be named `MCP_OBJECT` (required by the `agents` SDK's `McpAg
 
 HTTP client for the Acumatica contract-based REST API. Features:
 
-- **Per-user tokens** -- Fetches the user's token from KV on each request
+- **Per-user tokens** -- Fetches the user's token from the platform store (`AppEnv.store`) on each request
 - **Automatic retry on 401** -- If a token expires mid-request, fetches a fresh token and retries once
 - **Rate limiting** -- Enforced via `withRateLimit()` wrapper (3 concurrent, 40/min)
 - **Audit logging** -- Every API call is logged with tool name, endpoint, status code, and duration
 - **Friendly error messages** -- HTTP errors are translated to human-readable messages
 
 ### 5. KV Namespaces
+
+> **Note:** Tool handlers and shared libraries access storage through the `IKeyValueStore` abstraction (`AppEnv.store`), not raw `KVNamespace`. On Cloudflare, this is backed by KV via `CloudflareKVStore`. The raw KV bindings below are used directly only by the auth handler and admin handler (which are Cloudflare-specific infrastructure).
 
 Both bindings point to the same physical KV namespace (one namespace, two bindings).
 
@@ -318,7 +320,7 @@ Cloudflare Logpush captures Workers Trace Events and writes NDJSON files to an R
 Settings can be changed without redeploying via the admin console or direct KV writes.
 
 - Config keys stored in KV with `config:` prefix (e.g., `config:pagination_guard_tools`)
-- `getConfig(kv, key, envFallback)` reads KV first, falls back to env var
+- `getConfig(store, key, envFallback)` reads KV first, falls back to env var
 - The DO reads config in `init()` and stores resolved values as instance properties
 - Changes take effect when the DO instance recycles (idle eviction, typically within minutes)
 
@@ -356,7 +358,7 @@ Tool handler (e.g., handleGetCustomer)
 AcumaticaClient.get()
        │
        ├── withRateLimit() check
-       ├── getAcumaticaTokenForUser() from KV
+       ├── getAcumaticaTokenForUser() from store
        ├── fetch() to Acumatica API
        ├── Retry on 401
        ├── logToolInvocation() audit log
@@ -397,14 +399,17 @@ src/
 │   └── admin-handler.ts           # Admin console: auth, settings, log viewer
 ├── auth/
 │   ├── acumatica-auth-handler.ts  # Hono app: OAuth flow, health, landing
-│   └── acumatica-oauth.ts         # Token retrieval + refresh from KV
+│   └── acumatica-oauth.ts         # Token retrieval + refresh (via AppEnv.store)
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client, unwrapFields()
-│   ├── config.ts                  # KV-backed runtime config with env var fallback
-│   ├── metadata-cache.ts          # KV-backed cache for schemas and GI metadata
+│   ├── config.ts                  # KV-backed runtime config (via IKeyValueStore)
+│   ├── kv-store.ts                # IKeyValueStore interface
+│   ├── metadata-cache.ts          # KV-backed cache (via IKeyValueStore)
 │   ├── pagination-guard.ts        # Per-tool cooldown to prevent pagination
 │   ├── rate-limiter.ts            # Concurrent + per-minute rate limits
 │   └── logger.ts                  # Structured JSON audit logging
+├── platform/
+│   └── cloudflare-kv-store.ts     # CF adapter for IKeyValueStore
 ├── tools/                         # 42 tools across 32 handler files
 │   ├── entity-list.ts             # acumatica_list_entities
 │   ├── entity-schema.ts           # acumatica_describe_entity
@@ -416,7 +421,7 @@ src/
 │   ├── ... (29 more handler files)
 │   └── warehouses.ts              # acumatica_get_warehouse
 ├── types/
-│   └── acumatica.ts               # TypeScript types, Env, AuthProps
+│   └── acumatica.ts               # TypeScript types, AppEnv, Env, AuthProps
 docs/
 ├── tool-reference.md              # Complete tool specification
 ├── example-prompts.md             # Example prompts by use case
@@ -454,6 +459,44 @@ npx wrangler deploy
 
 ---
 
+## Storage Abstraction Layer
+
+The MCP server uses a platform-agnostic storage interface to decouple tool handlers from Cloudflare-specific APIs, enabling future self-hosted deployments on Node.js or other platforms.
+
+### IKeyValueStore Interface
+
+Defined in `src/lib/kv-store.ts`, this interface provides four operations:
+
+| Method | Signature | Used By |
+|--------|-----------|---------|
+| `get` | `(key: string) => Promise<string \| null>` | Token retrieval, config read, cache lookup |
+| `put` | `(key: string, value: string, options?: { expirationTtl?: number }) => Promise<void>` | Token storage, config write, cache write |
+| `delete` | `(key: string) => Promise<void>` | Config delete, cache invalidation |
+| `list` | `(options: { prefix: string; cursor?: string }) => Promise<{ keys, list_complete, cursor }>` | Cache clearing (enumerate + bulk delete) |
+
+### AppEnv vs Env
+
+| Type | Purpose | Used By |
+|------|---------|---------|
+| `AppEnv` | Portable: Acumatica config strings + `store: IKeyValueStore` | All 44 tool handlers, `AcumaticaClient`, `config.ts`, `metadata-cache.ts`, `acumatica-oauth.ts` |
+| `Env` | CF-specific: extends `AppEnv` with `TOKEN_STORE`, `OAUTH_KV`, `MCP_OBJECT`, `OAUTH_PROVIDER`, `R2Bucket` | `index.ts`, `acumatica-auth-handler.ts`, `admin-handler.ts` |
+
+Since `Env extends AppEnv`, the Cloudflare entry point (`index.ts`) passes `this.env` (typed `Env`) to tool handlers (typed `AppEnv`) with no cast needed.
+
+### Cloudflare Adapter
+
+`CloudflareKVStore` (`src/platform/cloudflare-kv-store.ts`) wraps a `KVNamespace` binding as an `IKeyValueStore`. It is a thin passthrough -- every method maps 1:1 to the KV API. Initialized in `AcumaticaMcpServer.init()`:
+
+```typescript
+this.env.store = new CloudflareKVStore(this.env.TOKEN_STORE);
+```
+
+### Self-Hosting
+
+For self-hosted deployments, implement `IKeyValueStore` with Redis, SQLite, or an in-memory store, construct an `AppEnv` from environment variables, and wire up `@modelcontextprotocol/sdk` directly. See [Self-Hosting Guide](self-hosting-guide.md) for details.
+
+---
+
 ## Design Decisions
 
 ### Why Acumatica as sole identity provider?
@@ -483,3 +526,11 @@ Each MCP session needs persistent state (tool registry, user context). Durable O
 ### Why unwrapFields()?
 
 Acumatica's contract-based REST API wraps every field value as `{value: X}`. This is verbose and confusing for AI assistants. The `unwrapFields()` utility recursively strips these wrappers, turning `{CustomerName: {value: "Acme Corp"}}` into `{CustomerName: "Acme Corp"}`.
+
+### Why AppEnv instead of full Env abstraction?
+
+Rather than abstracting the entire Worker infrastructure (OAuth provider, Durable Objects, auth flow), only the storage layer is abstracted via `IKeyValueStore` + `AppEnv`. This is because:
+
+1. **Tools are the reusable part.** All 44 tool handlers and the Acumatica client only need config strings and a key-value store. They never touch OAuth, DOs, or R2.
+2. **Auth varies fundamentally by platform.** A Node.js self-host would use Express + Passport or skip auth entirely. Abstracting the auth handler would create an interface that no two implementations share.
+3. **Minimal disruption.** Tool handler changes were limited to import swaps (`Env` -> `AppEnv`). No function bodies changed.

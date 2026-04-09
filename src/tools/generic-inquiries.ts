@@ -1,7 +1,7 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Env } from "../types/acumatica";
+import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient } from "../lib/acumatica-client";
 
 /** OData query response with value array */
@@ -10,7 +10,7 @@ interface ODataQueryResponse {
 }
 
 export async function handleRunInquiry(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: {
     inquiryName: string;

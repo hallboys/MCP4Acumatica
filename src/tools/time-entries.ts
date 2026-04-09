@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TimeEntry, Env } from "../types/acumatica";
+import type { TimeEntry, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetTimeEntry(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { timeEntryID: string }
 ): Promise<unknown> {

@@ -1,5 +1,7 @@
 # MCP4Acumatica
 
+> **Disclaimer:** This project is an independent, community-built integration and is **not affiliated with, endorsed by, or supported by Acumatica, Inc.** "Acumatica" is a registered trademark of Acumatica, Inc. Use of the Acumatica name and API is for interoperability purposes only.
+
 A remote [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that connects Claude to [Acumatica ERP](https://www.acumatica.com) 2025 R2. Runs on Cloudflare Workers with per-user OAuth authentication against your Acumatica instance.
 
 Each user authenticates with their own Acumatica credentials. Their Acumatica role controls which records they can access. The MCP server additionally requires a specific Acumatica role for access, shows a consent interstitial, and automatically redacts sensitive fields before data reaches the AI model.
@@ -133,8 +135,8 @@ npx wrangler dev
 
 ### Claude.ai / Claude Desktop
 
-1. Go to **Settings > MCP Servers** (or Claude Desktop's MCP configuration)
-2. Add a new remote MCP server with the URL: `https://<your-worker-url>/mcp`
+1. Go to **Settings > Connectors**
+2. Click **Add Connector** and enter the URL: `https://<your-worker-url>/mcp`
 3. On first use, you'll be redirected to your Acumatica login page
 4. If your account has the `MCP Access` role, you'll see a consent page explaining AI data processing
 5. After acknowledging consent, Claude will have access to all 44 tools
@@ -249,11 +251,12 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 - **[Example Prompts](docs/example-prompts.md)** -- Example prompts for Claude and other MCP clients organized by use case
 - **[OData Filtering Guide](docs/odata-filtering.md)** -- Guide to `$filter`, `$orderby`, `$select`, `$expand`, and `$top` query parameters
 - **[Architecture](docs/architecture.md)** -- Detailed architecture, OAuth flow, security model, and design decisions
+- **[Self-Hosting Guide](docs/self-hosting-guide.md)** -- How to run the MCP server on Node.js or other platforms outside Cloudflare
 
 ## Security
 
 - **No stored credentials.** The MCP server does not store Acumatica passwords. It uses OAuth 2.0 authorization code flow -- users authenticate directly with Acumatica.
-- **Per-user tokens.** Each user's Acumatica access token is stored in Cloudflare KV, scoped to their username. Tokens are automatically refreshed when expired.
+- **Per-user tokens.** Each user's Acumatica access token is stored in the platform key-value store (Cloudflare KV on the default deployment), scoped to their username. Tokens are automatically refreshed when expired.
 - **Role gate.** Only users with the `MCP Access` role (configurable) can connect. This is enforced via a canary Generic Inquiry check during login -- users without the role see an access denied page.
 - **Consent interstitial.** After passing the role check, users must acknowledge that their data will be processed by an external AI model before the MCP session activates.
 - **Sensitive field redaction.** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) and matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` and `REDACT_SKIP` environment variables.
@@ -262,6 +265,10 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 - **Rate limiting.** 3 concurrent requests, 40 requests per minute, and a configurable record cap per query to protect your Acumatica instance.
 - **Pagination guard.** Optional per-tool cooldown prevents AI models from circumventing record limits by making repeated calls to the same resource. Off by default; enable via `PAGINATION_GUARD_TOOLS` environment variable.
 - **Audit logging.** All tool invocations, auth events (login success/denied, consent accepted), and field redaction events are logged as structured JSON. View with `npx wrangler tail`.
+
+## Platform Portability
+
+While the default deployment targets Cloudflare Workers, the tool handlers and core libraries are platform-agnostic. A storage abstraction (`IKeyValueStore` interface + `AppEnv` type) decouples tool logic from Cloudflare-specific APIs, enabling self-hosted deployments on Node.js with Redis, SQLite, or other storage backends. See the [Self-Hosting Guide](docs/self-hosting-guide.md) for details.
 
 ## Tech Stack
 
@@ -279,10 +286,6 @@ npx wrangler dev       # Start local dev server
 npx tsc --noEmit       # Type check
 npx wrangler tail      # Stream live logs from deployed worker
 ```
-
-## Disclaimer
-
-This project is an independent, community-built integration and is **not affiliated with, endorsed by, or supported by Acumatica, Inc.** "Acumatica" is a registered trademark of Acumatica, Inc. Use of the Acumatica name and API is for interoperability purposes only.
 
 ## License
 

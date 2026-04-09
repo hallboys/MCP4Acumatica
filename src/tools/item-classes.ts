@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ItemClassEntity, Env } from "../types/acumatica";
+import type { ItemClassEntity, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetItemClass(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { classID: string }
 ): Promise<unknown> {

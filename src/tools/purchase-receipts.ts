@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { PurchaseReceipt, Env } from "../types/acumatica";
+import type { PurchaseReceipt, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetPurchaseReceipt(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { type?: string; receiptNbr: string }
 ): Promise<unknown> {

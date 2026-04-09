@@ -1,6 +1,8 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { IKeyValueStore } from "./kv-store";
+
 /**
  * KV-backed runtime config with env var fallback.
  * Keys are stored with a `config:` prefix in KV to avoid collisions.
@@ -8,7 +10,7 @@
 
 /** Read a config value — KV override takes precedence over env var. */
 export async function getConfig(
-  kv: KVNamespace,
+  kv: IKeyValueStore,
   key: string,
   envFallback: string | undefined
 ): Promise<string | undefined> {
@@ -23,7 +25,7 @@ export async function getConfig(
 
 /** Write a config override to KV. */
 export async function setConfig(
-  kv: KVNamespace,
+  kv: IKeyValueStore,
   key: string,
   value: string
 ): Promise<void> {
@@ -32,7 +34,7 @@ export async function setConfig(
 
 /** Delete a config override from KV (reverts to env var default). */
 export async function deleteConfig(
-  kv: KVNamespace,
+  kv: IKeyValueStore,
   key: string
 ): Promise<void> {
   await kv.delete(`config:${key}`);

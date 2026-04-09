@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Env } from "../types/acumatica";
+import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient, AcumaticaApiError, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleListEntities(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: {
     entityName: string;

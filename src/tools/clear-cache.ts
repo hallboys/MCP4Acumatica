@@ -1,15 +1,15 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Env } from "../types/acumatica";
+import type { AppEnv } from "../types/acumatica";
 
 const CACHE_PREFIX = "cache:";
 
 export async function handleClearCache(
-  env: Env,
+  env: AppEnv,
   target?: string
 ): Promise<unknown> {
-  const kv = env.TOKEN_STORE;
+  const kv = env.store;
 
   // Single specific key: "schema:Customer", "gi_schema:SomeName"
   if (target && target !== "schemas" && target !== "gi") {

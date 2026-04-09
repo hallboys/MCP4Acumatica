@@ -1,7 +1,7 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Env } from "../types/acumatica";
+import type { AppEnv } from "../types/acumatica";
 import { getAcumaticaTokenForUser } from "../auth/acumatica-oauth";
 import { withRateLimit } from "./rate-limiter";
 import { logToolInvocation, logError } from "./logger";
@@ -18,11 +18,11 @@ export class AcumaticaApiError extends Error {
 }
 
 export class AcumaticaClient {
-  private env: Env;
+  private env: AppEnv;
   private acumaticaUsername: string;
   private baseUrl: string;
 
-  constructor(env: Env, acumaticaUsername: string) {
+  constructor(env: AppEnv, acumaticaUsername: string) {
     this.env = env;
     this.acumaticaUsername = acumaticaUsername;
     this.baseUrl = `${env.ACUMATICA_URL}/entity/Default/${env.ACUMATICA_ENDPOINT_VERSION}`;

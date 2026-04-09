@@ -1061,22 +1061,23 @@ export interface TaskRecord extends Entity {
   LastModifiedDateTime?: DateTimeValue;
 }
 
-/** Env bindings for the Cloudflare Worker */
-export interface Env {
-  // Acumatica
+/**
+ * Platform-agnostic environment — everything tools, AcumaticaClient,
+ * config, and caching need. Contains only Acumatica connection settings
+ * and a storage abstraction. No Cloudflare-specific types.
+ *
+ * Self-hosted adapters (Node.js + Redis/SQLite) implement this interface
+ * to reuse all tool handlers without modification.
+ */
+export interface AppEnv {
+  // Acumatica connection
   ACUMATICA_URL: string;
   ACUMATICA_TENANT: string;
   ACUMATICA_ENDPOINT_VERSION: string;
   ACUMATICA_MAX_RECORDS: string;
   ACUMATICA_CLIENT_ID: string;
   ACUMATICA_CLIENT_SECRET: string;
-  TOKEN_STORE: KVNamespace;
   COOKIE_ENCRYPTION_KEY: string;
-  // OAuth provider — OAUTH_KV is required by @cloudflare/workers-oauth-provider internally
-  OAUTH_KV: KVNamespace;
-  OAUTH_PROVIDER: OAuthProviderHelpers;
-  // Durable Object
-  MCP_OBJECT: DurableObjectNamespace;
   // Access control — Acumatica role required to use MCP (default: "MCP Access")
   ACUMATICA_MCP_ROLE?: string;
   // Field redaction — comma-separated additional field name patterns to redact
@@ -1087,6 +1088,22 @@ export interface Env {
   PAGINATION_GUARD_TOOLS?: string;
   // Pagination guard — cooldown in seconds between calls to same resource (default: 30)
   PAGINATION_GUARD_COOLDOWN?: string;
+  // Platform-agnostic key-value store (tokens, config, cache)
+  store: import("../lib/kv-store").IKeyValueStore;
+}
+
+/**
+ * Cloudflare Worker bindings — extends AppEnv with CF-specific types.
+ * Used only by infrastructure code (auth handler, admin handler, index.ts).
+ */
+export interface Env extends AppEnv {
+  // Raw KV binding (used by auth handler and admin handler which need direct KV access)
+  TOKEN_STORE: KVNamespace;
+  // OAuth provider — OAUTH_KV is required by @cloudflare/workers-oauth-provider internally
+  OAUTH_KV: KVNamespace;
+  OAUTH_PROVIDER: OAuthProviderHelpers;
+  // Durable Object
+  MCP_OBJECT: DurableObjectNamespace;
   // Admin interface — secret for admin login (set via wrangler secret put ADMIN_SECRET)
   ADMIN_SECRET?: string;
   // R2 bucket for long-term log storage via Logpush

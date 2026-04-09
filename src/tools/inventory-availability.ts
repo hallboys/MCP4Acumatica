@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Env } from "../types/acumatica";
+import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetInventoryQuantityAvailable(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { inventoryID: string }
 ): Promise<unknown> {
@@ -20,7 +20,7 @@ export async function handleGetInventoryQuantityAvailable(
 }
 
 export async function handleGetInventorySummary(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { inventoryID: string; warehouseID?: string }
 ): Promise<unknown> {

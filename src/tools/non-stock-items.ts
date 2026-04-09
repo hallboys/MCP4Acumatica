@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { NonStockItem, Env } from "../types/acumatica";
+import type { NonStockItem, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetNonStockItem(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { inventoryID: string }
 ): Promise<unknown> {

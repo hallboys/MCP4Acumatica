@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Employee, Env } from "../types/acumatica";
+import type { Employee, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetEmployee(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { employeeID: string }
 ): Promise<unknown> {

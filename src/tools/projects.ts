@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Project, ProjectTask, ProjectBudget, ProjectTransaction, Env } from "../types/acumatica";
+import type { Project, ProjectTask, ProjectBudget, ProjectTransaction, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetProject(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { projectID: string }
 ): Promise<unknown> {
@@ -19,7 +19,7 @@ export async function handleGetProject(
 }
 
 export async function handleGetProjectTask(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { projectID: string; projectTaskID: string }
 ): Promise<unknown> {
@@ -33,7 +33,7 @@ export async function handleGetProjectTask(
 }
 
 export async function handleGetProjectBudget(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { projectID: string; projectTaskID: string; accountGroup: string; inventoryID?: string }
 ): Promise<unknown> {
@@ -55,7 +55,7 @@ export async function handleGetProjectBudget(
 }
 
 export async function handleGetProjectTransaction(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { module: string; referenceNbr: string }
 ): Promise<unknown> {

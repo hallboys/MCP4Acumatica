@@ -1,11 +1,11 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SalesOrder, Env } from "../types/acumatica";
+import type { SalesOrder, AppEnv } from "../types/acumatica";
 import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
 
 export async function handleGetSalesOrder(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { orderType?: string; orderNbr: string }
 ): Promise<unknown> {

@@ -1,7 +1,7 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Env } from "../types/acumatica";
+import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient, AcumaticaApiError } from "../lib/acumatica-client";
 import { getCached, setCached } from "../lib/metadata-cache";
 
@@ -21,7 +21,7 @@ interface ODataServiceDocument {
 }
 
 export async function handleListGenericInquiries(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: {
     titleFilter?: string;
@@ -34,8 +34,8 @@ export async function handleListGenericInquiries(
   try {
     // Try KV cache for both the service document and $metadata
     const [cachedServiceDoc, cachedMetadata] = await Promise.all([
-      getCached<ODataServiceDocument>(env.TOKEN_STORE, "gi_list"),
-      getCached<string>(env.TOKEN_STORE, "gi_metadata"),
+      getCached<ODataServiceDocument>(env.store, "gi_list"),
+      getCached<string>(env.store, "gi_metadata"),
     ]);
 
     let serviceDoc: ODataServiceDocument;
@@ -68,10 +68,10 @@ export async function handleListGenericInquiries(
       // Store any freshly fetched data in KV
       const cacheWrites: Promise<void>[] = [];
       if (!cachedServiceDoc) {
-        cacheWrites.push(setCached(env.TOKEN_STORE, "gi_list", serviceDoc, GI_LIST_TTL_SECONDS));
+        cacheWrites.push(setCached(env.store, "gi_list", serviceDoc, GI_LIST_TTL_SECONDS));
       }
       if (cachedMetadata === null) {
-        cacheWrites.push(setCached(env.TOKEN_STORE, "gi_metadata", metadata, GI_METADATA_TTL_SECONDS));
+        cacheWrites.push(setCached(env.store, "gi_metadata", metadata, GI_METADATA_TTL_SECONDS));
       }
       await Promise.all(cacheWrites);
     }
@@ -152,14 +152,14 @@ interface ODataQueryResponse {
 }
 
 export async function handleDescribeInquiry(
-  env: Env,
+  env: AppEnv,
   acumaticaUsername: string,
   args: { inquiryName: string }
 ): Promise<unknown> {
   const cacheKey = `gi_schema:${args.inquiryName}`;
 
   // Check KV cache first
-  const cached = await getCached<CachedGiSchema>(env.TOKEN_STORE, cacheKey);
+  const cached = await getCached<CachedGiSchema>(env.store, cacheKey);
   if (cached) {
     return {
       ...cached,
@@ -200,7 +200,7 @@ export async function handleDescribeInquiry(
       }));
 
     // Cache the schema (fields + sample row) for future calls
-    await setCached(env.TOKEN_STORE, cacheKey, { inquiryName: args.inquiryName, fields, sampleRow }, GI_SCHEMA_TTL_SECONDS);
+    await setCached(env.store, cacheKey, { inquiryName: args.inquiryName, fields, sampleRow }, GI_SCHEMA_TTL_SECONDS);
 
     return {
       inquiryName: args.inquiryName,
