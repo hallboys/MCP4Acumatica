@@ -45,7 +45,7 @@ import { handleClearCache } from "./tools/clear-cache";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { redactFields } from "./lib/redact";
-import { logRedaction } from "./lib/logger";
+import { logRedaction, logToolInvocation, logError, writeLogsToR2 } from "./lib/logger";
 import { PaginationGuard } from "./lib/pagination-guard";
 import { getConfig } from "./lib/config";
 import { CloudflareKVStore } from "./platform/cloudflare-kv-store";
@@ -54,7 +54,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.23.0",
+    version: "0.23.1",
   });
 
   private paginationGuard!: PaginationGuard;
@@ -85,7 +85,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ customerId }) => {
         return this.callTool(() =>
           handleGetCustomer(this.env, this.props.acumaticaUsername, { customerId }),
-          "acumatica_get_customer"
+          "acumatica_get_customer",
+          undefined,
+          { customerId }
         );
       }
     );
@@ -102,7 +104,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ vendorId }) => {
         return this.callTool(() =>
           handleGetVendor(this.env, this.props.acumaticaUsername, { vendorId }),
-          "acumatica_get_vendor"
+          "acumatica_get_vendor",
+          undefined,
+          { vendorId }
         );
       }
     );
@@ -121,7 +125,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ orderType, orderNbr }) => {
         return this.callTool(() =>
           handleGetSalesOrder(this.env, this.props.acumaticaUsername, { orderType, orderNbr }),
-          "acumatica_get_sales_order"
+          "acumatica_get_sales_order",
+          undefined,
+          { orderType, orderNbr }
         );
       }
     );
@@ -140,7 +146,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, referenceNbr }) => {
         return this.callTool(() =>
           handleGetInvoice(this.env, this.props.acumaticaUsername, { type, referenceNbr }),
-          "acumatica_get_invoice"
+          "acumatica_get_invoice",
+          undefined,
+          { type, referenceNbr }
         );
       }
     );
@@ -159,7 +167,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, referenceNbr }) => {
         return this.callTool(() =>
           handleGetBill(this.env, this.props.acumaticaUsername, { type, referenceNbr }),
-          "acumatica_get_bill"
+          "acumatica_get_bill",
+          undefined,
+          { type, referenceNbr }
         );
       }
     );
@@ -174,7 +184,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ batchNbr }) => {
         return this.callTool(() =>
           handleGetJournalTransaction(this.env, this.props.acumaticaUsername, { batchNbr }),
-          "acumatica_get_journal_transaction"
+          "acumatica_get_journal_transaction",
+          undefined,
+          { batchNbr }
         );
       }
     );
@@ -193,7 +205,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, referenceNbr }) => {
         return this.callTool(() =>
           handleGetPayment(this.env, this.props.acumaticaUsername, { type, referenceNbr }),
-          "acumatica_get_payment"
+          "acumatica_get_payment",
+          undefined,
+          { type, referenceNbr }
         );
       }
     );
@@ -210,7 +224,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ accountCD }) => {
         return this.callTool(() =>
           handleGetAccount(this.env, this.props.acumaticaUsername, { accountCD }),
-          "acumatica_get_account"
+          "acumatica_get_account",
+          undefined,
+          { accountCD }
         );
       }
     );
@@ -229,7 +245,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, referenceNbr }) => {
         return this.callTool(() =>
           handleGetCheck(this.env, this.props.acumaticaUsername, { type, referenceNbr }),
-          "acumatica_get_check"
+          "acumatica_get_check",
+          undefined,
+          { type, referenceNbr }
         );
       }
     );
@@ -246,7 +264,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ inventoryID }) => {
         return this.callTool(() =>
           handleGetStockItem(this.env, this.props.acumaticaUsername, { inventoryID }),
-          "acumatica_get_stock_item"
+          "acumatica_get_stock_item",
+          undefined,
+          { inventoryID }
         );
       }
     );
@@ -263,7 +283,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ inventoryID }) => {
         return this.callTool(() =>
           handleGetNonStockItem(this.env, this.props.acumaticaUsername, { inventoryID }),
-          "acumatica_get_non_stock_item"
+          "acumatica_get_non_stock_item",
+          undefined,
+          { inventoryID }
         );
       }
     );
@@ -280,7 +302,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ inventoryID }) => {
         return this.callTool(() =>
           handleGetInventoryQuantityAvailable(this.env, this.props.acumaticaUsername, { inventoryID }),
-          "acumatica_get_inventory_quantity_available"
+          "acumatica_get_inventory_quantity_available",
+          undefined,
+          { inventoryID }
         );
       }
     );
@@ -301,7 +325,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ inventoryID, warehouseID }) => {
         return this.callTool(() =>
           handleGetInventorySummary(this.env, this.props.acumaticaUsername, { inventoryID, warehouseID }),
-          "acumatica_get_inventory_summary"
+          "acumatica_get_inventory_summary",
+          undefined,
+          { inventoryID, warehouseID }
         );
       }
     );
@@ -318,7 +344,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ warehouseID }) => {
         return this.callTool(() =>
           handleGetWarehouse(this.env, this.props.acumaticaUsername, { warehouseID }),
-          "acumatica_get_warehouse"
+          "acumatica_get_warehouse",
+          undefined,
+          { warehouseID }
         );
       }
     );
@@ -335,7 +363,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ classID }) => {
         return this.callTool(() =>
           handleGetItemClass(this.env, this.props.acumaticaUsername, { classID }),
-          "acumatica_get_item_class"
+          "acumatica_get_item_class",
+          undefined,
+          { classID }
         );
       }
     );
@@ -354,7 +384,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, orderNbr }) => {
         return this.callTool(() =>
           handleGetPurchaseOrder(this.env, this.props.acumaticaUsername, { type, orderNbr }),
-          "acumatica_get_purchase_order"
+          "acumatica_get_purchase_order",
+          undefined,
+          { type, orderNbr }
         );
       }
     );
@@ -373,7 +405,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, receiptNbr }) => {
         return this.callTool(() =>
           handleGetPurchaseReceipt(this.env, this.props.acumaticaUsername, { type, receiptNbr }),
-          "acumatica_get_purchase_receipt"
+          "acumatica_get_purchase_receipt",
+          undefined,
+          { type, receiptNbr }
         );
       }
     );
@@ -390,7 +424,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ projectID }) => {
         return this.callTool(() =>
           handleGetProject(this.env, this.props.acumaticaUsername, { projectID }),
-          "acumatica_get_project"
+          "acumatica_get_project",
+          undefined,
+          { projectID }
         );
       }
     );
@@ -406,7 +442,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ projectID, projectTaskID }) => {
         return this.callTool(() =>
           handleGetProjectTask(this.env, this.props.acumaticaUsername, { projectID, projectTaskID }),
-          "acumatica_get_project_task"
+          "acumatica_get_project_task",
+          undefined,
+          { projectID, projectTaskID }
         );
       }
     );
@@ -427,7 +465,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ projectID, projectTaskID, accountGroup, inventoryID }) => {
         return this.callTool(() =>
           handleGetProjectBudget(this.env, this.props.acumaticaUsername, { projectID, projectTaskID, accountGroup, inventoryID }),
-          "acumatica_get_project_budget"
+          "acumatica_get_project_budget",
+          undefined,
+          { projectID, projectTaskID, accountGroup, inventoryID }
         );
       }
     );
@@ -443,7 +483,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ module, referenceNbr }) => {
         return this.callTool(() =>
           handleGetProjectTransaction(this.env, this.props.acumaticaUsername, { module, referenceNbr }),
-          "acumatica_get_project_transaction"
+          "acumatica_get_project_transaction",
+          undefined,
+          { module, referenceNbr }
         );
       }
     );
@@ -458,7 +500,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ caseID }) => {
         return this.callTool(() =>
           handleGetCase(this.env, this.props.acumaticaUsername, { caseID }),
-          "acumatica_get_case"
+          "acumatica_get_case",
+          undefined,
+          { caseID }
         );
       }
     );
@@ -477,7 +521,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ serviceOrderType, serviceOrderNbr }) => {
         return this.callTool(() =>
           handleGetServiceOrder(this.env, this.props.acumaticaUsername, { serviceOrderType, serviceOrderNbr }),
-          "acumatica_get_service_order"
+          "acumatica_get_service_order",
+          undefined,
+          { serviceOrderType, serviceOrderNbr }
         );
       }
     );
@@ -496,7 +542,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ serviceOrderType, appointmentNbr }) => {
         return this.callTool(() =>
           handleGetAppointment(this.env, this.props.acumaticaUsername, { serviceOrderType, appointmentNbr }),
-          "acumatica_get_appointment"
+          "acumatica_get_appointment",
+          undefined,
+          { serviceOrderType, appointmentNbr }
         );
       }
     );
@@ -511,7 +559,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ contactID }) => {
         return this.callTool(() =>
           handleGetContact(this.env, this.props.acumaticaUsername, { contactID }),
-          "acumatica_get_contact"
+          "acumatica_get_contact",
+          undefined,
+          { contactID }
         );
       }
     );
@@ -526,7 +576,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ businessAccountID }) => {
         return this.callTool(() =>
           handleGetBusinessAccount(this.env, this.props.acumaticaUsername, { businessAccountID }),
-          "acumatica_get_business_account"
+          "acumatica_get_business_account",
+          undefined,
+          { businessAccountID }
         );
       }
     );
@@ -541,7 +593,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ opportunityID }) => {
         return this.callTool(() =>
           handleGetOpportunity(this.env, this.props.acumaticaUsername, { opportunityID }),
-          "acumatica_get_opportunity"
+          "acumatica_get_opportunity",
+          undefined,
+          { opportunityID }
         );
       }
     );
@@ -556,7 +610,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ leadID }) => {
         return this.callTool(() =>
           handleGetLead(this.env, this.props.acumaticaUsername, { leadID }),
-          "acumatica_get_lead"
+          "acumatica_get_lead",
+          undefined,
+          { leadID }
         );
       }
     );
@@ -571,7 +627,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ salespersonID }) => {
         return this.callTool(() =>
           handleGetSalesperson(this.env, this.props.acumaticaUsername, { salespersonID }),
-          "acumatica_get_salesperson"
+          "acumatica_get_salesperson",
+          undefined,
+          { salespersonID }
         );
       }
     );
@@ -586,7 +644,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ shipmentNbr }) => {
         return this.callTool(() =>
           handleGetShipment(this.env, this.props.acumaticaUsername, { shipmentNbr }),
-          "acumatica_get_shipment"
+          "acumatica_get_shipment",
+          undefined,
+          { shipmentNbr }
         );
       }
     );
@@ -605,7 +665,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ type, referenceNbr }) => {
         return this.callTool(() =>
           handleGetSalesInvoice(this.env, this.props.acumaticaUsername, { type, referenceNbr }),
-          "acumatica_get_sales_invoice"
+          "acumatica_get_sales_invoice",
+          undefined,
+          { type, referenceNbr }
         );
       }
     );
@@ -620,7 +682,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ employeeID }) => {
         return this.callTool(() =>
           handleGetEmployee(this.env, this.props.acumaticaUsername, { employeeID }),
-          "acumatica_get_employee"
+          "acumatica_get_employee",
+          undefined,
+          { employeeID }
         );
       }
     );
@@ -635,7 +699,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ refNbr }) => {
         return this.callTool(() =>
           handleGetExpenseClaim(this.env, this.props.acumaticaUsername, { refNbr }),
-          "acumatica_get_expense_claim"
+          "acumatica_get_expense_claim",
+          undefined,
+          { refNbr }
         );
       }
     );
@@ -650,7 +716,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ timeEntryID }) => {
         return this.callTool(() =>
           handleGetTimeEntry(this.env, this.props.acumaticaUsername, { timeEntryID }),
-          "acumatica_get_time_entry"
+          "acumatica_get_time_entry",
+          undefined,
+          { timeEntryID }
         );
       }
     );
@@ -665,7 +733,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ noteID }) => {
         return this.callTool(() =>
           handleGetEmail(this.env, this.props.acumaticaUsername, { noteID }),
-          "acumatica_get_email"
+          "acumatica_get_email",
+          undefined,
+          { noteID }
         );
       }
     );
@@ -680,7 +750,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ noteID }) => {
         return this.callTool(() =>
           handleGetEvent(this.env, this.props.acumaticaUsername, { noteID }),
-          "acumatica_get_event"
+          "acumatica_get_event",
+          undefined,
+          { noteID }
         );
       }
     );
@@ -695,7 +767,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ noteID }) => {
         return this.callTool(() =>
           handleGetActivity(this.env, this.props.acumaticaUsername, { noteID }),
-          "acumatica_get_activity"
+          "acumatica_get_activity",
+          undefined,
+          { noteID }
         );
       }
     );
@@ -710,7 +784,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ noteID }) => {
         return this.callTool(() =>
           handleGetTask(this.env, this.props.acumaticaUsername, { noteID }),
-          "acumatica_get_task"
+          "acumatica_get_task",
+          undefined,
+          { noteID }
         );
       }
     );
@@ -745,7 +821,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
             selectFields,
           }),
           "acumatica_run_inquiry",
-          inquiryName
+          inquiryName,
+          { inquiryName, filterExpression, topN, selectFields }
         );
       }
     );
@@ -790,7 +867,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
             expand,
           }),
           "acumatica_list_entities",
-          entityName
+          entityName,
+          { entityName, filterExpression, topN, selectFields, orderBy, expand }
         );
       }
     );
@@ -807,7 +885,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ entityName }) => {
         return this.callTool(() =>
           handleDescribeEntity(this.env, this.props.acumaticaUsername, { entityName }),
-          "acumatica_describe_entity"
+          "acumatica_describe_entity",
+          undefined,
+          { entityName }
         );
       }
     );
@@ -832,7 +912,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
             titleFilter,
             topN: parseInt(topN, 10) || 200,
           }),
-          "acumatica_list_generic_inquiries"
+          "acumatica_list_generic_inquiries",
+          undefined,
+          { titleFilter, topN }
         );
       }
     );
@@ -849,7 +931,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ inquiryName }) => {
         return this.callTool(() =>
           handleDescribeInquiry(this.env, this.props.acumaticaUsername, { inquiryName }),
-          "acumatica_describe_inquiry"
+          "acumatica_describe_inquiry",
+          undefined,
+          { inquiryName }
         );
       }
     );
@@ -867,7 +951,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       async ({ target }) => {
         return this.callTool(() =>
           handleClearCache(this.env, target),
-          "acumatica_clear_cache"
+          "acumatica_clear_cache",
+          undefined,
+          { target }
         );
       }
     );
@@ -880,7 +966,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
   private async callTool(
     fn: () => Promise<unknown>,
     toolName?: string,
-    discriminator?: string
+    discriminator?: string,
+    params?: Record<string, unknown>
   ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
     // Pagination guard check (off by default; enabled per-tool via PAGINATION_GUARD_TOOLS)
     if (toolName && this.paginationGuard.enabled) {
@@ -891,6 +978,10 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         };
       }
     }
+
+    const start = Date.now();
+    const r2Entries: Record<string, unknown>[] = [];
+    const toolParams = params || {};
 
     try {
       const result = await fn();
@@ -913,7 +1004,42 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
           this.props.acumaticaUsername,
           redacted
         );
+        r2Entries.push({
+          level: "info",
+          type: "field_redaction",
+          timestamp: new Date().toISOString(),
+          tool: toolName || "unknown",
+          acumaticaUsername: this.props.acumaticaUsername,
+          redactedFields: redacted,
+          redactedCount: redacted.length,
+        });
       }
+
+      // Log successful tool invocation
+      const durationMs = Date.now() - start;
+      const invocationEntry = {
+        level: "info",
+        type: "tool_invocation",
+        timestamp: new Date().toISOString(),
+        tool: toolName || "unknown",
+        acumaticaUsername: this.props.acumaticaUsername,
+        params: toolParams,
+        status: "success",
+        durationMs,
+      };
+      logToolInvocation({
+        timestamp: invocationEntry.timestamp,
+        tool: invocationEntry.tool,
+        acumaticaUsername: invocationEntry.acumaticaUsername,
+        params: toolParams,
+        endpoint: "",
+        statusCode: 200,
+        durationMs,
+      });
+      r2Entries.push(invocationEntry);
+
+      // Persist all entries to R2 (fire-and-forget — does not block the response)
+      writeLogsToR2(this.env.mcp4acumatica_logs, r2Entries).catch(() => {});
 
       const content: Array<{ type: "text"; text: string }> = [
         { type: "text" as const, text: JSON.stringify(data, null, 2) },
@@ -936,6 +1062,25 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
             : error instanceof Error
               ? error.message
               : "An unexpected error occurred.";
+
+      // Log failed tool invocation
+      const durationMs = Date.now() - start;
+      const errorEntry = {
+        level: "error",
+        type: "tool_invocation",
+        timestamp: new Date().toISOString(),
+        tool: toolName || "unknown",
+        acumaticaUsername: this.props.acumaticaUsername,
+        params: toolParams,
+        status: "error",
+        durationMs,
+        error: message,
+      };
+      logError(toolName || "unknown", error);
+      r2Entries.push(errorEntry);
+
+      // Persist to R2 (fire-and-forget)
+      writeLogsToR2(this.env.mcp4acumatica_logs, r2Entries).catch(() => {});
 
       return {
         content: [{ type: "text" as const, text: `Error: ${message}` }],

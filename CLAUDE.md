@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.23.0`
+- **Current tag:** `25R2-0.23.1`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -58,7 +58,7 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 3. **Sensitive field redaction:** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) using pattern matching. Matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` (add) and `REDACT_SKIP` (whitelist) env vars. See `src/lib/redact.ts`.
 
-4. **Enhanced audit logging:** All tool invocations include the Acumatica username. Auth events (login success, access denied, consent accepted) and field redaction events are logged separately. View with `npx wrangler tail`.
+4. **Enhanced audit logging:** All tool invocations include the Acumatica username, tool parameters (what was queried), duration, and success/error status. Auth events (login success, access denied, consent accepted) are logged separately in the Worker handler. Tool invocation and field redaction logs are written directly to R2 from the Durable Object (Cloudflare Logpush only captures Worker-level traces, not DO traces). The `writeLogsToR2()` function in `src/lib/logger.ts` writes NDJSON entries to `do-logs/{date}/{timestamp}-{random}.ndjson` keys in R2. Console.log is preserved for `wrangler tail` live debugging. The admin console at `/docs/admin` reads both Logpush-written and DO-written logs from R2.
 
 5. **Pagination guard:** Optional per-tool cooldown that prevents AI models from circumventing record limits by making repeated calls to the same resource (e.g., paginating through all GL journal transactions). Off by default; enabled per-tool via `PAGINATION_GUARD_TOOLS` env var. For `acumatica_list_entities` the cooldown tracks by entity name, for `acumatica_run_inquiry` by inquiry name, so querying different resources is unaffected. Cooldown window is configurable via `PAGINATION_GUARD_COOLDOWN` (default 30s). See `src/lib/pagination-guard.ts`.
 

@@ -60,3 +60,34 @@ export function logRedaction(
     redactedCount: redactedFields.length,
   }));
 }
+
+/**
+ * Write structured log entries directly to R2 as NDJSON.
+ * Used by the Durable Object to persist tool logs that Logpush
+ * (Worker-level only) does not capture.
+ *
+ * Falls back silently to console-only if bucket is unavailable.
+ */
+export async function writeLogsToR2(
+  bucket: R2Bucket | undefined,
+  entries: Record<string, unknown>[]
+): Promise<void> {
+  if (!bucket || entries.length === 0) return;
+  try {
+    const ndjson = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    const now = new Date();
+    const date = now.toISOString().split("T")[0];
+    const ts = now.getTime();
+    const rand = crypto.randomUUID().slice(0, 8);
+    const key = `do-logs/${date}/${ts}-${rand}.ndjson`;
+    await bucket.put(key, ndjson);
+  } catch (err) {
+    // R2 write failure must not break tool responses
+    console.error(JSON.stringify({
+      level: "error",
+      type: "log_persist_error",
+      timestamp: new Date().toISOString(),
+      error: err instanceof Error ? err.message : String(err),
+    }));
+  }
+}
