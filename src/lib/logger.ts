@@ -82,7 +82,10 @@ export async function writeLogsToR2(
     const now = new Date();
     const date = now.toISOString().split("T")[0];
     const ts = now.getTime();
-    const rand = crypto.randomUUID().slice(0, 8);
+    // Use the full UUID rather than an 8-char slice — two flushes in the
+    // same millisecond across many DO instances can collide on a short
+    // suffix and silently overwrite one of the log files.
+    const rand = crypto.randomUUID();
     const key = `do-logs/${date}/${ts}-${rand}.ndjson`;
     await bucket.put(key, ndjson);
   } catch (err) {
