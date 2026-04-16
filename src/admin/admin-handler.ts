@@ -602,11 +602,21 @@ adminApp.get("/logs", (c) => {
             return;
           }
 
+          // Escape every log-derived value before inlining into HTML.
+          // User/tool names can be influenced upstream (Acumatica display
+          // name, crafted filter params) so a missed escape here is a
+          // stored-XSS vector inside the admin origin.
+          const esc = (s) => String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
           let html = '<table><thead><tr><th>Timestamp</th><th>Type</th><th>Tool</th><th>User</th><th>Status</th><th>Duration</th></tr></thead><tbody>';
           for (const log of data.logs) {
             const ts = log.timestamp ? new Date(log.timestamp).toLocaleString() : '';
             const type = log.type || '';
-            const typeClass = 'log-type log-type-' + type;
+            const typeClass = 'log-type log-type-' + type.replace(/[^a-zA-Z0-9_-]/g, '');
             const tool = log.tool || log.eventType || '';
             const user = log.acumaticaUsername || log.username || '';
             const status = log.statusCode || '';
@@ -614,14 +624,14 @@ adminApp.get("/logs", (c) => {
             const details = JSON.stringify(log, null, 2);
 
             html += '<tr onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\\'none\\'?\\'table-row\\':\\'none\\'" style="cursor:pointer">';
-            html += '<td>' + ts + '</td>';
-            html += '<td><span class="' + typeClass + '">' + type + '</span></td>';
-            html += '<td>' + tool + '</td>';
-            html += '<td>' + user + '</td>';
-            html += '<td>' + status + '</td>';
-            html += '<td>' + duration + '</td>';
+            html += '<td>' + esc(ts) + '</td>';
+            html += '<td><span class="' + typeClass + '">' + esc(type) + '</span></td>';
+            html += '<td>' + esc(tool) + '</td>';
+            html += '<td>' + esc(user) + '</td>';
+            html += '<td>' + esc(status) + '</td>';
+            html += '<td>' + esc(duration) + '</td>';
             html += '</tr>';
-            html += '<tr style="display:none"><td colspan="6"><div class="log-details">' + details.replace(/</g, '&lt;') + '</div></td></tr>';
+            html += '<tr style="display:none"><td colspan="6"><div class="log-details">' + esc(details) + '</div></td></tr>';
           }
           html += '</tbody></table>';
 
@@ -636,7 +646,8 @@ adminApp.get("/logs", (c) => {
           document.getElementById('logs-pagination').innerHTML = pag;
 
         } catch (err) {
-          document.getElementById('logs-table').innerHTML = '<div class="alert alert-error">Failed to load logs: ' + err.message + '</div>';
+          const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+          document.getElementById('logs-table').innerHTML = '<div class="alert alert-error">Failed to load logs: ' + esc(err && err.message) + '</div>';
         }
       }
     </script>`;

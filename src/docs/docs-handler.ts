@@ -229,7 +229,7 @@ function renderPage(slug: string, html: string): string {
     <nav>
       <div class="brand">
         <h1>MCP4Acumatica</h1>
-        <span>v0.24.1 &middot; 44 tools</span>
+        <span>v0.25.0 &middot; 44 tools</span>
       </div>
       ${renderNav(slug)}
       <div class="links">
@@ -248,6 +248,30 @@ function renderPage(slug: string, html: string): string {
 }
 
 const docsApp = new Hono<{ Bindings: Env }>();
+
+// Security headers for all docs + admin responses. Inline scripts/styles
+// are permitted because the admin console relies on them; an external
+// script/connection exfil would still be blocked. Tighten to nonce-based
+// `script-src` if the inline handlers are ever refactored.
+docsApp.use("*", async (c, next) => {
+  await next();
+  c.header(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "object-src 'none'",
+    ].join("; ")
+  );
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+});
 
 // Landing page — render README
 docsApp.get("/", (c) => {
