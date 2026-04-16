@@ -31,7 +31,11 @@ export function logError(tool: string, error: unknown): void {
 }
 
 export function logAuthEvent(
-  eventType: "login_success" | "login_denied" | "consent_accepted",
+  eventType:
+    | "login_success"
+    | "login_denied"
+    | "consent_accepted"
+    | "callback_state_mismatch",
   username: string,
   details?: Record<string, unknown>
 ): void {

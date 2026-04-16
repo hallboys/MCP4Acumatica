@@ -5,6 +5,19 @@ import { Hono } from "hono";
 import type { Env } from "../types/acumatica";
 import { docsApp } from "../docs/docs-handler";
 import { logAuthEvent } from "../lib/logger";
+import { encryptString, parseCookies } from "../lib/crypto";
+
+// OAuth state cookie — binds the `state` parameter to the browser that
+// started the flow, preventing login-CSRF / session-fixation on /callback.
+// SameSite=Lax is required because Acumatica's redirect is a cross-origin
+// top-level navigation; Strict would block the cookie.
+const OAUTH_STATE_COOKIE = "acu_oauth_state";
+const OAUTH_STATE_TTL_SECONDS = 600;
+
+// KV TTL for per-user Acumatica tokens. Long enough that normal users
+// don't have to re-auth mid-day, short enough to bound the blast radius
+// of a stolen refresh token.
+const USER_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
 type AuthEnv = Env & {
   COOKIE_ENCRYPTION_KEY: string;
@@ -59,7 +72,7 @@ app.get("/authorize", async (c) => {
   await c.env.TOKEN_STORE.put(
     `acumatica_state:${state}`,
     JSON.stringify(oauthReqInfo),
-    { expirationTtl: 600 }
+    { expirationTtl: OAUTH_STATE_TTL_SECONDS }
   );
 
   const origin = new URL(c.req.url).origin;
@@ -74,6 +87,13 @@ app.get("/authorize", async (c) => {
   );
   acumaticaAuthorizeUrl.searchParams.set("scope", "api openid profile email");
   acumaticaAuthorizeUrl.searchParams.set("state", state);
+
+  // Bind the state to this browser via an HttpOnly cookie. /callback
+  // will require cookie.state === query.state before exchanging the code.
+  c.header(
+    "Set-Cookie",
+    `${OAUTH_STATE_COOKIE}=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${OAUTH_STATE_TTL_SECONDS}`
+  );
 
   return c.redirect(acumaticaAuthorizeUrl.toString());
 });
@@ -99,6 +119,22 @@ app.get("/callback", async (c) => {
     return c.text("Missing code or state in callback", 400);
   }
 
+  // Verify the state cookie set at /authorize — this is what protects
+  // /callback from login-CSRF. Without the cookie, an attacker who
+  // captures a valid (code, state) pair cannot complete the flow in a
+  // victim's browser because the cookie was never set there.
+  const cookies = parseCookies(c.req.header("cookie"));
+  const cookieState = cookies[OAUTH_STATE_COOKIE];
+  if (!cookieState || cookieState !== state) {
+    logAuthEvent("callback_state_mismatch", "unknown", {
+      hasCookie: Boolean(cookieState),
+    });
+    return c.text(
+      "OAuth state mismatch. Please close this tab and try connecting again.",
+      400
+    );
+  }
+
   // Retrieve the original MCP OAuth request
   const stored = await c.env.TOKEN_STORE.get(`acumatica_state:${state}`);
   if (!stored) {
@@ -106,6 +142,12 @@ app.get("/callback", async (c) => {
   }
   const oauthReqInfo: OAuthReqInfo = JSON.parse(stored);
   await c.env.TOKEN_STORE.delete(`acumatica_state:${state}`);
+
+  // Clear the state cookie — it has served its purpose.
+  c.header(
+    "Set-Cookie",
+    `${OAUTH_STATE_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
+  );
 
   // Exchange Acumatica code for tokens
   const origin = new URL(c.req.url).origin;
@@ -125,8 +167,9 @@ app.get("/callback", async (c) => {
   );
 
   if (!tokenResponse.ok) {
-    const body = await tokenResponse.text();
-    console.error("Acumatica token exchange failed:", body);
+    // Do NOT log the response body — some IdentityServer error responses
+    // echo back the submitted form which includes client_secret and code.
+    console.error(`Acumatica token exchange failed: HTTP ${tokenResponse.status}`);
     return c.text("Acumatica authentication failed. Please try again.", 502);
   }
 
@@ -184,8 +227,8 @@ app.get("/callback", async (c) => {
         acumaticaDisplayName =
           userInfo.DisplayName?.value || acumaticaUsername;
       } else {
-        const body = await authResp.text();
-        console.error(`User info (auth): HTTP ${authResp.status}: ${body}`);
+        // Body omitted — may contain auth error payloads from Acumatica.
+        console.error(`User info (auth): HTTP ${authResp.status}`);
       }
     }
   } catch (e) {
@@ -266,15 +309,24 @@ app.post("/consent", async (c) => {
   const pending: PendingConsent = JSON.parse(stored);
   await c.env.TOKEN_STORE.delete(`consent:${consentId}`);
 
-  // Store the per-user token in KV
+  // Store the per-user token in KV. The refresh_token is encrypted at
+  // rest with COOKIE_ENCRYPTION_KEY (AES-256-GCM) — access_token lives
+  // in plaintext because it's short-lived and worthless after expiry.
+  // The record also carries a TTL so a leaked refresh token can't be
+  // used forever after the user stops logging in.
   const userTokenKey = `user_token:${pending.acumaticaUsername}`;
+  const encryptedRefresh = await encryptString(
+    pending.acumaticaTokens.refresh_token,
+    c.env.COOKIE_ENCRYPTION_KEY
+  );
   await c.env.TOKEN_STORE.put(
     userTokenKey,
     JSON.stringify({
       access_token: pending.acumaticaTokens.access_token,
-      refresh_token: pending.acumaticaTokens.refresh_token,
+      refresh_token: encryptedRefresh,
       expires_at: Date.now() + pending.acumaticaTokens.expires_in * 1000,
-    })
+    }),
+    { expirationTtl: USER_TOKEN_TTL_SECONDS }
   );
 
   logAuthEvent("consent_accepted", pending.acumaticaUsername);
@@ -352,8 +404,8 @@ async function checkUserRole(
     if (resp.status === 403) {
       console.log(`Role check (canary GI): user ${username} does not have access to ${giName} GI`);
     } else {
-      const body = await resp.text();
-      console.error(`Role check (canary GI): HTTP ${resp.status}: ${body.slice(0, 300)}`);
+      // Body omitted — may contain auth / tenant info we don't want in long-term logs.
+      console.error(`Role check (canary GI): HTTP ${resp.status}`);
     }
   } catch (e) {
     console.error(`Role check (canary GI): failed: ${e instanceof Error ? e.message : String(e)}`);
