@@ -570,7 +570,7 @@ adminApp.get("/logs", (c) => {
     <div id="logs-pagination" style="margin-top:12px"></div>
     <script>
       let currentPage = 0;
-      const pageSize = 100;
+      const pageSize = 25;
 
       async function loadLogs(page) {
         if (page !== undefined) currentPage = page;
@@ -648,7 +648,108 @@ adminApp.get("/logs", (c) => {
   return c.html(renderAdminPage("Logs", "logs", html));
 });
 
-// Logs API — reads NDJSON files from R2 Logpush
+// ── Log reading helpers ──────────────────────────────────────────
+
+/** List R2 objects matching date-scoped prefixes, with a hard cap. */
+async function listObjectsByDateRange(
+  bucket: R2Bucket,
+  prefixes: string[],
+  maxObjects: number
+): Promise<R2Object[]> {
+  const objects: R2Object[] = [];
+  for (const prefix of prefixes) {
+    if (objects.length >= maxObjects) break;
+    let cursor: string | undefined;
+    do {
+      const listed = await bucket.list({
+        prefix,
+        cursor,
+        limit: Math.min(1000, maxObjects - objects.length),
+      });
+      for (const obj of listed.objects) {
+        objects.push(obj);
+      }
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor && objects.length < maxObjects);
+  }
+  return objects;
+}
+
+/** Generate date strings YYYY-MM-DD from start to end inclusive. */
+function dateRange(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  const d = new Date(startDate + "T00:00:00Z");
+  const end = new Date(endDate + "T00:00:00Z");
+  while (d <= end && dates.length < 31) {
+    dates.push(d.toISOString().split("T")[0]);
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+/** Read an R2 object and parse NDJSON lines into structured log entries. */
+async function parseLogObject(r2Obj: R2ObjectBody, key: string): Promise<Record<string, unknown>[]> {
+  let text: string;
+  if (key.endsWith(".gz") || key.endsWith(".json.gz") || key.endsWith(".log.gz")) {
+    const ds = new DecompressionStream("gzip");
+    const decompressed = r2Obj.body.pipeThrough(ds);
+    text = await new Response(decompressed).text();
+  } else {
+    text = await r2Obj.text();
+  }
+
+  const entries: Record<string, unknown>[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      // Logpush wraps events — extract our structured logs from the Logs array
+      if (entry.Logs && Array.isArray(entry.Logs)) {
+        for (const logGroup of entry.Logs) {
+          if (logGroup.Message && Array.isArray(logGroup.Message)) {
+            for (const msg of logGroup.Message) {
+              try {
+                const parsed = JSON.parse(msg);
+                if (parsed.type) entries.push(parsed);
+              } catch {
+                // Not JSON — skip
+              }
+            }
+          }
+        }
+      } else if (entry.type) {
+        // Direct structured log entry (DO-written logs)
+        entries.push(entry);
+      }
+    } catch {
+      // Skip malformed lines
+    }
+  }
+  return entries;
+}
+
+/** Check if a log entry matches the active filters. */
+function matchesFilters(
+  entry: Record<string, unknown>,
+  filterType: string,
+  filterUsername: string,
+  filterTool: string
+): boolean {
+  if (filterType && entry.type !== filterType) return false;
+  if (filterUsername) {
+    const user = ((entry.acumaticaUsername as string) || (entry.username as string) || "").toLowerCase();
+    if (!user.includes(filterUsername)) return false;
+  }
+  if (filterTool) {
+    const tool = ((entry.tool as string) || (entry.eventType as string) || "").toLowerCase();
+    if (!tool.includes(filterTool)) return false;
+  }
+  return true;
+}
+
+// Logs API — reads NDJSON files from R2 (Logpush + DO-written)
+// Uses streaming server-side pagination: reads only enough files to
+// fill one page of filtered results, then stops. Prevents timeouts.
 adminApp.get("/logs/api", async (c) => {
   const bucket = c.env.mcp4acumatica_logs;
   if (!bucket) {
@@ -661,107 +762,53 @@ adminApp.get("/logs/api", async (c) => {
   const filterUsername = (c.req.query("username") || "").toLowerCase();
   const filterTool = (c.req.query("tool") || "").toLowerCase();
   const page = parseInt(c.req.query("page") || "0", 10);
-  const pageSize = Math.min(parseInt(c.req.query("pageSize") || "100", 10), 500);
+  const pageSize = Math.min(parseInt(c.req.query("pageSize") || "25", 10), 200);
 
   try {
-    // List R2 objects — Logpush uses date-based prefixes
-    // Common patterns: YYYYMMDD/, or the date is in the filename
-    // We list all objects and filter by date range from the key name
-    const allObjects: R2Object[] = [];
-    let cursor: string | undefined;
-    const maxObjects = 200; // Safety cap
+    const dates = dateRange(startDate, endDate);
+    const maxObjects = 1000;
 
-    do {
-      const listed = await bucket.list({ cursor, limit: 1000 });
-      for (const obj of listed.objects) {
-        allObjects.push(obj);
-      }
-      cursor = listed.truncated ? listed.cursor : undefined;
-    } while (cursor && allObjects.length < maxObjects);
+    // Build date-scoped prefixes for both DO logs and Logpush logs
+    const prefixes: string[] = [];
+    for (const d of dates) {
+      prefixes.push(`do-logs/${d}/`);           // DO-written tool logs
+      prefixes.push(`${d.replace(/-/g, "")}/`); // Logpush YYYYMMDD/ format
+    }
 
-    // Filter objects by date range (Logpush keys contain timestamps)
-    const startTs = new Date(startDate + "T00:00:00Z").getTime();
-    const endTs = new Date(endDate + "T23:59:59Z").getTime();
-
-    const relevantObjects = allObjects.filter((obj) => {
-      // Check object upload timestamp against date range
-      const objTime = obj.uploaded?.getTime() || 0;
-      return objTime >= startTs && objTime <= endTs;
-    });
+    // List objects using prefix-scoped queries
+    const scopedObjects = await listObjectsByDateRange(bucket, prefixes, maxObjects);
 
     // Sort by upload time descending (newest first)
-    relevantObjects.sort((a, b) => (b.uploaded?.getTime() || 0) - (a.uploaded?.getTime() || 0));
+    scopedObjects.sort((a, b) => (b.uploaded?.getTime() || 0) - (a.uploaded?.getTime() || 0));
 
-    // Read and parse log entries
-    const allEntries: Record<string, unknown>[] = [];
+    // Streaming pagination: read files in parallel batches, filter
+    // incrementally, and stop once we have enough entries to fill the
+    // requested page plus one extra (to detect hasMore).
+    const filtered: Record<string, unknown>[] = [];
     let filesRead = 0;
-    const maxEntries = (page + 1) * pageSize + 1; // Read enough for current page + hasMore check
+    const batchSize = 25;
+    const needEntries = (page + 1) * pageSize + 1; // entries needed to fill page + hasMore
 
-    for (const obj of relevantObjects) {
-      if (allEntries.length >= maxEntries) break;
-
-      const r2Obj = await bucket.get(obj.key);
-      if (!r2Obj) continue;
-      filesRead++;
-
-      let text: string;
-      // Detect gzip by key name or content type
-      if (obj.key.endsWith(".gz") || obj.key.endsWith(".json.gz") || obj.key.endsWith(".log.gz")) {
-        // Decompress gzipped content
-        const ds = new DecompressionStream("gzip");
-        const decompressed = r2Obj.body.pipeThrough(ds);
-        text = await new Response(decompressed).text();
-      } else {
-        text = await r2Obj.text();
-      }
-
-      // Parse NDJSON — each line is a JSON object
-      // Logpush wraps our console.log output in a Logs array
-      for (const line of text.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const entry = JSON.parse(line);
-
-          // Logpush wraps events — extract our structured logs from the Logs array
-          if (entry.Logs && Array.isArray(entry.Logs)) {
-            for (const logGroup of entry.Logs) {
-              if (logGroup.Message && Array.isArray(logGroup.Message)) {
-                for (const msg of logGroup.Message) {
-                  try {
-                    const parsed = JSON.parse(msg);
-                    if (parsed.type) allEntries.push(parsed);
-                  } catch {
-                    // Not JSON — skip
-                  }
-                }
-              }
-            }
-          } else if (entry.type) {
-            // Direct structured log entry
-            allEntries.push(entry);
+    for (let i = 0; i < scopedObjects.length; i += batchSize) {
+      const batch = scopedObjects.slice(i, i + batchSize);
+      const results = await Promise.all(
+        batch.map(async (obj) => {
+          const r2Obj = await bucket.get(obj.key);
+          if (!r2Obj) return [];
+          return parseLogObject(r2Obj, obj.key);
+        })
+      );
+      for (const entries of results) {
+        for (const entry of entries) {
+          if (matchesFilters(entry, filterType, filterUsername, filterTool)) {
+            filtered.push(entry);
           }
-        } catch {
-          // Skip malformed lines
         }
       }
-    }
+      filesRead += batch.length;
 
-    // Apply filters
-    let filtered = allEntries;
-    if (filterType) {
-      filtered = filtered.filter((e) => e.type === filterType);
-    }
-    if (filterUsername) {
-      filtered = filtered.filter((e) => {
-        const user = ((e.acumaticaUsername as string) || (e.username as string) || "").toLowerCase();
-        return user.includes(filterUsername);
-      });
-    }
-    if (filterTool) {
-      filtered = filtered.filter((e) => {
-        const tool = ((e.tool as string) || (e.eventType as string) || "").toLowerCase();
-        return tool.includes(filterTool);
-      });
+      // Stop early once we have enough filtered entries for this page
+      if (filtered.length >= needEntries) break;
     }
 
     // Sort by timestamp descending

@@ -54,12 +54,21 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.23.1",
+    version: "0.23.2",
   });
 
   private paginationGuard!: PaginationGuard;
   private redactPatterns?: string;
   private redactSkip?: string;
+
+  // ── Log buffering ──────────────────────────────────────────────
+  // Buffer entries in memory and flush to a single R2 file when the
+  // buffer is large enough or enough time has passed. This reduces
+  // hundreds of tiny R2 files per day to a handful of larger ones.
+  private logBuffer: Record<string, unknown>[] = [];
+  private lastFlushTime = Date.now();
+  private static readonly LOG_FLUSH_THRESHOLD = 25;   // entries
+  private static readonly LOG_FLUSH_INTERVAL = 15_000; // 15 seconds
 
   async init() {
     // Initialize the platform-agnostic store from the Cloudflare KV binding.
@@ -960,6 +969,32 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
   }
 
   /**
+   * Flush buffered log entries to a single R2 file.
+   * Called when the buffer is large enough or enough time has elapsed.
+   */
+  private flushLogs(): void {
+    if (this.logBuffer.length === 0) return;
+    const entries = this.logBuffer;
+    this.logBuffer = [];
+    this.lastFlushTime = Date.now();
+    writeLogsToR2(this.env.mcp4acumatica_logs, entries).catch(() => {});
+  }
+
+  /**
+   * Add log entries to the buffer and flush if thresholds are met.
+   */
+  private bufferLogs(entries: Record<string, unknown>[]): void {
+    this.logBuffer.push(...entries);
+    const elapsed = Date.now() - this.lastFlushTime;
+    if (
+      this.logBuffer.length >= AcumaticaMcpServer.LOG_FLUSH_THRESHOLD ||
+      elapsed >= AcumaticaMcpServer.LOG_FLUSH_INTERVAL
+    ) {
+      this.flushLogs();
+    }
+  }
+
+  /**
    * Wraps a tool handler, catching known errors and returning
    * MCP-formatted text content.
    */
@@ -1038,8 +1073,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       });
       r2Entries.push(invocationEntry);
 
-      // Persist all entries to R2 (fire-and-forget — does not block the response)
-      writeLogsToR2(this.env.mcp4acumatica_logs, r2Entries).catch(() => {});
+      // Buffer log entries (flushed to R2 in batches to reduce file count)
+      this.bufferLogs(r2Entries);
 
       const content: Array<{ type: "text"; text: string }> = [
         { type: "text" as const, text: JSON.stringify(data, null, 2) },
@@ -1079,8 +1114,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       logError(toolName || "unknown", error);
       r2Entries.push(errorEntry);
 
-      // Persist to R2 (fire-and-forget)
-      writeLogsToR2(this.env.mcp4acumatica_logs, r2Entries).catch(() => {});
+      // Buffer log entries (flushed to R2 in batches to reduce file count)
+      this.bufferLogs(r2Entries);
 
       return {
         content: [{ type: "text" as const, text: `Error: ${message}` }],
