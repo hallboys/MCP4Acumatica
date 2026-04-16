@@ -53,20 +53,22 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.24.0",
+    version: "0.24.1",
   });
 
   private redactPatterns?: string;
   private redactSkip?: string;
 
   // ── Log buffering ──────────────────────────────────────────────
-  // Buffer entries in memory and flush to a single R2 file when the
-  // buffer is large enough or enough time has passed. This reduces
-  // hundreds of tiny R2 files per day to a handful of larger ones.
+  // Buffer entries in memory and flush to R2 when the buffer hits
+  // a size threshold OR a DO alarm fires. The alarm is the critical
+  // piece — without it, short sessions (<25 entries) sit in memory
+  // until the DO is evicted and get lost. Alarms persist in storage,
+  // so an idle DO will be woken up just to flush.
   private logBuffer: Record<string, unknown>[] = [];
-  private lastFlushTime = Date.now();
-  private static readonly LOG_FLUSH_THRESHOLD = 25;   // entries
-  private static readonly LOG_FLUSH_INTERVAL = 15_000; // 15 seconds
+  private alarmScheduled = false;
+  private static readonly LOG_FLUSH_THRESHOLD = 25;  // entries
+  private static readonly LOG_FLUSH_DELAY_MS = 15_000;
 
   async init() {
     // Initialize the platform-agnostic store from the Cloudflare KV binding.
@@ -927,30 +929,42 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
     );
   }
 
-  /**
-   * Flush buffered log entries to a single R2 file.
-   * Called when the buffer is large enough or enough time has elapsed.
-   */
-  private flushLogs(): void {
+  /** Flush buffered log entries to R2 and clear any pending alarm. */
+  private async flushLogs(): Promise<void> {
+    if (this.alarmScheduled) {
+      await this.ctx.storage.deleteAlarm().catch(() => {});
+      this.alarmScheduled = false;
+    }
     if (this.logBuffer.length === 0) return;
     const entries = this.logBuffer;
     this.logBuffer = [];
-    this.lastFlushTime = Date.now();
     writeLogsToR2(this.env.mcp4acumatica_logs, entries).catch(() => {});
   }
 
   /**
-   * Add log entries to the buffer and flush if thresholds are met.
+   * Add log entries to the buffer. Flush immediately if the size
+   * threshold is reached; otherwise ensure a DO alarm is scheduled
+   * so an idle buffer still lands in R2.
    */
-  private bufferLogs(entries: Record<string, unknown>[]): void {
+  private async bufferLogs(entries: Record<string, unknown>[]): Promise<void> {
     this.logBuffer.push(...entries);
-    const elapsed = Date.now() - this.lastFlushTime;
-    if (
-      this.logBuffer.length >= AcumaticaMcpServer.LOG_FLUSH_THRESHOLD ||
-      elapsed >= AcumaticaMcpServer.LOG_FLUSH_INTERVAL
-    ) {
-      this.flushLogs();
+    if (this.logBuffer.length >= AcumaticaMcpServer.LOG_FLUSH_THRESHOLD) {
+      await this.flushLogs();
+      return;
     }
+    if (!this.alarmScheduled) {
+      await this.ctx.storage.setAlarm(Date.now() + AcumaticaMcpServer.LOG_FLUSH_DELAY_MS);
+      this.alarmScheduled = true;
+    }
+  }
+
+  /** DO alarm handler — fires after LOG_FLUSH_DELAY_MS of idle to drain the buffer. */
+  async alarm(): Promise<void> {
+    this.alarmScheduled = false;
+    if (this.logBuffer.length === 0) return;
+    const entries = this.logBuffer;
+    this.logBuffer = [];
+    await writeLogsToR2(this.env.mcp4acumatica_logs, entries).catch(() => {});
   }
 
   /**
@@ -1016,8 +1030,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       });
       r2Entries.push(invocationEntry);
 
-      // Buffer log entries (flushed to R2 in batches to reduce file count)
-      this.bufferLogs(r2Entries);
+      // Buffer log entries (flushed to R2 on threshold or delayed alarm)
+      await this.bufferLogs(r2Entries);
 
       const content: Array<{ type: "text"; text: string }> = [
         { type: "text" as const, text: JSON.stringify(data, null, 2) },
@@ -1057,8 +1071,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       logError(toolName || "unknown", error);
       r2Entries.push(errorEntry);
 
-      // Buffer log entries (flushed to R2 in batches to reduce file count)
-      this.bufferLogs(r2Entries);
+      // Buffer log entries (flushed to R2 on threshold or delayed alarm)
+      await this.bufferLogs(r2Entries);
 
       return {
         content: [{ type: "text" as const, text: `Error: ${message}` }],
