@@ -5,6 +5,20 @@ import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient, AcumaticaApiError, unwrapFields } from "../lib/acumatica-client";
 import { getConfig } from "../lib/config";
 
+// Entities that contain auth/credential/role metadata — blocked from the
+// generic lister because there's no legitimate AI-assistant use case and
+// the per-entity contract-API surface is small enough that accidental
+// exposure is easy. Case-insensitive match against the exact entityName
+// the caller supplies.
+const DENY_ENTITIES = new Set([
+  "user",
+  "usersecurityinfo",
+  "userrole",
+  "role",
+  "rolelist",
+  "rolesbyuser",
+]);
+
 export async function handleListEntities(
   env: AppEnv,
   acumaticaUsername: string,
@@ -17,6 +31,20 @@ export async function handleListEntities(
     expand?: string;
   }
 ): Promise<unknown> {
+  if (DENY_ENTITIES.has(args.entityName.toLowerCase())) {
+    return {
+      error: `Entity '${args.entityName}' is not available via this tool. Auth and role metadata is intentionally out of scope for AI-assistant queries.`,
+    };
+  }
+  // Disallow $expand path traversal (`Details/Tax`, `MainContact/UserInfo`, etc.).
+  // Single-level sub-entities are still allowed (`Details`, `MainContact`). This
+  // prevents reaching sensitive sub-records via a navigation chain that the
+  // role gate on the parent entity did not anticipate.
+  if (args.expand && args.expand.includes("/")) {
+    return {
+      error: "Nested $expand paths (containing '/') are not permitted. Use a single sub-entity level and pull further detail with a dedicated get_* tool.",
+    };
+  }
   const maxRecords = await getConfig(env.store, "acumatica_max_records", env.ACUMATICA_MAX_RECORDS);
   const MAX_TOP = parseInt(maxRecords || "", 10) || 1000;
   const client = new AcumaticaClient(env, acumaticaUsername);

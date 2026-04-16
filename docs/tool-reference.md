@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 44 tools available in the MCP4Acumatica (v0.25.0).
+Complete specification for all 44 tools available in the MCP4Acumatica (v0.26.0).
 
 ## Table of Contents
 
