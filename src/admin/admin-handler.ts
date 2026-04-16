@@ -414,8 +414,6 @@ adminApp.get("/", (c) => c.redirect("/docs/admin/logs"));
 adminApp.get("/settings", async (c) => {
   const kv = c.env.TOKEN_STORE;
   const envLookup: Record<string, string | undefined> = {
-    PAGINATION_GUARD_TOOLS: c.env.PAGINATION_GUARD_TOOLS,
-    PAGINATION_GUARD_COOLDOWN: c.env.PAGINATION_GUARD_COOLDOWN,
     REDACT_PATTERNS: c.env.REDACT_PATTERNS,
     REDACT_SKIP: c.env.REDACT_SKIP,
     ACUMATICA_MAX_RECORDS: c.env.ACUMATICA_MAX_RECORDS,
@@ -480,8 +478,6 @@ adminApp.get("/settings", async (c) => {
 adminApp.get("/settings/api", async (c) => {
   const kv = c.env.TOKEN_STORE;
   const envLookup: Record<string, string | undefined> = {
-    PAGINATION_GUARD_TOOLS: c.env.PAGINATION_GUARD_TOOLS,
-    PAGINATION_GUARD_COOLDOWN: c.env.PAGINATION_GUARD_COOLDOWN,
     REDACT_PATTERNS: c.env.REDACT_PATTERNS,
     REDACT_SKIP: c.env.REDACT_SKIP,
     ACUMATICA_MAX_RECORDS: c.env.ACUMATICA_MAX_RECORDS,

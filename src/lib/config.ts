@@ -42,8 +42,6 @@ export async function deleteConfig(
 
 /** All configurable settings with their KV keys and env var names. */
 export const CONFIG_KEYS = [
-  { key: "pagination_guard_tools", envVar: "PAGINATION_GUARD_TOOLS", label: "Pagination Guard Tools", description: "Comma-separated tool names to protect from repeated calls (empty = disabled)" },
-  { key: "pagination_guard_cooldown", envVar: "PAGINATION_GUARD_COOLDOWN", label: "Pagination Guard Cooldown", description: "Seconds between allowed calls to the same tool+resource (default: 30)" },
   { key: "redact_patterns", envVar: "REDACT_PATTERNS", label: "Redact Patterns", description: "Comma-separated additional field name patterns to redact" },
   { key: "redact_skip", envVar: "REDACT_SKIP", label: "Redact Skip", description: "Comma-separated field name patterns to whitelist from redaction" },
   { key: "acumatica_max_records", envVar: "ACUMATICA_MAX_RECORDS", label: "Max Records Per Query", description: "Maximum number of records returned per API query (default: 1000)" },

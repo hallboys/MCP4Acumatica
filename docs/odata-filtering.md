@@ -43,9 +43,11 @@ The `filterExpression` parameter maps to OData `$filter`. Use it to return only 
 |----------|-------------|---------|
 | `startswith(field, 'value')` | Starts with | `startswith(CustomerName, 'Acme')` |
 | `endswith(field, 'value')` | Ends with | `endswith(Email, '@gmail.com')` |
-| `substringof('value', field)` | Contains | `substringof('widget', Description)` |
-| `tolower(field)` | Lowercase comparison | `tolower(CustomerName) eq 'acme corp'` |
-| `toupper(field)` | Uppercase comparison | `toupper(Status) eq 'OPEN'` |
+| `substringof('value', field)` | Contains (case-insensitive). **Note the reversed argument order — needle first.** | `substringof('widget', Description)` |
+
+> **Unsupported — these return a 500:**
+> - `contains(field, 'value')` — this is OData v4 syntax. Acumatica's contract-based REST API is v3. Use `substringof` instead.
+> - `tolower(field)` / `toupper(field)` — Acumatica's filter parser rejects these whether used standalone (`toupper(Status) eq 'OPEN'`) or nested inside other functions (`substringof('X', toupper(CustomerName))`). **`substringof` is already case-insensitive, so no casing helper is needed** — pass the needle in any casing and it will match.
 
 ### Date Filtering
 

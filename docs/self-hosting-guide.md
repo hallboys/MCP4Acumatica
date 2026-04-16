@@ -29,7 +29,6 @@ These files use `AppEnv` and `IKeyValueStore` -- no Cloudflare dependencies:
 | `src/lib/config.ts` | Runtime config with env var fallback |
 | `src/lib/metadata-cache.ts` | Schema and GI metadata caching |
 | `src/lib/rate-limiter.ts` | In-memory rate limiting |
-| `src/lib/pagination-guard.ts` | In-memory pagination guard |
 | `src/lib/redact.ts` | Sensitive field redaction |
 | `src/lib/logger.ts` | Structured JSON audit logging |
 | `src/lib/kv-store.ts` | `IKeyValueStore` interface |

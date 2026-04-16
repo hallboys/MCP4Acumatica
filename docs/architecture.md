@@ -280,30 +280,31 @@ Multiple safeguards protect the Acumatica instance:
 | Requests per minute | 40 | Per user |
 | Max records per query (`$top`) | 1000 (configurable) | Per request |
 
-When a rate limit is exceeded, the tool returns a friendly error message asking the user to wait. When query results hit the record cap, a note is included in the response directing the AI to help the user refine their filter.
+When a rate limit is exceeded, the tool returns a friendly error message asking the user to wait.
 
-### Pagination Guard
+### Pagination Refusal Semantics
 
-An optional per-tool cooldown prevents AI models from circumventing record limits by making repeated calls to the same resource (e.g., paginating through all GL journal transactions).
+The list/query tools (`acumatica_list_entities`, `acumatica_run_inquiry`, `acumatica_list_generic_inquiries`) do not support pagination. When a response hits the `ACUMATICA_MAX_RECORDS` cap, the tool returns a structured envelope instead of a bare array:
 
-- **Off by default.** Enabled by setting `PAGINATION_GUARD_TOOLS` to a comma-separated list of tool names.
-- **Per-resource tracking.** For `acumatica_list_entities`, the cooldown tracks by entity name (e.g., listing `Customer` and `Invoice` are independent). For `acumatica_run_inquiry`, it tracks by inquiry name.
-- **Configurable cooldown.** `PAGINATION_GUARD_COOLDOWN` sets the window in seconds (default: 30).
-
-Example configuration:
-```jsonc
-"PAGINATION_GUARD_TOOLS": "acumatica_list_entities,acumatica_run_inquiry",
-"PAGINATION_GUARD_COOLDOWN": "30"
+```json
+{
+  "results": [...],
+  "truncated": true,
+  "recordsReturned": 1000,
+  "recordLimit": 1000,
+  "paginationSupported": false,
+  "actionRequired": "Results were truncated at 1000 records and this tool does NOT support pagination. Do NOT call this tool again... Instead, stop and ask the user to narrow their request by providing a more specific filterExpression..."
+}
 ```
 
-When a guarded call is blocked, the tool returns an error message directing the AI to help the user refine their query filters instead.
+This turns the "don't paginate" rule into a semantic contract the model can read and act on — it is instructed to surface a clarifying request to the user rather than issue more tool calls. No server-side cooldown is enforced; the contract is the mechanism.
 
 ### Admin Console
 
 A web-based admin interface at `/docs/admin` for managing the MCP server without the wrangler CLI.
 
 - **Authentication:** `ADMIN_SECRET` env var (set via `wrangler secret put`). HMAC-signed session cookie (24h expiry), signed with `COOKIE_ENCRYPTION_KEY`. No KV session storage needed.
-- **Settings page** (`/docs/admin/settings`): View and edit runtime config (pagination guard, redaction patterns, max records). Values stored in KV with `config:` prefix. KV overrides take precedence over env vars. Changes take effect when the next DO instance starts.
+- **Settings page** (`/docs/admin/settings`): View and edit runtime config (redaction patterns, max records). Values stored in KV with `config:` prefix. KV overrides take precedence over env vars. Changes take effect when the next DO instance starts.
 - **Log viewer** (`/docs/admin/logs`): Browse logs from R2 (Logpush). Filter by date range, log type, username, and tool name. Expandable rows show full JSON payload.
 
 ### Long-Term Log Retention (R2 + Logpush)
@@ -319,7 +320,7 @@ Cloudflare Logpush captures Workers Trace Events and writes NDJSON files to an R
 
 Settings can be changed without redeploying via the admin console or direct KV writes.
 
-- Config keys stored in KV with `config:` prefix (e.g., `config:pagination_guard_tools`)
+- Config keys stored in KV with `config:` prefix (e.g., `config:acumatica_max_records`)
 - `getConfig(store, key, envFallback)` reads KV first, falls back to env var
 - The DO reads config in `init()` and stores resolved values as instance properties
 - Changes take effect when the DO instance recycles (idle eviction, typically within minutes)
@@ -348,7 +349,6 @@ AcumaticaMcpServer.init() registered handler
        ▼
 callTool() wrapper
        │
-       ├── Pagination guard check (if enabled)
        ├── Error handling + field redaction
        │
        ▼
@@ -405,7 +405,6 @@ src/
 │   ├── config.ts                  # KV-backed runtime config (via IKeyValueStore)
 │   ├── kv-store.ts                # IKeyValueStore interface
 │   ├── metadata-cache.ts          # KV-backed cache (via IKeyValueStore)
-│   ├── pagination-guard.ts        # Per-tool cooldown to prevent pagination
 │   ├── rate-limiter.ts            # Concurrent + per-minute rate limits
 │   └── logger.ts                  # Structured JSON audit logging
 ├── platform/
