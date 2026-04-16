@@ -4,71 +4,125 @@
 import { Hono } from "hono";
 import type { Env } from "../types/acumatica";
 import { getConfig, setConfig, deleteConfig, CONFIG_KEYS } from "../lib/config";
+import { hmacSign, hmacVerify, constantTimeEqual, parseCookies } from "../lib/crypto";
 
-// ── Crypto helpers ────────────────────────────────────────────────
-
-async function hmacSign(payload: string, secret: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
-  return btoa(String.fromCharCode(...new Uint8Array(sig)));
-}
-
-async function hmacVerify(payload: string, signature: string, secret: string): Promise<boolean> {
-  const expected = await hmacSign(payload, secret);
-  // Timing-safe comparison via subtle crypto
-  if (expected.length !== signature.length) return false;
-  const enc = new TextEncoder();
-  const a = enc.encode(expected);
-  const b = enc.encode(signature);
-  // Use XOR comparison to avoid timing leaks
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a[i] ^ b[i];
-  }
-  return diff === 0;
-}
-
-function parseCookies(header: string | undefined): Record<string, string> {
-  if (!header) return {};
-  const cookies: Record<string, string> = {};
-  for (const pair of header.split(";")) {
-    const [name, ...rest] = pair.trim().split("=");
-    if (name) cookies[name.trim()] = rest.join("=").trim();
-  }
-  return cookies;
-}
-
-// ── Session cookie helpers ────────────────────────────────────────
+// ── Session cookie + CSRF helpers ─────────────────────────────────
+//
+// Sessions are KV-backed (`admin_session:<id>` → `{csrf, createdAt}`). The
+// cookie carries only an opaque session id + expiry + HMAC signature;
+// nothing authoritative lives in the cookie alone. On logout or "revoke
+// all sessions" we simply delete the KV record and every outstanding
+// cookie is instantly useless. Signing uses COOKIE_ENCRYPTION_KEY, not
+// ADMIN_SECRET, so rotating the admin password never inadvertently
+// invalidates a signing key — revocation is explicit.
+//
+// CSRF protection uses the double-submit cookie pattern. `mcp_admin_csrf`
+// is a non-HttpOnly cookie mirroring the token stored on the session
+// record; page JS reads it and echoes it back in `X-CSRF-Token` for
+// every state-changing request. A cross-site POST cannot set our
+// cookie or read it, so the header won't match.
 
 const SESSION_COOKIE = "mcp_admin_session";
+const CSRF_COOKIE = "mcp_admin_csrf";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+const SESSION_KV_PREFIX = "admin_session:";
 
-async function createSessionCookie(secret: string): Promise<string> {
-  const exp = Date.now() + SESSION_DURATION_MS;
-  const payload = String(exp);
-  const sig = await hmacSign(payload, secret);
-  const value = `${payload}.${sig}`;
-  return `${SESSION_COOKIE}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/docs/admin; Max-Age=${Math.floor(SESSION_DURATION_MS / 1000)}`;
+interface SessionRecord {
+  csrf: string;
+  createdAt: number;
 }
 
-async function validateSession(cookieHeader: string | undefined, secret: string): Promise<boolean> {
+interface ValidatedSession {
+  sessionId: string;
+  csrf: string;
+}
+
+async function createSession(
+  kv: KVNamespace,
+  signingKey: string
+): Promise<{ sessionCookie: string; csrfCookie: string }> {
+  const sessionId = crypto.randomUUID();
+  const csrf = crypto.randomUUID();
+  const exp = Date.now() + SESSION_DURATION_MS;
+  const payload = `${sessionId}.${exp}`;
+  const sig = await hmacSign(payload, signingKey);
+  const maxAge = Math.floor(SESSION_DURATION_MS / 1000);
+
+  const record: SessionRecord = { csrf, createdAt: Date.now() };
+  await kv.put(`${SESSION_KV_PREFIX}${sessionId}`, JSON.stringify(record), {
+    expirationTtl: maxAge,
+  });
+
+  const sessionCookie = `${SESSION_COOKIE}=${payload}.${sig}; HttpOnly; Secure; SameSite=Strict; Path=/docs/admin; Max-Age=${maxAge}`;
+  // CSRF cookie is intentionally NOT HttpOnly — the page JS must read it
+  // to echo in the X-CSRF-Token header. SameSite=Strict plus same-origin-only
+  // reads via document.cookie is the defense.
+  const csrfCookie = `${CSRF_COOKIE}=${csrf}; Secure; SameSite=Strict; Path=/docs/admin; Max-Age=${maxAge}`;
+  return { sessionCookie, csrfCookie };
+}
+
+async function validateSession(
+  cookieHeader: string | undefined,
+  signingKey: string,
+  kv: KVNamespace
+): Promise<ValidatedSession | null> {
   const cookies = parseCookies(cookieHeader);
   const session = cookies[SESSION_COOKIE];
-  if (!session) return false;
+  if (!session) return null;
 
-  const dotIdx = session.lastIndexOf(".");
-  if (dotIdx < 0) return false;
+  const parts = session.split(".");
+  if (parts.length !== 3) return null;
+  const [sessionId, expStr, sig] = parts;
 
-  const payload = session.substring(0, dotIdx);
-  const sig = session.substring(dotIdx + 1);
+  if (!(await hmacVerify(`${sessionId}.${expStr}`, sig, signingKey))) return null;
+  const exp = parseInt(expStr, 10);
+  if (isNaN(exp) || Date.now() >= exp) return null;
 
-  if (!(await hmacVerify(payload, sig, secret))) return false;
+  const raw = await kv.get(`${SESSION_KV_PREFIX}${sessionId}`);
+  if (!raw) return null;
+  try {
+    const record = JSON.parse(raw) as SessionRecord;
+    return { sessionId, csrf: record.csrf };
+  } catch {
+    return null;
+  }
+}
 
-  const exp = parseInt(payload, 10);
-  return !isNaN(exp) && Date.now() < exp;
+async function deleteSession(kv: KVNamespace, sessionId: string): Promise<void> {
+  await kv.delete(`${SESSION_KV_PREFIX}${sessionId}`);
+}
+
+/** Delete every outstanding admin session (used when rotating admin secret). */
+async function revokeAllSessions(kv: KVNamespace): Promise<number> {
+  let deleted = 0;
+  let cursor: string | undefined;
+  do {
+    const res = await kv.list({ prefix: SESSION_KV_PREFIX, cursor });
+    await Promise.all(res.keys.map((k) => kv.delete(k.name)));
+    deleted += res.keys.length;
+    cursor = res.list_complete ? undefined : res.cursor;
+  } while (cursor);
+  return deleted;
+}
+
+/**
+ * CSRF check for state-changing admin requests. Requires:
+ * (1) a valid session, (2) the CSRF cookie is set, (3) the
+ * `X-CSRF-Token` header matches both the cookie and the token
+ * bound to the session record.
+ */
+async function requireCsrf(
+  cookieHeader: string | undefined,
+  headerToken: string | undefined,
+  session: ValidatedSession
+): Promise<boolean> {
+  if (!headerToken) return false;
+  const cookies = parseCookies(cookieHeader);
+  const cookieToken = cookies[CSRF_COOKIE];
+  if (!cookieToken) return false;
+  if (!constantTimeEqual(cookieToken, headerToken)) return false;
+  if (!constantTimeEqual(cookieToken, session.csrf)) return false;
+  return true;
 }
 
 // ── Shared layout ────────────────────────────────────────────────
@@ -331,7 +385,10 @@ function renderLoginPage(error?: string): string {
 
 // ── Admin Hono app ───────────────────────────────────────────────
 
-const adminApp = new Hono<{ Bindings: Env }>();
+const adminApp = new Hono<{
+  Bindings: Env;
+  Variables: { session: ValidatedSession };
+}>();
 
 // Login page
 adminApp.get("/login", (c) => {
@@ -362,29 +419,36 @@ adminApp.post("/login", async (c) => {
     return c.html(renderLoginPage("Invalid secret. Please try again."), 401);
   }
 
-  const signingKey = c.env.COOKIE_ENCRYPTION_KEY || secret;
-  const cookie = await createSessionCookie(signingKey);
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: "/docs/admin/logs",
-      "Set-Cookie": cookie,
-    },
-  });
+  const signingKey = c.env.COOKIE_ENCRYPTION_KEY;
+  if (!signingKey) {
+    return c.html(renderLoginPage("Server misconfigured: COOKIE_ENCRYPTION_KEY not set."), 500);
+  }
+  const { sessionCookie, csrfCookie } = await createSession(c.env.TOKEN_STORE, signingKey);
+  const headers = new Headers();
+  headers.append("Set-Cookie", sessionCookie);
+  headers.append("Set-Cookie", csrfCookie);
+  headers.set("Location", "/docs/admin/logs");
+  return new Response(null, { status: 302, headers });
 });
 
-// Logout handler
-adminApp.post("/logout", (c) => {
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: "/docs/admin/login",
-      "Set-Cookie": `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/docs/admin; Max-Age=0`,
-    },
-  });
+// Logout handler — deletes the session record in KV so a stolen cookie
+// is instantly useless even before its expiry.
+adminApp.post("/logout", async (c) => {
+  const signingKey = c.env.COOKIE_ENCRYPTION_KEY;
+  if (signingKey) {
+    const session = await validateSession(c.req.header("cookie"), signingKey, c.env.TOKEN_STORE);
+    if (session) await deleteSession(c.env.TOKEN_STORE, session.sessionId);
+  }
+  const headers = new Headers();
+  headers.append("Set-Cookie", `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/docs/admin; Max-Age=0`);
+  headers.append("Set-Cookie", `${CSRF_COOKIE}=; Secure; SameSite=Strict; Path=/docs/admin; Max-Age=0`);
+  headers.set("Location", "/docs/admin/login");
+  return new Response(null, { status: 302, headers });
 });
 
-// Auth middleware — protect everything except /login and /logout
+// Auth middleware — protect everything except /login and /logout.
+// The validated session is stashed on the context so downstream
+// handlers can enforce CSRF without re-reading the cookie.
 adminApp.use("/*", async (c, next) => {
   const path = new URL(c.req.url).pathname;
   if (path === "/docs/admin/login" || path === "/docs/admin/logout") {
@@ -392,15 +456,16 @@ adminApp.use("/*", async (c, next) => {
   }
 
   const secret = c.env.ADMIN_SECRET;
-  if (!secret) {
+  const signingKey = c.env.COOKIE_ENCRYPTION_KEY;
+  if (!secret || !signingKey) {
     return c.redirect("/docs/admin/login");
   }
 
-  const signingKey = c.env.COOKIE_ENCRYPTION_KEY || secret;
-  const valid = await validateSession(c.req.header("cookie"), signingKey);
-  if (!valid) {
+  const session = await validateSession(c.req.header("cookie"), signingKey, c.env.TOKEN_STORE);
+  if (!session) {
     return c.redirect("/docs/admin/login");
   }
+  c.set("session", session);
 
   await next();
 });
@@ -444,12 +509,20 @@ adminApp.get("/settings", async (c) => {
     <p>Runtime configuration stored in KV. Changes take effect when the next MCP session starts (DOs recycle within minutes on idle).</p>
     <div id="settings-alert"></div>
     ${rows}
+    <hr style="margin:32px 0;border:0;border-top:1px solid var(--border, #e2e8f0)">
+    <h2>Session management</h2>
+    <p>Rotated <code>ADMIN_SECRET</code>? Click below to invalidate every other admin cookie. Your current session is re-created in place.</p>
+    <button class="btn btn-secondary" onclick="revokeAllSessions()">Revoke all other sessions</button>
     <script>
+      function getCsrfToken() {
+        const m = document.cookie.match(/(?:^|; )mcp_admin_csrf=([^;]+)/);
+        return m ? m[1] : '';
+      }
       async function saveSetting(key) {
         const value = document.getElementById('input-' + key).value;
         const res = await fetch('/docs/admin/settings/api', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({ key, value })
         });
         const data = await res.json();
@@ -459,12 +532,21 @@ adminApp.get("/settings", async (c) => {
       async function resetSetting(key) {
         const res = await fetch('/docs/admin/settings/api', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({ key, value: null })
         });
         const data = await res.json();
         showAlert(data.ok ? 'Setting reset to env default.' : 'Error: ' + data.error, data.ok ? 'success' : 'error');
         if (data.ok) setTimeout(() => location.reload(), 800);
+      }
+      async function revokeAllSessions() {
+        if (!confirm('Invalidate every other admin cookie? Other users and browsers will have to log in again.')) return;
+        const res = await fetch('/docs/admin/sessions/revoke-all', {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': getCsrfToken() }
+        });
+        const data = await res.json();
+        showAlert(data.ok ? ('Revoked ' + data.deleted + ' session(s). Your session was re-created.') : 'Error: ' + data.error, data.ok ? 'success' : 'error');
       }
       function showAlert(msg, type) {
         document.getElementById('settings-alert').innerHTML = '<div class="alert alert-' + type + '">' + msg + '</div>';
@@ -498,6 +580,16 @@ adminApp.get("/settings/api", async (c) => {
 
 adminApp.post("/settings/api", async (c) => {
   try {
+    const session = c.get("session");
+    const csrfOk = await requireCsrf(
+      c.req.header("cookie"),
+      c.req.header("x-csrf-token") ?? undefined,
+      session
+    );
+    if (!csrfOk) {
+      return c.json({ ok: false, error: "CSRF validation failed" }, 403);
+    }
+
     const body = await c.req.json<{ key: string; value: string | null }>();
     const kv = c.env.TOKEN_STORE;
 
@@ -517,6 +609,34 @@ adminApp.post("/settings/api", async (c) => {
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : "Invalid request" }, 400);
   }
+});
+
+// Revoke every outstanding admin session. Expected admin workflow when
+// ADMIN_SECRET is rotated: log in with the new secret, click "Revoke
+// all other sessions" on the settings page, every pre-rotation cookie
+// is immediately dead.
+adminApp.post("/sessions/revoke-all", async (c) => {
+  const session = c.get("session");
+  const csrfOk = await requireCsrf(
+    c.req.header("cookie"),
+    c.req.header("x-csrf-token") ?? undefined,
+    session
+  );
+  if (!csrfOk) {
+    return c.json({ ok: false, error: "CSRF validation failed" }, 403);
+  }
+  // Keep the current session alive so the admin stays logged in after
+  // the sweep; re-create it with a fresh id after revoke-all completes.
+  const signingKey = c.env.COOKIE_ENCRYPTION_KEY;
+  if (!signingKey) {
+    return c.json({ ok: false, error: "Server misconfigured" }, 500);
+  }
+  const deleted = await revokeAllSessions(c.env.TOKEN_STORE);
+  const { sessionCookie, csrfCookie } = await createSession(c.env.TOKEN_STORE, signingKey);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  headers.append("Set-Cookie", sessionCookie);
+  headers.append("Set-Cookie", csrfCookie);
+  return new Response(JSON.stringify({ ok: true, deleted }), { status: 200, headers });
 });
 
 // ── Logs page ────────────────────────────────────────────────────

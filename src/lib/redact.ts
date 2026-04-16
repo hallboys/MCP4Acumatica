@@ -76,6 +76,60 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// ── Value-shaped PII patterns ────────────────────────────────────
+// Applied to every string value regardless of its field name — catches
+// PII that landed under innocuous keys (custom fields, nested objects,
+// free-form notes) where name-based matching would miss it.
+
+// US SSN: 3-2-4 digit pattern with optional `-` or ` ` separators.
+// Anchored to word boundaries so we don't clobber longer numeric IDs.
+const SSN_RE = /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b/g;
+
+// Payment card: 13–19 digits, allowing common ` ` or `-` separators
+// between 4-digit groups. Stripped digits must also pass Luhn so we
+// don't false-positive on purchase order numbers, GL account codes,
+// stock keys, and other long numeric strings that are not cards.
+const CARD_RE = /\b(?:\d[ -]?){13,19}\b/g;
+
+function luhnValid(digits: string): boolean {
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let n = digits.charCodeAt(i) - 48;
+    if (alt) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alt = !alt;
+  }
+  return sum > 0 && sum % 10 === 0;
+}
+
+function redactValuePatterns(value: string): { value: string; hits: string[] } {
+  const hits: string[] = [];
+  let out = value;
+
+  if (SSN_RE.test(out)) {
+    SSN_RE.lastIndex = 0;
+    out = out.replace(SSN_RE, () => {
+      hits.push("ssn_shape");
+      return "[REDACTED_SSN]";
+    });
+  }
+  SSN_RE.lastIndex = 0;
+
+  out = out.replace(CARD_RE, (match) => {
+    const digits = match.replace(/[^\d]/g, "");
+    if (digits.length < 13 || digits.length > 19) return match;
+    if (!luhnValid(digits)) return match;
+    hits.push("card_shape");
+    return "[REDACTED_CARD]";
+  });
+
+  return { value: out, hits };
+}
+
 export interface RedactResult {
   data: unknown;
   redactedFields: string[];
@@ -114,16 +168,18 @@ function walkAndRedact(
   const result: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(record)) {
+    const childPath = path ? `${path}.${key}` : key;
     if (regex.test(key)) {
       result[key] = "[REDACTED]";
-      redactedFields.push(path ? `${path}.${key}` : key);
+      redactedFields.push(childPath);
     } else if (typeof value === "object" && value !== null) {
-      result[key] = walkAndRedact(
-        value,
-        regex,
-        redactedFields,
-        path ? `${path}.${key}` : key
-      );
+      result[key] = walkAndRedact(value, regex, redactedFields, childPath);
+    } else if (typeof value === "string") {
+      const { value: scrubbed, hits } = redactValuePatterns(value);
+      if (hits.length > 0) {
+        redactedFields.push(`${childPath} (${hits.join(",")})`);
+      }
+      result[key] = scrubbed;
     } else {
       result[key] = value;
     }
