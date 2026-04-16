@@ -223,6 +223,8 @@ This approach avoids exposing user/role membership data -- the GI content itself
 
 The required role name defaults to `MCP Access` and is configurable via the `ACUMATICA_MCP_ROLE` environment variable.
 
+If the canary GI query returns 404 or a 5xx error (rather than 200 or 403), the server treats it as a **misconfiguration** -- not a permission denial. The user sees a "Configuration Error" page pointing at the likely cause (missing GI, wrong tenant, unreachable instance, OData not enabled on the GI). The event is logged as `login_denied` with `reason: role_check_misconfigured` so an admin sees why. Previously all non-200 responses looked identical to "user missing role", which hid real outages behind an access-denied screen.
+
 **Acumatica setup required:**
 - **Role:** Create `MCP Access` in Acumatica (SM201005). No screen permissions are needed -- it is purely a marker role.
 - **Generic Inquiry:** Create `MCPAccess` in Acumatica (SM208000) with any trivial query. Assign it only to the `MCP Access` role. Enable **Expose via OData**.
@@ -259,6 +261,17 @@ The `redactFields()` utility (`src/lib/redact.ts`) recursively walks every Acuma
 - `REDACT_SKIP` (env var) -- comma-separated field name patterns to whitelist from redaction (e.g., `BirthDate`)
 
 When fields are redacted, a structured log entry is emitted with the tool name, username, and list of redacted field paths.
+
+### OData `$filter` Pass-Through
+
+The list/query tools (`acumatica_list_entities`, `acumatica_run_inquiry`) accept a `filterExpression` parameter that is passed to Acumatica **verbatim** as `$filter=...`. The server does not parse, rewrite, or sanitize the expression. This is intentional and safe because:
+
+1. **Record access is governed by the per-user Acumatica role**, not by this server. Whatever a filter can find, the user could already find via the same API or the Acumatica UI.
+2. **Entity exposure is denylisted** (`src/tools/entity-list.ts`). The generic lister refuses a fixed set of auth/credential entities (`User`, `UserRole`, etc.) regardless of filter.
+3. **Nested `$expand` paths are rejected**. A caller cannot traverse more than one navigation-property level, so sensitive sub-records are not reachable via a cleverly chained filter.
+4. **Sensitive fields are redacted on the way out** (see previous section), so even a successful filter cannot return SSNs, bank accounts, salary, etc.
+
+One consequence operators should be aware of: a filter can be used as a blind-enumeration oracle for data the user is already permitted to read (e.g. `substringof('needle', SomeField)` to probe values). This is within the user's role and is logged via `tool_invocation` with the filter expression captured for audit. If that exposure is unacceptable for a particular deployment, disable the lister and use only the per-entity `acumatica_get_*` tools.
 
 ### Audit Logging
 

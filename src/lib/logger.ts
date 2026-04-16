@@ -1,7 +1,7 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-export interface AuditEntry {
+export interface HttpCallEntry {
   timestamp: string;
   tool: string;
   acumaticaUsername: string;
@@ -12,10 +12,15 @@ export interface AuditEntry {
   recordCount?: number;
 }
 
-export function logToolInvocation(entry: AuditEntry): void {
+/**
+ * Log a single HTTP roundtrip to Acumatica. One tool invocation may
+ * produce multiple of these (e.g. a retry after 401). Distinct from
+ * `tool_invocation`, which is the MCP-level outcome as seen by the model.
+ */
+export function logHttpCall(entry: HttpCallEntry): void {
   console.log(JSON.stringify({
     level: "info",
-    type: "tool_invocation",
+    type: "acumatica_http_call",
     ...entry,
   }));
 }
@@ -70,13 +75,15 @@ export function logRedaction(
  * Used by the Durable Object to persist tool logs that Logpush
  * (Worker-level only) does not capture.
  *
- * Falls back silently to console-only if bucket is unavailable.
+ * Returns true on success (or no-op for missing bucket / empty batch),
+ * false if the R2 put failed. Callers that buffer should re-enqueue on
+ * false so entries aren't lost.
  */
 export async function writeLogsToR2(
   bucket: R2Bucket | undefined,
   entries: Record<string, unknown>[]
-): Promise<void> {
-  if (!bucket || entries.length === 0) return;
+): Promise<boolean> {
+  if (!bucket || entries.length === 0) return true;
   try {
     const ndjson = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
     const now = new Date();
@@ -88,13 +95,14 @@ export async function writeLogsToR2(
     const rand = crypto.randomUUID();
     const key = `do-logs/${date}/${ts}-${rand}.ndjson`;
     await bucket.put(key, ndjson);
+    return true;
   } catch (err) {
-    // R2 write failure must not break tool responses
     console.error(JSON.stringify({
       level: "error",
       type: "log_persist_error",
       timestamp: new Date().toISOString(),
       error: err instanceof Error ? err.message : String(err),
     }));
+    return false;
   }
 }

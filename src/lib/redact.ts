@@ -34,42 +34,31 @@ const BUILTIN_PATTERNS = [
   "DOB",
 ];
 
-/** Cached compiled regex — built once per set of config values */
-let cachedRegex: RegExp | null = null;
-let cachedExtra = "";
-let cachedSkip = "";
-
 /**
- * Build (and cache) the combined regex from built-in + extra patterns,
- * minus any skip patterns.
+ * Build the combined field-name regex from built-in + extra patterns,
+ * minus any skip patterns. Construction is cheap; we deliberately do NOT
+ * cache a module-scope RegExp instance because concurrent redactions with
+ * different REDACT_PATTERNS values could otherwise thrash the cache and
+ * hand one call the other's compiled regex.
  */
 function getRedactRegex(extraPatterns?: string, skipPatterns?: string): RegExp {
-  const extra = extraPatterns || "";
-  const skip = skipPatterns || "";
-
-  if (cachedRegex && cachedExtra === extra && cachedSkip === skip) {
-    return cachedRegex;
-  }
-
   let patterns = [...BUILTIN_PATTERNS];
 
-  if (extra) {
-    patterns.push(...extra.split(",").map((p) => p.trim()).filter(Boolean));
+  if (extraPatterns) {
+    patterns.push(...extraPatterns.split(",").map((p) => p.trim()).filter(Boolean));
   }
 
-  if (skip) {
+  if (skipPatterns) {
     const skipSet = new Set(
-      skip.split(",").map((p) => p.trim().toLowerCase()).filter(Boolean)
+      skipPatterns.split(",").map((p) => p.trim().toLowerCase()).filter(Boolean)
     );
     patterns = patterns.filter((p) => !skipSet.has(p.toLowerCase()));
   }
 
-  // Build regex that matches any field name containing one of the patterns
+  // Match if any pattern appears anywhere in the field name. No `g` flag —
+  // we only use `test()` against keys, so lastIndex never comes into play.
   const joined = patterns.map(escapeRegex).join("|");
-  cachedRegex = new RegExp(`(${joined})`, "i");
-  cachedExtra = extra;
-  cachedSkip = skip;
-  return cachedRegex;
+  return new RegExp(`(${joined})`, "i");
 }
 
 function escapeRegex(s: string): string {
@@ -80,16 +69,22 @@ function escapeRegex(s: string): string {
 // Applied to every string value regardless of its field name — catches
 // PII that landed under innocuous keys (custom fields, nested objects,
 // free-form notes) where name-based matching would miss it.
+//
+// Regex instances are constructed per-call rather than cached at module
+// scope. Global-flag regexes carry mutable `lastIndex`; a cached instance
+// shared between concurrent redactions could see interleaved test/replace
+// calls and skip matches or double-match. Construction cost is trivial
+// compared to the walk itself.
 
 // US SSN: 3-2-4 digit pattern with optional `-` or ` ` separators.
 // Anchored to word boundaries so we don't clobber longer numeric IDs.
-const SSN_RE = /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b/g;
+const SSN_SOURCE = String.raw`\b\d{3}[- ]?\d{2}[- ]?\d{4}\b`;
 
 // Payment card: 13–19 digits, allowing common ` ` or `-` separators
 // between 4-digit groups. Stripped digits must also pass Luhn so we
 // don't false-positive on purchase order numbers, GL account codes,
 // stock keys, and other long numeric strings that are not cards.
-const CARD_RE = /\b(?:\d[ -]?){13,19}\b/g;
+const CARD_SOURCE = String.raw`\b(?:\d[ -]?){13,19}\b`;
 
 function luhnValid(digits: string): boolean {
   let sum = 0;
@@ -108,18 +103,18 @@ function luhnValid(digits: string): boolean {
 
 function redactValuePatterns(value: string): { value: string; hits: string[] } {
   const hits: string[] = [];
-  let out = value;
 
-  if (SSN_RE.test(out)) {
-    SSN_RE.lastIndex = 0;
-    out = out.replace(SSN_RE, () => {
-      hits.push("ssn_shape");
-      return "[REDACTED_SSN]";
-    });
-  }
-  SSN_RE.lastIndex = 0;
+  // Fresh regex instances each call — see note above about concurrent
+  // state on module-scoped global-flag regexes.
+  const ssnRe = new RegExp(SSN_SOURCE, "g");
+  const cardRe = new RegExp(CARD_SOURCE, "g");
 
-  out = out.replace(CARD_RE, (match) => {
+  let out = value.replace(ssnRe, () => {
+    hits.push("ssn_shape");
+    return "[REDACTED_SSN]";
+  });
+
+  out = out.replace(cardRe, (match) => {
     const digits = match.replace(/[^\d]/g, "");
     if (digits.length < 13 || digits.length > 19) return match;
     if (!luhnValid(digits)) return match;
@@ -133,6 +128,29 @@ function redactValuePatterns(value: string): { value: string; hits: string[] } {
 export interface RedactResult {
   data: unknown;
   redactedFields: string[];
+}
+
+/**
+ * Apply the value-shape redactors (SSN, card) to every string leaf in a
+ * shallow object — used to scrub tool-call parameter records before they
+ * land in the audit log. The model can pass anything as a filter
+ * expression ("substringof('123-45-6789', Notes)"), so we apply the same
+ * defense we apply to responses. Name-based redaction is NOT applied
+ * here — param keys like `filterExpression` aren't PII on their own, and
+ * we don't want to obscure the parameter structure.
+ */
+export function redactParamsForLog(
+  params: Record<string, unknown>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string") {
+      out[key] = redactValuePatterns(value).value;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
 /**

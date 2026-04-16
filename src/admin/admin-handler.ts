@@ -3,7 +3,7 @@
 
 import { Hono } from "hono";
 import type { Env } from "../types/acumatica";
-import { getConfig, setConfig, deleteConfig, CONFIG_KEYS } from "../lib/config";
+import { getConfig, setConfig, deleteConfig, CONFIG_KEYS, validateConfigValue } from "../lib/config";
 import { hmacSign, hmacVerify, constantTimeEqual, parseCookies } from "../lib/crypto";
 
 // ── Session cookie + CSRF helpers ─────────────────────────────────
@@ -26,6 +26,42 @@ const SESSION_COOKIE = "mcp_admin_session";
 const CSRF_COOKIE = "mcp_admin_csrf";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 const SESSION_KV_PREFIX = "admin_session:";
+
+// Admin login throttling. The admin console is the only gate on runtime
+// config and audit logs, so a weak or leaked ADMIN_SECRET would otherwise
+// be brute-forceable against an unlocked endpoint. Track failures per
+// client IP in KV; after LOGIN_FAIL_THRESHOLD consecutive failures within
+// the window, reject with 429 until the window elapses. Successful login
+// clears the counter.
+const LOGIN_FAIL_PREFIX = "admin_login_fail:";
+const LOGIN_FAIL_WINDOW_SECONDS = 15 * 60; // 15 minutes
+const LOGIN_FAIL_THRESHOLD = 5;
+const LOGIN_FAIL_DELAY_MS = 1000; // minimum response time for any failure
+
+function getClientIp(c: { req: { header(name: string): string | undefined } }): string {
+  return (
+    c.req.header("cf-connecting-ip") ||
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown"
+  );
+}
+
+async function recordLoginFailure(kv: KVNamespace, ip: string): Promise<number> {
+  const key = `${LOGIN_FAIL_PREFIX}${ip}`;
+  const raw = await kv.get(key);
+  const count = (raw ? parseInt(raw, 10) : 0) + 1;
+  await kv.put(key, String(count), { expirationTtl: LOGIN_FAIL_WINDOW_SECONDS });
+  return count;
+}
+
+async function getLoginFailures(kv: KVNamespace, ip: string): Promise<number> {
+  const raw = await kv.get(`${LOGIN_FAIL_PREFIX}${ip}`);
+  return raw ? parseInt(raw, 10) : 0;
+}
+
+async function clearLoginFailures(kv: KVNamespace, ip: string): Promise<void> {
+  await kv.delete(`${LOGIN_FAIL_PREFIX}${ip}`);
+}
 
 interface SessionRecord {
   csrf: string;
@@ -292,6 +328,7 @@ function renderAdminPage(title: string, activeTab: string, bodyHtml: string): st
     /* Log-specific */
     .log-type { font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
     .log-type-tool_invocation { background: #dbeafe; color: #1e40af; }
+    .log-type-acumatica_http_call { background: #e0e7ff; color: #3730a3; }
     .log-type-tool_error { background: #fecaca; color: #991b1b; }
     .log-type-auth_event { background: #dcfce7; color: #166534; }
     .log-type-field_redaction { background: #fef3c7; color: #92400e; }
@@ -402,6 +439,21 @@ adminApp.post("/login", async (c) => {
     return c.html(renderLoginPage("Admin access is not configured. Set ADMIN_SECRET via wrangler secret put."), 503);
   }
 
+  const kv = c.env.TOKEN_STORE;
+  const ip = getClientIp(c);
+
+  // Throttle gate — before reading the password. Once the threshold is hit,
+  // every attempt from this IP 429s until the window elapses in KV.
+  const prior = await getLoginFailures(kv, ip);
+  if (prior >= LOGIN_FAIL_THRESHOLD) {
+    return c.html(
+      renderLoginPage(
+        `Too many failed login attempts. Please wait up to ${LOGIN_FAIL_WINDOW_SECONDS / 60} minutes and try again.`
+      ),
+      429
+    );
+  }
+
   const body = await c.req.parseBody();
   const submitted = typeof body.secret === "string" ? body.secret : "";
 
@@ -416,8 +468,22 @@ adminApp.post("/login", async (c) => {
   }
 
   if (!match) {
-    return c.html(renderLoginPage("Invalid secret. Please try again."), 401);
+    // Constant-ish floor on failure time so attackers can't distinguish
+    // early-reject (throttle) from late-reject (mismatch) timings.
+    const [count] = await Promise.all([
+      recordLoginFailure(kv, ip),
+      new Promise((r) => setTimeout(r, LOGIN_FAIL_DELAY_MS)),
+    ]);
+    const remaining = Math.max(0, LOGIN_FAIL_THRESHOLD - count);
+    const msg =
+      remaining === 0
+        ? `Invalid secret. Too many failed attempts — try again in up to ${LOGIN_FAIL_WINDOW_SECONDS / 60} minutes.`
+        : `Invalid secret. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.`;
+    return c.html(renderLoginPage(msg), 401);
   }
+
+  // Success — clear the failure counter for this IP.
+  await clearLoginFailures(kv, ip);
 
   const signingKey = c.env.COOKIE_ENCRYPTION_KEY;
   if (!signingKey) {
@@ -602,6 +668,10 @@ adminApp.post("/settings/api", async (c) => {
     if (body.value === null || body.value === "") {
       await deleteConfig(kv, body.key);
     } else {
+      const validationError = validateConfigValue(body.key, body.value);
+      if (validationError) {
+        return c.json({ ok: false, error: validationError }, 400);
+      }
       await setConfig(kv, body.key, body.value);
     }
 
@@ -660,7 +730,8 @@ adminApp.get("/logs", (c) => {
         <label>Type</label>
         <select id="filterType">
           <option value="">All</option>
-          <option value="tool_invocation">Tool Invocation</option>
+          <option value="tool_invocation">Tool Invocation (MCP-level)</option>
+          <option value="acumatica_http_call">Acumatica HTTP Call</option>
           <option value="tool_error">Tool Error</option>
           <option value="auth_event">Auth Event</option>
           <option value="field_redaction">Field Redaction</option>
@@ -765,6 +836,12 @@ adminApp.get("/logs", (c) => {
           pag += ' <span style="color:var(--text-muted);font-size:12px;margin-left:12px">' + data.totalEntries + ' entries from ' + data.filesRead + ' log file(s)</span>';
           document.getElementById('logs-pagination').innerHTML = pag;
 
+          if (data.timedOut) {
+            document.getElementById('logs-alert').innerHTML = '<div class="alert alert-info">' + esc(data.note || 'Search time budget exceeded; results may be incomplete.') + '</div>';
+          } else {
+            document.getElementById('logs-alert').innerHTML = '';
+          }
+
         } catch (err) {
           const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
           document.getElementById('logs-table').innerHTML = '<div class="alert alert-error">Failed to load logs: ' + esc(err && err.message) + '</div>';
@@ -814,10 +891,19 @@ function dateRange(startDate: string, endDate: string): string[] {
   return dates;
 }
 
-/** Read an R2 object and parse NDJSON lines into structured log entries. */
+/**
+ * Read an R2 object and parse NDJSON lines into structured log entries.
+ * Detects gzip via either the object's HTTP content-encoding header or a
+ * filename suffix — filename alone is fragile because Logpush can be
+ * configured to upload gzipped content without a `.gz` suffix.
+ */
 async function parseLogObject(r2Obj: R2ObjectBody, key: string): Promise<Record<string, unknown>[]> {
+  const encoding = r2Obj.httpMetadata?.contentEncoding?.toLowerCase() ?? "";
+  const suffixGzip = key.endsWith(".gz") || key.endsWith(".json.gz") || key.endsWith(".log.gz");
+  const isGzip = encoding === "gzip" || suffixGzip;
+
   let text: string;
-  if (key.endsWith(".gz") || key.endsWith(".json.gz") || key.endsWith(".log.gz")) {
+  if (isGzip) {
     const ds = new DecompressionStream("gzip");
     const decompressed = r2Obj.body.pipeThrough(ds);
     text = await new Response(decompressed).text();
@@ -910,13 +996,23 @@ adminApp.get("/logs/api", async (c) => {
 
     // Streaming pagination: read files in parallel batches, filter
     // incrementally, and stop once we have enough entries to fill the
-    // requested page plus one extra (to detect hasMore).
+    // requested page plus one extra (to detect hasMore). A wall-clock
+    // budget bounds the work on rare filters (a specific username that
+    // matches nothing would otherwise scan the full 1000-object cap
+    // sequentially and blow past the CPU time limit).
     const filtered: Record<string, unknown>[] = [];
     let filesRead = 0;
+    let timedOut = false;
     const batchSize = 25;
-    const needEntries = (page + 1) * pageSize + 1; // entries needed to fill page + hasMore
+    const needEntries = (page + 1) * pageSize + 1;
+    const startedAt = Date.now();
+    const TIME_BUDGET_MS = 20_000;
 
     for (let i = 0; i < scopedObjects.length; i += batchSize) {
+      if (Date.now() - startedAt > TIME_BUDGET_MS) {
+        timedOut = true;
+        break;
+      }
       const batch = scopedObjects.slice(i, i + batchSize);
       const results = await Promise.all(
         batch.map(async (obj) => {
@@ -934,7 +1030,6 @@ adminApp.get("/logs/api", async (c) => {
       }
       filesRead += batch.length;
 
-      // Stop early once we have enough filtered entries for this page
       if (filtered.length >= needEntries) break;
     }
 
@@ -957,6 +1052,10 @@ adminApp.get("/logs/api", async (c) => {
       filesRead,
       page,
       pageSize,
+      timedOut,
+      ...(timedOut
+        ? { note: `Search time budget exceeded after ${filesRead} files; results may be incomplete. Narrow the date range or add a filter to drill in.` }
+        : {}),
     });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "Failed to read logs" }, 500);

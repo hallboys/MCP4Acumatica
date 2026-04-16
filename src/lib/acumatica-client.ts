@@ -4,7 +4,34 @@
 import type { AppEnv } from "../types/acumatica";
 import { getAcumaticaTokenForUser } from "../auth/acumatica-oauth";
 import { withRateLimit } from "./rate-limiter";
-import { logToolInvocation, logError } from "./logger";
+import { logHttpCall, logError } from "./logger";
+
+const ERROR_BODY_MAX_CHARS = 400;
+
+/**
+ * Prepare an Acumatica error body for inclusion in a user-facing error
+ * message: normalize whitespace, then truncate to a fixed cap. Keeps the
+ * response informative without relaying arbitrary instance-side content
+ * back through the tool output channel.
+ */
+function trimForError(s: string): string {
+  const collapsed = s.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= ERROR_BODY_MAX_CHARS) return collapsed;
+  return collapsed.slice(0, ERROR_BODY_MAX_CHARS) + "… [truncated]";
+}
+
+/**
+ * Build a URL string from a base URL and a flat query map. Empty-string
+ * values are skipped (matches the original `if (value) { ... }` guard, so
+ * callers can use `query.foo = args.foo ?? ""` for optional params).
+ */
+function buildQueryUrl(base: string, query: Record<string, string>): string {
+  const url = new URL(base);
+  for (const [key, value] of Object.entries(query)) {
+    if (value) url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
 
 export class AcumaticaApiError extends Error {
   constructor(
@@ -39,7 +66,7 @@ export class AcumaticaClient {
     params: Record<string, unknown> = {},
     query: Record<string, string> = {}
   ): Promise<T> {
-    return withRateLimit(async () => {
+    return withRateLimit(this.env.store, this.acumaticaUsername, async () => {
       const start = Date.now();
       const url = this.buildUrl(path, query);
 
@@ -55,7 +82,7 @@ export class AcumaticaClient {
       const durationMs = Date.now() - start;
       const endpoint = `GET ${path}`;
 
-      logToolInvocation({
+      logHttpCall({
         timestamp: new Date().toISOString(),
         tool: toolName,
         acumaticaUsername: this.acumaticaUsername,
@@ -88,17 +115,11 @@ export class AcumaticaClient {
     params: Record<string, unknown> = {},
     query: Record<string, string> = {}
   ): Promise<T> {
-    return withRateLimit(async () => {
+    return withRateLimit(this.env.store, this.acumaticaUsername, async () => {
       const start = Date.now();
       const odataBase = `${this.env.ACUMATICA_URL}/t/${this.env.ACUMATICA_TENANT}/api/odata/gi`;
       const separator = path ? "/" : "";
-      const fullUrl = new URL(`${odataBase}${separator}${path}`);
-      for (const [key, value] of Object.entries(query)) {
-        if (value) {
-          fullUrl.searchParams.set(key, value);
-        }
-      }
-      const url = fullUrl.toString();
+      const url = buildQueryUrl(`${odataBase}${separator}${path}`, query);
 
       let token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
       let response = await this.doFetch(url, token);
@@ -111,7 +132,7 @@ export class AcumaticaClient {
       const durationMs = Date.now() - start;
       const endpoint = `GET odata/gi${separator}${path}`;
 
-      logToolInvocation({
+      logHttpCall({
         timestamp: new Date().toISOString(),
         tool: toolName,
         acumaticaUsername: this.acumaticaUsername,
@@ -136,7 +157,7 @@ export class AcumaticaClient {
    * Fetch the OData GI $metadata document as raw XML text.
    */
   async getODataMetadata(toolName: string): Promise<string> {
-    return withRateLimit(async () => {
+    return withRateLimit(this.env.store, this.acumaticaUsername, async () => {
       const start = Date.now();
       const url = `${this.env.ACUMATICA_URL}/t/${this.env.ACUMATICA_TENANT}/api/odata/gi/$metadata`;
 
@@ -149,7 +170,7 @@ export class AcumaticaClient {
       }
 
       const durationMs = Date.now() - start;
-      logToolInvocation({
+      logHttpCall({
         timestamp: new Date().toISOString(),
         tool: toolName,
         acumaticaUsername: this.acumaticaUsername,
@@ -171,13 +192,7 @@ export class AcumaticaClient {
   }
 
   private buildUrl(path: string, query: Record<string, string>): string {
-    const url = new URL(`${this.baseUrl}/${path}`);
-    for (const [key, value] of Object.entries(query)) {
-      if (value) {
-        url.searchParams.set(key, value);
-      }
-    }
-    return url.toString();
+    return buildQueryUrl(`${this.baseUrl}/${path}`, query);
   }
 
   private async doFetch(url: string, token: string): Promise<Response> {
@@ -191,13 +206,20 @@ export class AcumaticaClient {
   }
 
   private friendlyError(status: number, body: string, path: string): string {
+    // Acumatica error responses sometimes echo the submitted query back,
+    // which can include the caller's filter expression and any needles in
+    // it (customer IDs, SSN-shaped strings, etc.). We surface just enough
+    // of the response to be useful without piping arbitrary user-supplied
+    // content back to the model through the error channel.
+    const safe = (s: string) => trimForError(s);
     switch (status) {
       case 400: {
         try {
           const parsed = JSON.parse(body);
-          return `Validation error: ${parsed.message || parsed.exceptionMessage || body}`;
+          const msg = parsed.message || parsed.exceptionMessage;
+          return `Validation error: ${safe(msg || body)}`;
         } catch {
-          return `Bad request: ${body}`;
+          return `Bad request: ${safe(body)}`;
         }
       }
       case 401:
@@ -211,13 +233,14 @@ export class AcumaticaClient {
       case 500: {
         try {
           const parsed = JSON.parse(body);
-          return `Acumatica internal error: ${parsed.message || parsed.exceptionMessage || body}`;
+          const msg = parsed.message || parsed.exceptionMessage;
+          return `Acumatica internal error: ${safe(msg || body)}`;
         } catch {
-          return `Acumatica internal error: ${body || "No details available. Check instance status."}`;
+          return `Acumatica internal error: ${body ? safe(body) : "No details available. Check instance status."}`;
         }
       }
       default:
-        return `Acumatica API error (${status}): ${body}`;
+        return `Acumatica API error (${status}): ${safe(body)}`;
     }
   }
 }
@@ -242,10 +265,19 @@ export function unwrapFields(obj: unknown): unknown {
     return record.value;
   }
 
-  // Recurse into all properties
+  // Recurse into all properties, dropping:
+  //   - `_links`: HATEOAS navigation URLs (not user data)
+  //   - `rowNumber`: Acumatica row identifier (not user data)
+  //   - `custom`: Acumatica user-defined extension fields. This is user
+  //     data, but the wire format is a deeply nested type-tagged map
+  //     (e.g. `{"Document": {"UsrField": {"type": "CustomStringField",
+  //     "value": "foo"}}}`) that's noisy for the model and often empty.
+  //     Surfacing them would require per-entity flattening; for now we
+  //     strip them. If a workflow needs custom fields, the direct
+  //     `acumatica_get_*` tools can be extended to fetch them via
+  //     `$expand=custom` and flatten before return.
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) {
-    // Skip internal metadata fields
     if (key === "_links" || key === "rowNumber" || key === "custom") continue;
     result[key] = unwrapFields(value);
   }

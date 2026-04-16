@@ -4,7 +4,7 @@
 import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient, AcumaticaApiError } from "../lib/acumatica-client";
 import { getCached, setCached } from "../lib/metadata-cache";
-import { getConfig } from "../lib/config";
+import { getConfig, parsePositiveIntConfig, validateStringArg } from "../lib/config";
 
 const GI_LIST_TTL_SECONDS = 3600; // 1 hour
 const GI_METADATA_TTL_SECONDS = 3600; // 1 hour
@@ -29,8 +29,11 @@ export async function handleListGenericInquiries(
     topN?: number;
   }
 ): Promise<unknown> {
+  const lengthErr = validateStringArg(args.titleFilter, "titleFilter", 500);
+  if (lengthErr) return { error: lengthErr };
+
   const maxRecords = await getConfig(env.store, "acumatica_max_records", env.ACUMATICA_MAX_RECORDS);
-  const MAX_TOP = parseInt(maxRecords || "", 10) || 1000;
+  const MAX_TOP = parsePositiveIntConfig(maxRecords, 1000);
   const effectiveTop = Math.min(args.topN ?? 200, MAX_TOP);
 
   try {

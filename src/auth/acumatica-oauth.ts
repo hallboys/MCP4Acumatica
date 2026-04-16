@@ -6,6 +6,16 @@ import { decryptString, encryptString } from "../lib/crypto";
 
 const USER_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days — matches write-side TTL
 
+// Coalesce concurrent refresh-token lookups for the same user. Without this,
+// parallel tool calls that hit an expired access token each send the *same*
+// refresh_token to Acumatica; IdentityServer rotates refresh tokens on use,
+// so the second call gets `invalid_grant` and the user is evicted from the
+// session. The map is per-isolate, which is sufficient because DOs pin a
+// user to one instance; unpinned access from another isolate would at worst
+// reproduce the original race for one extra call, and all correctness
+// invariants still hold (token gets stored, next caller sees it).
+const inflightLookups = new Map<string, Promise<string>>();
+
 /**
  * Get an Acumatica access token for a specific user.
  * Tokens are stored per-user in the platform key-value store, keyed by their Acumatica username.
@@ -17,33 +27,45 @@ export async function getAcumaticaTokenForUser(
   env: AppEnv,
   acumaticaUsername: string
 ): Promise<string> {
-  const tokenKey = `user_token:${acumaticaUsername}`;
-  const raw = await env.store.get(tokenKey);
+  const existing = inflightLookups.get(acumaticaUsername);
+  if (existing) return existing;
 
-  if (!raw) {
-    throw new Error(
-      "No Acumatica token found for your account. Please reconnect to re-authorize with Acumatica."
-    );
+  const lookup = (async () => {
+    const tokenKey = `user_token:${acumaticaUsername}`;
+    const raw = await env.store.get(tokenKey);
+
+    if (!raw) {
+      throw new Error(
+        "No Acumatica token found for your account. Please reconnect to re-authorize with Acumatica."
+      );
+    }
+
+    const stored: StoredToken = JSON.parse(raw);
+
+    // Return existing token if it has at least 60s of life left
+    if (stored.expires_at > Date.now() + 60_000) {
+      return stored.access_token;
+    }
+
+    // Refresh required — but some legacy records (created before we stored
+    // refresh_token) don't have one. Force re-auth rather than crashing.
+    if (!stored.refresh_token) {
+      throw new Error(
+        "Your Acumatica session has expired and no refresh token is available. Please reconnect to re-authorize."
+      );
+    }
+
+    // Decrypt the refresh token (falls through unchanged for legacy plaintext records)
+    const refreshToken = await decryptString(stored.refresh_token, env.COOKIE_ENCRYPTION_KEY);
+    return refreshUserToken(env, acumaticaUsername, refreshToken);
+  })();
+
+  inflightLookups.set(acumaticaUsername, lookup);
+  try {
+    return await lookup;
+  } finally {
+    inflightLookups.delete(acumaticaUsername);
   }
-
-  const stored: StoredToken = JSON.parse(raw);
-
-  // Return existing token if it has at least 60s of life left
-  if (stored.expires_at > Date.now() + 60_000) {
-    return stored.access_token;
-  }
-
-  // Refresh required — but some legacy records (created before we stored
-  // refresh_token) don't have one. Force re-auth rather than crashing.
-  if (!stored.refresh_token) {
-    throw new Error(
-      "Your Acumatica session has expired and no refresh token is available. Please reconnect to re-authorize."
-    );
-  }
-
-  // Decrypt the refresh token (falls through unchanged for legacy plaintext records)
-  const refreshToken = await decryptString(stored.refresh_token, env.COOKIE_ENCRYPTION_KEY);
-  return refreshUserToken(env, acumaticaUsername, refreshToken);
 }
 
 async function refreshUserToken(

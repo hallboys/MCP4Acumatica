@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.26.1`
+- **Current tag:** `25R2-0.29.0`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -58,13 +58,27 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 3. **Sensitive field redaction:** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) using pattern matching. Matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` (add) and `REDACT_SKIP` (whitelist) env vars. See `src/lib/redact.ts`.
 
-4. **Enhanced audit logging:** All tool invocations include the Acumatica username, tool parameters (what was queried), duration, and success/error status. Auth events (login success, access denied, consent accepted) are logged separately in the Worker handler. Tool invocation and field redaction logs are written directly to R2 from the Durable Object (Cloudflare Logpush only captures Worker-level traces, not DO traces). The `writeLogsToR2()` function in `src/lib/logger.ts` writes NDJSON entries to `do-logs/{date}/{timestamp}-{random}.ndjson` keys in R2. To minimize R2 file count, the DO buffers log entries in memory (`logBuffer` in `AcumaticaMcpServer`) and flushes them when the buffer reaches 25 entries OR a DO alarm fires 15 seconds after the last buffered entry. The alarm is critical — without it, short sessions (<25 entries) would sit in memory until the DO was evicted and the buffer would be lost. Alarms are registered via `this.ctx.storage.setAlarm(...)` and handled in the class's `alarm()` method, which Cloudflare wakes the DO specifically to run even if it has gone idle. Console.log is preserved for `wrangler tail` live debugging. The admin console at `/docs/admin` reads both Logpush-written and DO-written logs from R2 using streaming server-side pagination (prefix-scoped R2 listing, parallel batched reads, incremental filtering, early-exit once one page of results is collected) to keep load times fast even for multi-day queries.
+4. **Enhanced audit logging:** All tool invocations include the Acumatica username, tool parameters (what was queried), duration, and success/error status. Auth events (login success, access denied, consent accepted) are logged separately in the Worker handler. Tool invocation and field redaction logs are written directly to R2 from the Durable Object (Cloudflare Logpush only captures Worker-level traces, not DO traces). The `writeLogsToR2()` function in `src/lib/logger.ts` writes NDJSON entries to `do-logs/{date}/{timestamp}-{random}.ndjson` keys in R2 and returns a boolean success flag. To minimize R2 file count, the DO buffers log entries in memory (`logBuffer` in `AcumaticaMcpServer`) and flushes them when the buffer reaches 25 entries OR a DO alarm fires 15 seconds after the last buffered entry. The alarm is critical — without it, short sessions (<25 entries) would sit in memory until the DO was evicted and the buffer would be lost. Flushes are serialized via a `flushing` mutex so the threshold path and alarm path cannot race over the buffer. If an R2 put fails, `flushLogs()` re-enqueues the snapshot at the head of the buffer and schedules a retry alarm (30 s); previously a failed put silently dropped the batch. Alarms are registered via `this.ctx.storage.setAlarm(...)` and handled in the class's `alarm()` method, which Cloudflare wakes the DO specifically to run even if it has gone idle. Console.log is preserved for `wrangler tail` live debugging. The admin console at `/docs/admin` reads both Logpush-written and DO-written logs from R2 using streaming server-side pagination (prefix-scoped R2 listing, parallel batched reads, incremental filtering, early-exit once one page of results is collected) to keep load times fast even for multi-day queries.
 
-5. **Pagination refusal semantics:** The list/query tools (`acumatica_list_entities`, `acumatica_run_inquiry`, `acumatica_list_generic_inquiries`) hard-cap results at `ACUMATICA_MAX_RECORDS` (default 1000, runtime-overridable via the admin console → KV `config:acumatica_max_records`). When a response hits the cap, the tool returns a structured envelope `{ results, truncated: true, paginationSupported: false, actionRequired: "..." }` instructing the model to stop calling and ask the user to refine `filterExpression`/`titleFilter`. No server-side cooldown — the semantic response is the mechanism.
+5. **Pagination refusal semantics:** The list/query tools (`acumatica_list_entities`, `acumatica_run_inquiry`, `acumatica_list_generic_inquiries`) hard-cap results at `ACUMATICA_MAX_RECORDS` (default 1000, runtime-overridable via the admin console → KV `config:acumatica_max_records`). When a response hits the cap, the tool returns a structured envelope `{ results, truncated: true, mayBeComplete: true, paginationSupported: false, actionRequired: "..." }` instructing the model to stop calling and ask the user to refine `filterExpression`/`titleFilter`. The envelope explicitly states that the result *may* be complete — Acumatica's contract API and OData GI endpoints don't report a total count, so a response exactly at the cap is indistinguishable from a larger underlying result set. No server-side cooldown — the semantic response is the mechanism. The numeric cap is validated at write time by the admin console (positive integer, ≤ 10 000) via `validateConfigValue()` in `src/lib/config.ts`; downstream readers additionally use `parsePositiveIntConfig()` to defend against bad env-var values.
+
+6. **Rate limiting.** `withRateLimit()` (`src/lib/rate-limiter.ts`) enforces two caps keyed by Acumatica username: in-isolate concurrency (max 3 active) and a per-minute KV-backed bucket (`ratelimit:{username}:{minute}`, TTL 120 s, max 40). Keying per-user prevents users on the same isolate from contaminating each other's limits; the KV bucket survives DO/isolate recycling so a client cannot bypass the per-minute cap by reconnecting. Active slots are tracked as `{id → startedAt}` rather than a bare counter; any slot older than 60 s is pruned as leaked, so an uncaught rejection or frozen isolate can't permanently eat a user's concurrency quota.
+
+7. **Admin login throttling.** The admin console at `/docs/admin/login` is throttled per client IP via `admin_login_fail:{ip}` counters (KV, 15-minute window, 5 attempts). Further attempts 429 until the window expires; successful login clears the counter. All failures are padded to ≥ 1 s so the throttle path is indistinguishable from a slow mismatch. Client IP is sourced from `CF-Connecting-IP` with `X-Forwarded-For` fallback.
+
+8. **Refresh-token coalescing.** Concurrent tool calls with an expired access token would previously each POST the same refresh_token to Acumatica; IdentityServer rotates refresh tokens on use, so the second request would get `invalid_grant` and evict the user. `getAcumaticaTokenForUser()` (`src/auth/acumatica-oauth.ts`) now coalesces via an in-isolate `inflightLookups: Map<username, Promise<string>>` so parallel callers share a single refresh. The second caller reads the freshly stored access token without re-refreshing.
+
+9. **Role-check misconfig vs. denial.** `checkUserRole()` returns a discriminated result (`granted | denied | misconfigured`). 200 → granted, 403 → denied (user-facing access denied page), 404/5xx/network → misconfigured (separate "Configuration Error" page that points at the likely cause: missing GI, wrong tenant, OData not enabled). Misconfig events are logged as `login_denied` with `reason: role_check_misconfigured` so admins can see real outages rather than them being hidden behind "access denied" tickets.
+
+10. **Redaction regex concurrency.** `src/lib/redact.ts` no longer module-caches compiled regexes. The field-name regex is rebuilt per call (cheap; construction is cheaper than the walk), and the value-shape `SSN` / card regexes are per-call `new RegExp(...)` instances so the mutable `lastIndex` from the `g` flag can't race across concurrent redactions. The field regex drops the `g` flag entirely since it's only used with `.test(key)`.
+
+11. **`unwrapFields` drops `custom`.** Acumatica's `custom` container holds user-defined extension fields in a deeply nested type-tagged wire format (`{"Document": {"UsrField": {"type": "...", "value": ...}}}`). It's user data, but surfacing it as-is would bloat responses and confuse the model. See the comment in `src/lib/acumatica-client.ts` — for workflows that need custom fields, extend the per-entity `acumatica_get_*` tool with `$expand=custom` and a flatten step rather than changing `unwrapFields()` globally.
+
+12. **Registry-driven getters.** The 38 per-entity `acumatica_get_*` tools are defined as data in `src/tools/getter-registry.ts` (`GETTER_TOOLS`). Each entry describes an entity name, parameter list with defaults/optionality, and optional `$expand`. `src/index.ts` loops over the registry and registers each tool via a shared `runGetter()` handler. Adding a new single-record lookup is a ~7-line registry entry — no per-tool handler file, no per-tool `server.tool(...)` block. Utility/discovery tools that do more than a plain GET (pagination envelope, `$metadata` parse, cache invalidation) stay as dedicated handler files.
 
 ## Key Design Decisions
 
-1. **Acumatica as sole OAuth provider.** The MCP server redirects directly to Acumatica for login. No separate identity provider layer. See "Historical Note" below for why.
+1. **Acumatica as sole OAuth provider.** The MCP server redirects directly to Acumatica for login. No separate identity provider layer. See "Historical Note" below for why. The `/callback` route binds the OAuth `state` query parameter to an HttpOnly `acu_oauth_state` cookie set at `/authorize`; mismatch burns the KV state record (`acumatica_state:{state}`) as well as rejecting the request, so the record is single-use even on mismatch.
 
 2. **Per-user Acumatica tokens.** Each MCP user gets their own Acumatica OAuth token stored in KV keyed by `user_token:{acumaticaUsername}`. The user's Acumatica role governs record-level access. The MCP server additionally requires the `MCP Access` role (gate check) and applies sensitive field redaction before returning data to Claude.
 
@@ -74,7 +88,7 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 5. **Acumatica field values** are wrapped as `{value: X}`. The `unwrapFields()` utility recursively strips these before returning data to Claude.
 
-6. **`AppEnv` / `IKeyValueStore` abstraction.** Tool handlers and shared libraries (`config.ts`, `metadata-cache.ts`, `acumatica-oauth.ts`, `acumatica-client.ts`) use the platform-agnostic `AppEnv` type (which has `store: IKeyValueStore`) instead of the Cloudflare-specific `Env`. The CF entry point (`index.ts`) initializes `env.store = new CloudflareKVStore(env.TOKEN_STORE)` in `init()`. CF-specific code (auth handler, admin handler) continues to use raw `Env` / `KVNamespace` directly. This keeps the Cloudflare deployment unchanged while enabling future Node.js self-hosting.
+6. **`AppEnv` / `IKeyValueStore` abstraction.** Tool handlers and shared libraries (`config.ts`, `metadata-cache.ts`, `acumatica-oauth.ts`, `acumatica-client.ts`) use the platform-agnostic `AppEnv` type (which has `store: IKeyValueStore`) instead of the Cloudflare-specific `Env`. In `AcumaticaMcpServer.init()` we construct a fresh `this.appEnv: AppEnv` from `this.env` (never mutating the CF-provided binding object — that reference is shared across requests in the same isolate and hot-patching a `store` field onto it would leak state across sessions). `Env` no longer extends `AppEnv`; it only describes the CF bindings (plus Acumatica connection fields pulled from wrangler.jsonc). CF-specific code (auth handler, admin handler) uses raw `Env` / `KVNamespace` directly.
 
 ## Historical Note: Why We Removed Microsoft Entra ID
 
@@ -110,43 +124,13 @@ src/
 │   └── redact.ts                  # Pattern-based sensitive field redaction
 ├── platform/
 │   └── cloudflare-kv-store.ts     # CloudflareKVStore — wraps KVNamespace as IKeyValueStore
-├── tools/                         # 42 tools across 10 modules + 4 utility
-│   ├── accounts.ts                # acumatica_get_account (GL)
-│   ├── appointments.ts            # acumatica_get_appointment (Field Service)
-│   ├── bills.ts                   # acumatica_get_bill (AP)
-│   ├── business-accounts.ts       # acumatica_get_business_account (CRM)
-│   ├── cases.ts                   # acumatica_get_case (Support)
-│   ├── checks.ts                  # acumatica_get_check (AP)
-│   ├── clear-cache.ts             # acumatica_clear_cache (Utility)
-│   ├── contacts.ts                # acumatica_get_contact (CRM)
-│   ├── crm-activities.ts          # acumatica_get_email, _event, _activity, _task
-│   ├── customers.ts               # acumatica_get_customer
+├── tools/                         # Registry-driven getters + 6 utility handlers
+│   ├── getter-registry.ts         # 38 per-entity `acumatica_get_*` tools as data (GETTER_TOOLS)
 │   ├── entity-list.ts             # acumatica_list_entities (Utility)
 │   ├── entity-schema.ts           # acumatica_describe_entity (Utility)
-│   ├── employees.ts               # acumatica_get_employee (HR)
-│   ├── expense-claims.ts          # acumatica_get_expense_claim (HR)
 │   ├── generic-inquiries.ts       # acumatica_run_inquiry (Utility)
 │   ├── generic-inquiry-discovery.ts # acumatica_list_generic_inquiries, _describe_inquiry (Utility)
-│   ├── inventory-availability.ts  # acumatica_get_inventory_quantity_available, _summary
-│   ├── invoices.ts                # acumatica_get_invoice (AR)
-│   ├── item-classes.ts            # acumatica_get_item_class (Inventory)
-│   ├── journal-transactions.ts    # acumatica_get_journal_transaction (GL)
-│   ├── leads.ts                   # acumatica_get_lead (CRM)
-│   ├── non-stock-items.ts         # acumatica_get_non_stock_item (Inventory)
-│   ├── opportunities.ts           # acumatica_get_opportunity (CRM)
-│   ├── payments.ts                # acumatica_get_payment (AR)
-│   ├── projects.ts                # acumatica_get_project, _task, _budget, _transaction
-│   ├── purchase-orders.ts         # acumatica_get_purchase_order
-│   ├── purchase-receipts.ts       # acumatica_get_purchase_receipt
-│   ├── sales-invoices.ts          # acumatica_get_sales_invoice
-│   ├── sales-orders.ts            # acumatica_get_sales_order
-│   ├── salespersons.ts            # acumatica_get_salesperson (CRM)
-│   ├── service-orders.ts          # acumatica_get_service_order (Field Service)
-│   ├── shipments.ts               # acumatica_get_shipment
-│   ├── stock-items.ts             # acumatica_get_stock_item (Inventory)
-│   ├── time-entries.ts            # acumatica_get_time_entry (HR)
-│   ├── vendors.ts                 # acumatica_get_vendor
-│   └── warehouses.ts              # acumatica_get_warehouse (Inventory)
+│   └── clear-cache.ts             # acumatica_clear_cache (Utility)
 └── types/
     └── acumatica.ts               # All TypeScript types, AppEnv, Env, AuthProps
 ```
@@ -229,6 +213,7 @@ Before every commit, push, or tag:
    - `docs/tool-reference.md` → version in the opening paragraph
    - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
+   - `package.json` → `version` field
 
 ## Close Session Procedure
 
@@ -241,6 +226,7 @@ When the user says **"close session"**, perform all of the following:
    - `docs/tool-reference.md` → version in the opening paragraph
    - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
+   - `package.json` → `version` field
 4. **Commit** all changes with a descriptive message
 5. **Push** to `origin/main`
 6. **Tag** with `25R2-X.Y.Z` format

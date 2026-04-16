@@ -1089,10 +1089,24 @@ export interface AppEnv {
 }
 
 /**
- * Cloudflare Worker bindings — extends AppEnv with CF-specific types.
- * Used only by infrastructure code (auth handler, admin handler, index.ts).
+ * Cloudflare Worker bindings. Mirrors the Acumatica connection fields from
+ * AppEnv (so both types can be fed from wrangler.jsonc `vars` + secrets)
+ * but intentionally does NOT extend AppEnv — the CF runtime does not
+ * provide a `store`; that's built in the McpAgent DO from `TOKEN_STORE`.
+ * The McpAgent constructs an AppEnv from an Env at init time.
  */
-export interface Env extends AppEnv {
+export interface Env {
+  // Acumatica connection (duplicated from AppEnv so CF bindings + secrets populate this directly)
+  ACUMATICA_URL: string;
+  ACUMATICA_TENANT: string;
+  ACUMATICA_ENDPOINT_VERSION: string;
+  ACUMATICA_MAX_RECORDS: string;
+  ACUMATICA_CLIENT_ID: string;
+  ACUMATICA_CLIENT_SECRET: string;
+  COOKIE_ENCRYPTION_KEY: string;
+  ACUMATICA_MCP_ROLE?: string;
+  REDACT_PATTERNS?: string;
+  REDACT_SKIP?: string;
   // Raw KV binding (used by auth handler and admin handler which need direct KV access)
   TOKEN_STORE: KVNamespace;
   // OAuth provider — OAUTH_KV is required by @cloudflare/workers-oauth-provider internally

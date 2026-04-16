@@ -129,6 +129,11 @@ app.get("/callback", async (c) => {
     logAuthEvent("callback_state_mismatch", "unknown", {
       hasCookie: Boolean(cookieState),
     });
+    // Burn the KV state record so a subsequent replay with the same
+    // `state` query parameter cannot succeed even if the attacker later
+    // manages to plant the matching cookie. State records are
+    // single-use by design; mismatch is abandonment.
+    await c.env.TOKEN_STORE.delete(`acumatica_state:${state}`).catch(() => {});
     return c.text(
       "OAuth state mismatch. Please close this tab and try connecting again.",
       400
@@ -204,9 +209,13 @@ app.get("/callback", async (c) => {
         preferred_username?: string;
         email?: string;
       };
-      console.log(`User info (OIDC): sub=${oidcInfo.sub}, name=${oidcInfo.name}, preferred_username=${oidcInfo.preferred_username}`);
+      // Don't echo `sub`, `name`, or `email` to logs — these are IdP
+      // identity attributes that don't need long-term retention and end
+      // up in Logpush / R2. The chosen username already appears in the
+      // downstream `auth_event` log for the successful login.
       acumaticaUsername = oidcInfo.preferred_username || oidcInfo.sub || "unknown";
       acumaticaDisplayName = oidcInfo.name || acumaticaUsername;
+      console.log(`User info (OIDC): resolved username`);
     } else {
       console.log(`User info (OIDC): HTTP ${oidcResp.status}, trying auth contract...`);
       // Attempt 2: auth contract
@@ -222,10 +231,10 @@ app.get("/callback", async (c) => {
           Username?: { value: string };
           DisplayName?: { value: string };
         };
-        console.log(`User info (auth): Username=${userInfo.Username?.value}`);
         acumaticaUsername = userInfo.Username?.value || "unknown";
         acumaticaDisplayName =
           userInfo.DisplayName?.value || acumaticaUsername;
+        console.log(`User info (auth): resolved username`);
       } else {
         // Body omitted — may contain auth error payloads from Acumatica.
         console.error(`User info (auth): HTTP ${authResp.status}`);
@@ -233,14 +242,17 @@ app.get("/callback", async (c) => {
     }
   } catch (e) {
     console.error("Failed to fetch Acumatica user info:", e);
-    acumaticaUsername = `user_${state.slice(0, 8)}`;
+    // Use the full state UUID rather than an 8-char slice. 8 hex chars is
+    // only 32 bits of entropy — on a busy instance, two simultaneous failed
+    // lookups could collide and cause users to share a token key.
+    acumaticaUsername = `user_${state}`;
   }
 
   // ── Role gate: check for required MCP role ──────────────────
   // Try multiple approaches to check if the user has the required role.
   // Acumatica instances vary in which entities/endpoints are available.
   const requiredRole = c.env.ACUMATICA_MCP_ROLE || "MCP Access";
-  const hasRole = await checkUserRole(
+  const roleResult = await checkUserRole(
     c.env.ACUMATICA_URL,
     c.env.ACUMATICA_TENANT,
     acumaticaTokens.access_token,
@@ -248,12 +260,22 @@ app.get("/callback", async (c) => {
     requiredRole
   );
 
-  if (!hasRole) {
+  if (roleResult.kind === "denied") {
     logAuthEvent("login_denied", acumaticaUsername, {
       reason: "missing_role",
       requiredRole,
     });
     return c.html(renderAccessDeniedPage(acumaticaDisplayName, requiredRole), 403);
+  }
+
+  if (roleResult.kind === "misconfigured") {
+    logAuthEvent("login_denied", acumaticaUsername, {
+      reason: "role_check_misconfigured",
+      requiredRole,
+      status: roleResult.status,
+      detail: roleResult.reason,
+    });
+    return c.html(renderRoleCheckErrorPage(requiredRole, roleResult.reason), 503);
   }
 
   // ── Store pending consent in KV and redirect ────────────────
@@ -349,19 +371,35 @@ app.post("/consent", async (c) => {
 });
 
 // OpenID Connect discovery — some MCP clients (e.g. ChatGPT) also check this
-// endpoint. Proxy to the OAuth authorization server metadata so CIMD support
-// is advertised consistently across both discovery paths.
-app.get("/.well-known/openid-configuration", async (c) => {
-  const origin = new URL(c.req.url).origin;
-  const resp = await fetch(`${origin}/.well-known/oauth-authorization-server`);
-  return new Response(resp.body, {
-    status: resp.status,
-    headers: { "content-type": "application/json" },
-  });
+// endpoint. 302 to the OAuth authorization server metadata so CIMD support
+// is advertised consistently without re-entering the worker over HTTP
+// (the previous implementation did a same-origin fetch back to
+// /.well-known/oauth-authorization-server, which burned an extra round trip
+// and a subrequest on every discovery probe).
+app.get("/.well-known/openid-configuration", (c) => {
+  return c.redirect("/.well-known/oauth-authorization-server", 302);
 });
 
-// Health check
-app.get("/health", (c) => c.json({ status: "ok", service: "mcp4acumatica" }));
+// Health check. Open CORS so external uptime monitors / dashboards can
+// poll cross-origin. OAuthProvider already adds CORS headers to the
+// OAuth/MCP endpoints it handles (`/mcp`, `/token`, `/register`,
+// `/.well-known/oauth-authorization-server`); the documentation site is
+// HTML served same-origin and doesn't need them.
+app.get("/health", (c) => {
+  c.header("Access-Control-Allow-Origin", "*");
+  c.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+  return c.json({ status: "ok", service: "mcp4acumatica" });
+});
+app.options("/health", (c) => {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+});
 
 // Documentation site
 app.route("/docs", docsApp);
@@ -373,50 +411,104 @@ export { app as AcumaticaAuthHandler };
 // Role check — tries multiple Acumatica API approaches
 // ──────────────────────────────────────────────────────────────
 
+type RoleCheckResult =
+  | { kind: "granted" }
+  | { kind: "denied" }
+  | { kind: "misconfigured"; reason: string; status?: number };
+
+/**
+ * Check whether the authenticated user has the required MCP role by
+ * querying the canary GI (`MCPAccess`) via OData. Returns a discriminated
+ * result so the caller can render a meaningful error:
+ *
+ *   - 200 → `granted` (user has the role)
+ *   - 403 → `denied` (user is missing the role)
+ *   - 404 → `misconfigured` (canary GI is missing or not exposed via OData)
+ *   - 5xx / network errors → `misconfigured` (Acumatica or tenant misconfig)
+ *
+ * Previously every non-200 was collapsed into "denied", which meant a
+ * tenant typo or a missing GI looked identical to "no role" and admins
+ * only found out via support tickets.
+ */
 async function checkUserRole(
   acumaticaUrl: string,
   tenant: string,
   accessToken: string,
   username: string,
-  requiredRole: string
-): Promise<boolean> {
+  _requiredRole: string
+): Promise<RoleCheckResult> {
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     Accept: "application/json",
   };
 
-  // Canary GI approach: a dummy GI (e.g., "MCPAccess") is assigned only to the
-  // required role. If the user can query it via OData, they have the role.
-  // If they get 403/404, they don't.
   const giName = "MCPAccess";
+  const giUrl = `${acumaticaUrl}/t/${tenant}/api/odata/gi/${giName}?$top=1`;
+  console.log(`Role check (canary GI): querying ${giUrl} for user ${username}`);
+
+  let resp: Response;
   try {
-    const giUrl = `${acumaticaUrl}/t/${tenant}/api/odata/gi/${giName}?$top=1`;
-    console.log(`Role check (canary GI): querying ${giUrl} for user ${username}`);
-
-    const resp = await fetch(giUrl, { headers });
-    console.log(`Role check (canary GI): HTTP ${resp.status}`);
-
-    if (resp.ok) {
-      return true;
-    }
-
-    // 403 = user doesn't have role, 404 = GI doesn't exist
-    if (resp.status === 403) {
-      console.log(`Role check (canary GI): user ${username} does not have access to ${giName} GI`);
-    } else {
-      // Body omitted — may contain auth / tenant info we don't want in long-term logs.
-      console.error(`Role check (canary GI): HTTP ${resp.status}`);
-    }
+    resp = await fetch(giUrl, { headers });
   } catch (e) {
-    console.error(`Role check (canary GI): failed: ${e instanceof Error ? e.message : String(e)}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Role check (canary GI): network failure: ${msg}`);
+    return { kind: "misconfigured", reason: `Unable to reach Acumatica: ${msg}` };
   }
 
-  return false;
+  console.log(`Role check (canary GI): HTTP ${resp.status}`);
+
+  if (resp.ok) return { kind: "granted" };
+  if (resp.status === 403) return { kind: "denied" };
+  if (resp.status === 404) {
+    return {
+      kind: "misconfigured",
+      status: 404,
+      reason: `Canary Generic Inquiry '${giName}' is missing or not exposed via OData on tenant '${tenant}'. Create it (SM208000) and assign it to the required role.`,
+    };
+  }
+  // 401 here would mean the just-minted access token is already rejected —
+  // treat as misconfig so the user gets a useful message rather than "denied".
+  return {
+    kind: "misconfigured",
+    status: resp.status,
+    reason: `Acumatica returned HTTP ${resp.status} when checking role. Verify ACUMATICA_TENANT, the '${giName}' GI is exposed via OData, and the instance is reachable.`,
+  };
 }
 
 // ──────────────────────────────────────────────────────────────
 // HTML templates
 // ──────────────────────────────────────────────────────────────
+
+function renderRoleCheckErrorPage(roleName: string, detail: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuration Error — Acumatica MCP</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
+    .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    h1 { color: #b45309; font-size: 1.5rem; margin-top: 0; }
+    .role-name { background: #f5f5f5; padding: 2px 8px; border-radius: 4px; font-family: monospace; }
+    .detail { margin-top: 20px; padding: 16px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; font-family: "SF Mono", Menlo, monospace; font-size: 0.85rem; white-space: pre-wrap; }
+    .action { margin-top: 24px; padding: 16px; background: #f8f9fa; border-radius: 6px; }
+    .action h3 { margin-top: 0; font-size: 0.9rem; text-transform: uppercase; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Configuration Error</h1>
+    <p>The AI assistant cannot verify your access to the <span class="role-name">${escapeHtml(roleName)}</span> role because Acumatica did not respond as expected.</p>
+    <div class="detail">${escapeHtml(detail)}</div>
+    <div class="action">
+      <h3>What to do</h3>
+      <p>This is a server-side configuration problem, not a permissions issue with your account. Ask your Acumatica administrator to check the MCP instance configuration — specifically the tenant name, the canary Generic Inquiry, and OData exposure.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
 
 function renderAccessDeniedPage(displayName: string, roleName: string): string {
   return `<!DOCTYPE html>
