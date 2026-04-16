@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 44 tools available in the MCP4Acumatica (v0.23.2).
+Complete specification for all 44 tools available in the MCP4Acumatica (v0.24.0).
 
 ## Table of Contents
 
@@ -47,7 +47,7 @@ List or search any Acumatica entity with OData filtering, sorting, and field sel
 
 **Endpoint:** `GET /entity/Default/25.200.001/{entityName}?$filter=...&$top=...&$select=...&$orderby=...&$expand=...`
 
-> **Pagination guard:** When enabled via `PAGINATION_GUARD_TOOLS`, repeated calls to the same entity within the cooldown window are blocked. The cooldown tracks by entity name, so querying `Customer` then `Invoice` is unaffected.
+> **Truncation semantics:** When the result set hits the per-query max (`ACUMATICA_MAX_RECORDS`, default 1000, runtime-overridable via the admin console), the response is wrapped as `{ results, truncated: true, paginationSupported: false, actionRequired: "..." }`. The model is instructed to stop and ask the user for a narrower `filterExpression` rather than calling the tool again.
 
 ---
 
@@ -64,7 +64,7 @@ Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom re
 
 **Endpoint:** `GET /t/{Company}/api/odata/gi/{inquiryName}?$filter=...&$top=...&$select=...`
 
-> **Pagination guard:** When enabled via `PAGINATION_GUARD_TOOLS`, repeated calls to the same inquiry within the cooldown window are blocked. The cooldown tracks by inquiry name.
+> **Truncation semantics:** Same as `acumatica_list_entities` — when results hit the max, the response includes `truncated: true`, `paginationSupported: false`, and `actionRequired` text telling the model to ask the user for a narrower filter rather than calling again.
 
 ---
 

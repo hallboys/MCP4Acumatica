@@ -4,6 +4,7 @@
 import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient, AcumaticaApiError } from "../lib/acumatica-client";
 import { getCached, setCached } from "../lib/metadata-cache";
+import { getConfig } from "../lib/config";
 
 const GI_LIST_TTL_SECONDS = 3600; // 1 hour
 const GI_METADATA_TTL_SECONDS = 3600; // 1 hour
@@ -28,7 +29,8 @@ export async function handleListGenericInquiries(
     topN?: number;
   }
 ): Promise<unknown> {
-  const MAX_TOP = parseInt(env.ACUMATICA_MAX_RECORDS, 10) || 1000;
+  const maxRecords = await getConfig(env.store, "acumatica_max_records", env.ACUMATICA_MAX_RECORDS);
+  const MAX_TOP = parseInt(maxRecords || "", 10) || 1000;
   const effectiveTop = Math.min(args.topN ?? 200, MAX_TOP);
 
   try {
@@ -102,7 +104,9 @@ export async function handleListGenericInquiries(
     }
 
     // Apply top limit
-    if (items.length > effectiveTop) {
+    const totalMatched = items.length;
+    const truncated = totalMatched > effectiveTop;
+    if (truncated) {
       items = items.slice(0, effectiveTop);
     }
 
@@ -110,11 +114,27 @@ export async function handleListGenericInquiries(
       return { results: [], note: "No Generic Inquiries found matching the criteria." };
     }
 
-    const note = parameterizedNames.size > 0
+    const excludedNote = parameterizedNames.size > 0
       ? `Excluded ${parameterizedNames.size} parameterized GI(s) that cannot be queried directly via OData.`
       : undefined;
 
-    return note ? { results: items, note } : items;
+    if (truncated) {
+      return {
+        results: items,
+        truncated: true,
+        recordsReturned: items.length,
+        recordLimit: effectiveTop,
+        paginationSupported: false,
+        actionRequired:
+          `Results were truncated at ${effectiveTop} records and this tool does NOT support pagination. ` +
+          `Do NOT call this tool again with a different topN to retrieve more records — no such mechanism exists. ` +
+          `Instead, stop and ask the user to narrow their request by providing a more specific titleFilter ` +
+          `so the result set fits within the limit.`,
+        ...(excludedNote ? { note: excludedNote } : {}),
+      };
+    }
+
+    return excludedNote ? { results: items, note: excludedNote } : items;
   } catch (error) {
     if (error instanceof AcumaticaApiError) {
       return {

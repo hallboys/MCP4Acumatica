@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.23.2`
+- **Current tag:** `25R2-0.24.0`
 - **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -60,7 +60,7 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 4. **Enhanced audit logging:** All tool invocations include the Acumatica username, tool parameters (what was queried), duration, and success/error status. Auth events (login success, access denied, consent accepted) are logged separately in the Worker handler. Tool invocation and field redaction logs are written directly to R2 from the Durable Object (Cloudflare Logpush only captures Worker-level traces, not DO traces). The `writeLogsToR2()` function in `src/lib/logger.ts` writes NDJSON entries to `do-logs/{date}/{timestamp}-{random}.ndjson` keys in R2. To minimize R2 file count, the DO buffers log entries in memory (`logBuffer` in `AcumaticaMcpServer`) and flushes them as a single R2 file when the buffer reaches 25 entries or 15 seconds have elapsed since the last flush — reducing a day's logs from hundreds of tiny files to a handful of larger ones. Console.log is preserved for `wrangler tail` live debugging. The admin console at `/docs/admin` reads both Logpush-written and DO-written logs from R2 using streaming server-side pagination (prefix-scoped R2 listing, parallel batched reads, incremental filtering, early-exit once one page of results is collected) to keep load times fast even for multi-day queries.
 
-5. **Pagination guard:** Optional per-tool cooldown that prevents AI models from circumventing record limits by making repeated calls to the same resource (e.g., paginating through all GL journal transactions). Off by default; enabled per-tool via `PAGINATION_GUARD_TOOLS` env var. For `acumatica_list_entities` the cooldown tracks by entity name, for `acumatica_run_inquiry` by inquiry name, so querying different resources is unaffected. Cooldown window is configurable via `PAGINATION_GUARD_COOLDOWN` (default 30s). See `src/lib/pagination-guard.ts`.
+5. **Pagination refusal semantics:** The list/query tools (`acumatica_list_entities`, `acumatica_run_inquiry`, `acumatica_list_generic_inquiries`) hard-cap results at `ACUMATICA_MAX_RECORDS` (default 1000, runtime-overridable via the admin console → KV `config:acumatica_max_records`). When a response hits the cap, the tool returns a structured envelope `{ results, truncated: true, paginationSupported: false, actionRequired: "..." }` instructing the model to stop calling and ask the user to refine `filterExpression`/`titleFilter`. No server-side cooldown — the semantic response is the mechanism.
 
 ## Key Design Decisions
 
@@ -105,7 +105,6 @@ src/
 │   ├── config.ts                  # KV-backed runtime config (uses IKeyValueStore)
 │   ├── kv-store.ts                # IKeyValueStore interface (platform-agnostic storage)
 │   ├── metadata-cache.ts           # KV-backed cache (uses IKeyValueStore)
-│   ├── pagination-guard.ts        # Per-tool cooldown to prevent pagination/data exfiltration
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   ├── logger.ts                  # Structured JSON audit logging (tool, auth, redaction events)
 │   └── redact.ts                  # Pattern-based sensitive field redaction
@@ -167,12 +166,10 @@ src/
 - `ACUMATICA_URL` — e.g., `https://your-instance.acumatica.com`
 - `ACUMATICA_TENANT` — Acumatica tenant/login company name (e.g., `Production`). Used for OData GI endpoint URL.
 - `ACUMATICA_ENDPOINT_VERSION` — `25.200.001`
-- `ACUMATICA_MAX_RECORDS` — max rows per query (default `1000`)
+- `ACUMATICA_MAX_RECORDS` — max rows per query (default `1000`). Runtime-overridable via `config:acumatica_max_records` in KV (set from the admin console).
 - `ACUMATICA_MCP_ROLE` — Acumatica role name required to use MCP (default `"MCP Access"`)
 - `REDACT_PATTERNS` — comma-separated additional field name patterns to redact (e.g., `CustomSSN,EmployeeNotes`)
 - `REDACT_SKIP` — comma-separated field name patterns to whitelist from redaction (e.g., `BirthDate`)
-- `PAGINATION_GUARD_TOOLS` — comma-separated tool names to protect from repeated calls (empty = disabled). Example: `acumatica_list_entities,acumatica_run_inquiry`
-- `PAGINATION_GUARD_COOLDOWN` — seconds between allowed calls to the same tool+resource (default `30`)
 
 ### Secrets (via `wrangler secret put` or `.dev.vars`):
 - `ACUMATICA_CLIENT_ID` — from Acumatica Connected Application (SM303010)
@@ -189,7 +186,6 @@ src/
 
 ### Runtime Config (KV-backed):
 Settings can be changed at runtime via the admin console at `/docs/admin/settings` without redeploying. KV overrides take precedence over env vars. Changes take effect when the next DO instance starts (DOs recycle within minutes on idle). Config keys stored in KV with `config:` prefix:
-- `config:pagination_guard_tools`, `config:pagination_guard_cooldown`
 - `config:redact_patterns`, `config:redact_skip`
 - `config:acumatica_max_records`
 
@@ -293,8 +289,8 @@ When the user says **"close session"**, perform all of the following:
 - [x] Enhanced audit logging (username in all entries, auth events, redaction events)
 - [x] OIDC userinfo for identity (openid profile email scopes)
 - [x] Auto-retry without $select on entity list 500 errors
-- [x] Pagination guard — per-tool cooldown to prevent repeated calls to same resource (0.21.0)
-- [x] Anti-pagination tool descriptions and truncation notes (0.21.0)
+- [x] Anti-pagination tool descriptions and structured truncation envelope (`truncated`, `paginationSupported: false`, `actionRequired`) — instructs the model to ask the user for a narrower filter rather than retry
+- [x] `ACUMATICA_MAX_RECORDS` is runtime-overridable from the admin console (`config:acumatica_max_records` in KV)
 - [x] Storage abstraction layer — `IKeyValueStore` interface + `AppEnv` type for platform portability (0.23.0)
 - [x] Self-hosting documentation — `docs/self-hosting-guide.md` with Node.js adapter guide
 
