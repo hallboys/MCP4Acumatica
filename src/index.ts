@@ -23,7 +23,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.29.0",
+    version: "0.29.1",
   });
 
   private redactPatterns?: string;
@@ -33,17 +33,20 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
   private appEnv!: AppEnv;
 
   // ── Log buffering ──────────────────────────────────────────────
-  // Buffer entries in memory and flush to R2 when the buffer hits
-  // a size threshold OR a DO alarm fires. The alarm is the critical
-  // piece — without it, short sessions (<25 entries) sit in memory
-  // until the DO is evicted and get lost. Alarms persist in storage,
-  // so an idle DO will be woken up just to flush.
+  // Buffer entries and flush to R2 when the buffer hits a size
+  // threshold OR a DO alarm fires. The buffer is persisted to
+  // `ctx.storage` on every append, so eviction between the tool call
+  // and the alarm firing can't drop the batch — the alarm handler
+  // runs on a fresh DO instance with empty memory and hydrates the
+  // buffer from storage before flushing.
   private logBuffer: Record<string, unknown>[] = [];
+  private bufferHydrated = false;
   private alarmScheduled = false;
   private flushing = false;
   private static readonly LOG_FLUSH_THRESHOLD = 25;  // entries
   private static readonly LOG_FLUSH_DELAY_MS = 15_000;
   private static readonly LOG_RETRY_DELAY_MS = 30_000;
+  private static readonly LOG_BUFFER_KEY = "log_buffer";
 
   async init() {
     // Build the platform-agnostic AppEnv from the Cloudflare bindings.
@@ -245,22 +248,55 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
   }
 
   /**
+   * Hydrate the in-memory buffer from persistent storage. Runs once per
+   * DO instance lifetime. This is the piece that lets the alarm path
+   * survive DO eviction: when the runtime spins up a fresh instance to
+   * run `alarm()`, `this.logBuffer` starts empty, and without hydration
+   * the flush would be a no-op.
+   */
+  private async hydrateBuffer(): Promise<void> {
+    if (this.bufferHydrated) return;
+    const persisted = await this.ctx.storage.get<Record<string, unknown>[]>(
+      AcumaticaMcpServer.LOG_BUFFER_KEY
+    );
+    if (persisted && persisted.length > 0) {
+      // Persisted entries are older than anything already pushed in this
+      // instance — keep them first so R2 files stay chronologically ordered.
+      this.logBuffer = [...persisted, ...this.logBuffer];
+    }
+    this.bufferHydrated = true;
+  }
+
+  /** Mirror the in-memory buffer to DO storage (or clear it when empty). */
+  private async persistBuffer(): Promise<void> {
+    if (this.logBuffer.length === 0) {
+      await this.ctx.storage.delete(AcumaticaMcpServer.LOG_BUFFER_KEY);
+    } else {
+      await this.ctx.storage.put(AcumaticaMcpServer.LOG_BUFFER_KEY, this.logBuffer);
+    }
+  }
+
+  /**
    * Flush buffered log entries to R2. Serialized via `flushing` so the
    * threshold path and alarm path can't race. On R2 failure the snapshot
    * is re-enqueued at the head of the buffer and a retry alarm is
    * scheduled — previously this silently dropped the batch.
    */
   private async flushLogs(): Promise<void> {
-    if (this.flushing || this.logBuffer.length === 0) return;
+    if (this.flushing) return;
     this.flushing = true;
     try {
+      await this.hydrateBuffer();
+      if (this.logBuffer.length === 0) return;
       const entries = this.logBuffer.slice();
       this.logBuffer = [];
+      await this.persistBuffer();
       const ok = await writeLogsToR2(this.env.mcp4acumatica_logs, entries);
       if (!ok) {
         // Re-enqueue at the head so ordering is preserved, and schedule
         // a retry alarm. Any entries buffered during the await go after.
         this.logBuffer = [...entries, ...this.logBuffer];
+        await this.persistBuffer();
         await this.scheduleAlarm(AcumaticaMcpServer.LOG_RETRY_DELAY_MS);
       }
     } finally {
@@ -271,10 +307,13 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
   /**
    * Add log entries to the buffer. Flush immediately if the size
    * threshold is reached; otherwise ensure a DO alarm is scheduled
-   * so an idle buffer still lands in R2.
+   * so an idle buffer still lands in R2. The buffer is mirrored to
+   * DO storage so eviction before the alarm fires can't drop it.
    */
   private async bufferLogs(entries: Record<string, unknown>[]): Promise<void> {
+    await this.hydrateBuffer();
     this.logBuffer.push(...entries);
+    await this.persistBuffer();
     if (this.logBuffer.length >= AcumaticaMcpServer.LOG_FLUSH_THRESHOLD && !this.flushing) {
       await this.flushLogs();
       return;
@@ -288,7 +327,11 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
     this.alarmScheduled = true;
   }
 
-  /** DO alarm handler — fires after LOG_FLUSH_DELAY_MS of idle to drain the buffer. */
+  /**
+   * DO alarm handler — fires after LOG_FLUSH_DELAY_MS of idle to drain
+   * the buffer. Runs on a fresh DO instance after eviction, so
+   * `flushLogs()` must hydrate from storage before flushing to R2.
+   */
   async alarm(): Promise<void> {
     this.alarmScheduled = false;
     await this.flushLogs();
