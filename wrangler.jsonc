@@ -60,6 +60,13 @@
 	// want a branded hostname (see commented example below).
 	"workers_dev": true,
 
+	// Per-version preview URLs (e.g. <version>-mcp4acumatica.<account>.workers.dev).
+	// Useful for testing a pre-production deployment alongside the active
+	// version. Cloudflare defaults this on in the dashboard; we set it
+	// explicitly here so `wrangler deploy` doesn't flip it off on every
+	// deploy due to local-vs-remote config drift.
+	"preview_urls": true,
+
 	// Custom-domain routes (optional). To enable, uncomment and edit, OR
 	// add the route via the Cloudflare dashboard:
 	//   Workers & Pages → mcp4acumatica → Settings → Domains & Routes.

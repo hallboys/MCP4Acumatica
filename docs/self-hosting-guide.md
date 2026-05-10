@@ -263,7 +263,7 @@ app.use(express.json());
 // Create MCP server
 const server = new McpServer({
   name: "mcp4acumatica",
-  version: "0.30.0",
+  version: "0.30.1",
 });
 
 // Register all 38 per-entity getter tools from the shared registry. This is
