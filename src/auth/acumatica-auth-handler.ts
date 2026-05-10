@@ -6,6 +6,8 @@ import type { Env } from "../types/acumatica";
 import { docsApp } from "../docs/docs-handler";
 import { logAuthEvent } from "../lib/logger";
 import { encryptString, parseCookies } from "../lib/crypto";
+import { interpretTokenError } from "../lib/preflight";
+import installScript from "../../install.sh";
 
 // OAuth state cookie — binds the `state` parameter to the browser that
 // started the flow, preventing login-CSRF / session-fixation on /callback.
@@ -172,10 +174,28 @@ app.get("/callback", async (c) => {
   );
 
   if (!tokenResponse.ok) {
-    // Do NOT log the response body — some IdentityServer error responses
-    // echo back the submitted form which includes client_secret and code.
-    console.error(`Acumatica token exchange failed: HTTP ${tokenResponse.status}`);
-    return c.text("Acumatica authentication failed. Please try again.", 502);
+    // Do NOT log or echo the full response body — some IdentityServer
+    // error responses contain the submitted form (client_secret, code).
+    // Safe to extract only the OAuth `error` code from the JSON body
+    // and render a targeted page keyed on it; interpretTokenError maps
+    // the known codes to admin-facing remediation text.
+    let errorCode: string | undefined;
+    try {
+      const body = (await tokenResponse.json()) as { error?: string };
+      errorCode = body.error;
+    } catch {
+      // Body wasn't JSON — leave errorCode undefined
+    }
+    console.error(
+      `Acumatica token exchange failed: HTTP ${tokenResponse.status}${errorCode ? ` (${errorCode})` : ""}`
+    );
+    logAuthEvent("login_denied", "unknown", {
+      reason: "token_exchange_failed",
+      status: tokenResponse.status,
+      errorCode,
+    });
+    const info = interpretTokenError(tokenResponse.status, errorCode);
+    return c.html(renderTokenExchangeErrorPage(info), 502);
   }
 
   const acumaticaTokens = (await tokenResponse.json()) as {
@@ -401,6 +421,17 @@ app.options("/health", (c) => {
   });
 });
 
+// One-line installer served at /install.sh. Meant to be piped into bash:
+//   curl -fsSL https://<this-worker>/install.sh | bash
+// The script clones the repo, installs deps, and runs setup.sh. Keeping
+// the script at the same origin as the worker means users don't need to
+// trust a separate hosting domain.
+app.get("/install.sh", (c) => {
+  c.header("Content-Type", "text/x-shellscript; charset=utf-8");
+  c.header("Cache-Control", "public, max-age=300");
+  return c.body(installScript);
+});
+
 // Documentation site
 app.route("/docs", docsApp);
 app.get("/", (c) => c.redirect("/docs"));
@@ -478,6 +509,43 @@ async function checkUserRole(
 // ──────────────────────────────────────────────────────────────
 // HTML templates
 // ──────────────────────────────────────────────────────────────
+
+function renderTokenExchangeErrorPage(info: {
+  title: string;
+  detail: string;
+  remediation: string;
+}): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuration Error — Acumatica MCP</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 640px; margin: 80px auto; padding: 0 20px; color: #333; }
+    .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    h1 { color: #b45309; font-size: 1.5rem; margin-top: 0; }
+    .detail { margin-top: 16px; padding: 12px 16px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; font-size: 0.9rem; }
+    .action { margin-top: 20px; padding: 16px; background: #f8f9fa; border-radius: 6px; }
+    .action h3 { margin-top: 0; font-size: 0.9rem; text-transform: uppercase; color: #666; }
+    .hint { margin-top: 16px; font-size: 0.85rem; color: #666; }
+    code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>${escapeHtml(info.title)}</h1>
+    <p>The Acumatica MCP server could not complete the login because the Acumatica identity server rejected our request.</p>
+    <div class="detail">${escapeHtml(info.detail)}</div>
+    <div class="action">
+      <h3>What to fix</h3>
+      <p>${escapeHtml(info.remediation)}</p>
+    </div>
+    <p class="hint">Your Acumatica administrator can run the preflight check at <code>/docs/admin/preflight</code> to confirm every configured value before reconnecting.</p>
+  </div>
+</body>
+</html>`;
+}
 
 function renderRoleCheckErrorPage(roleName: string, detail: string): string {
   return `<!DOCTYPE html>

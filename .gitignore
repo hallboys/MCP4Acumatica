@@ -2,5 +2,11 @@ node_modules/
 .dev.vars
 .wrangler/
 dist/
-wrangler.jsonc
 swagger.json
+
+# Local-only wrangler overrides. wrangler.jsonc is now tracked as the deploy
+# template (committed); after running setup.sh you can keep your real values
+# out of git with `git update-index --skip-worktree wrangler.jsonc`. The
+# .local-backup file is written by setup.sh / past versions of this repo
+# whenever an existing wrangler.jsonc is overwritten.
+wrangler.jsonc.local-backup

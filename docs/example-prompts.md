@@ -2,6 +2,8 @@
 
 Example prompts for Claude (or any MCP client) using the MCP4Acumatica. Each example shows the prompt and which tools Claude will invoke.
 
+> **Note on IDs:** Specific IDs in these examples (e.g. `C000042`, `AALEGO500`, `MAIN`, `EP00000001`, `40000`) are illustrative only. Acumatica numbering sequences are configured per instance — your customer/inventory/warehouse/employee/account codes will follow whatever format your administrator set up.
+
 ## Table of Contents
 
 - [Getting Started](#getting-started)
@@ -42,7 +44,7 @@ Example prompts for Claude (or any MCP client) using the MCP4Acumatica. Each exa
 
 > "Get me the details for customer C000042"
 
-**Tools invoked:** `acumatica_get_customer` (customerId: `C000042`)
+**Tools invoked:** `acumatica_get_customer` (customerID: `C000042`)
 
 ### Find customers with overdue balances
 

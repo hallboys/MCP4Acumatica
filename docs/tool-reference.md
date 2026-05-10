@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 44 tools available in the MCP4Acumatica (v0.29.1).
+Complete specification for all 44 tools available in the MCP4Acumatica (v0.30.0).
 
 ## Table of Contents
 
@@ -22,7 +22,7 @@ Complete specification for all 44 tools available in the MCP4Acumatica (v0.29.1)
 
 ### `acumatica_describe_entity`
 
-Discover the fields, types, and sub-entities for any Acumatica entity. Use this before `acumatica_list_entities` to learn what fields are available for filtering, sorting, and selection.
+Discover the fields, types, and sub-entities for any Acumatica entity. Use this before `acumatica_list_entities` to learn what fields are available for filtering, sorting, and selection. Schemas are cached for 24 hours — if an Acumatica admin just modified the entity (added a custom field, etc.), call `acumatica_clear_cache` with `target=schema:EntityName` first.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -34,16 +34,21 @@ Discover the fields, types, and sub-entities for any Acumatica entity. Use this 
 
 ### `acumatica_list_entities`
 
-List or search any Acumatica entity with OData filtering, sorting, and field selection. Works with all entities in the Default endpoint. Always use `filterExpression` to scope queries — do not retrieve all records from large entities.
+List or search any Acumatica entity in the contract-based Default endpoint with OData filtering, sorting, and field selection. Always pass `filterExpression` to scope queries — do not retrieve all records from large entities.
+
+> **Restrictions:**
+> - Auth/role metadata entities (`User`, `UserRole`, `Role`, etc.) are intentionally blocked and return an error.
+> - `expand` accepts only single-level sub-entities — nested paths like `Details/Tax` are rejected.
+> - Some entities reject `$select` on certain fields and 500; the tool auto-retries without `$select` and returns the result with a warning if that happens.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `entityName` | string | Yes | -- | Entity name (e.g., `Customer`, `Invoice`, `StockItem`) |
-| `filterExpression` | string | No | -- | OData `$filter` expression (e.g., `Status eq 'Open'`) |
+| `entityName` | string | Yes | -- | Bare entity name (e.g., `Customer`, `Invoice`, `StockItem`) — no `Default/` path prefix. |
+| `filterExpression` | string | No | -- | OData v3 `$filter` expression (e.g., `Status eq 'Open'`). Use `substringof('needle', Field)` for partial match (needle first); v4 syntax like `contains()` and `toupper()`/`tolower()` is not supported and 500s. |
 | `topN` | string | No | `"100"` | Maximum rows to return (max 1000). If truncated, refine filters — do not paginate. |
 | `selectFields` | string | No | -- | Comma-separated field names (e.g., `CustomerID,CustomerName`) |
 | `orderBy` | string | No | -- | OData `$orderby` expression (e.g., `Amount desc`) |
-| `expand` | string | No | -- | Comma-separated sub-entities (e.g., `Details,MainContact`) |
+| `expand` | string | No | -- | Comma-separated single-level sub-entities (e.g., `Details,MainContact`). No nested paths. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/{entityName}?$filter=...&$top=...&$select=...&$orderby=...&$expand=...`
 
@@ -85,7 +90,7 @@ List all Generic Inquiries (GIs) exposed via OData in Acumatica. Returns inquiry
 
 ### `acumatica_describe_inquiry`
 
-Returns the field schema for a Generic Inquiry (GI) exposed via OData — field names and inferred types. Use this before calling `acumatica_run_inquiry` to know which fields are available for filtering and selection.
+Returns the field schema for a Generic Inquiry (GI) exposed via OData. Field names and types are **inferred from a single live sample row**, so types may be approximate (a column that is null in the sample reports as `unknown`) and a GI that returns no rows yields an empty field list. Use this before calling `acumatica_run_inquiry` to know which fields are available for filtering and selection. For authoritative entity schemas (not GIs), use `acumatica_describe_entity` instead.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -110,7 +115,7 @@ Clear cached metadata (entity schemas, GI lists, GI field schemas). Use when Acu
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `target` | string | No | What to clear: `schema:EntityName` (one entity schema), `schemas` (all entity schemas), `gi` (GI list + metadata), `gi_schema:InquiryName` (one GI schema), or omit to clear everything |
+| `target` | string | No | What to clear. Accepted values: omitted → clear everything; `schemas` → all entity schemas (bulk); `gi` → GI list + OData `$metadata` (bulk); `schema:<EntityName>` → one entity schema (e.g. `schema:Customer`); `gi_schema:<InquiryName>` → one GI's inferred field schema. Other strings are rejected. Note `schemas` (plural, bulk) vs `schema:Foo` (singular, specific). |
 
 **Caching details:** Entity schemas are cached for 24 hours. GI lists, GI metadata, and GI field schemas are cached for 1 hour. Cache is stored in KV with `cache:` key prefix.
 
@@ -126,10 +131,10 @@ Retrieve a customer record by Customer ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `customerId` | string | Yes | Customer ID (e.g., `C000001`) |
+| `customerID` | string | Yes | Customer ID. Format depends on this Acumatica instance's numbering sequence — there is no universal format. If you only have a name, use `acumatica_list_entities` (entityName=`Customer`, filter on `CustomerName`) to look up the ID. |
 
-**Endpoint:** `GET /entity/Default/25.200.001/Customer/{customerId}`
-**Expands:** `MainContact`, `BillingContact`, `ShippingContact`
+**Endpoint:** `GET /entity/Default/25.200.001/Customer/{customerID}`
+**Expands:** `CreditVerificationRules`, `MainContact`, `PrimaryContact`, `BillingContact`
 
 **Returns:** Customer name, status, billing/shipping addresses, primary contact, credit terms, and balance.
 
@@ -141,10 +146,10 @@ Retrieve a vendor record by Vendor ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `vendorId` | string | Yes | Vendor ID (e.g., `V000001`) |
+| `vendorID` | string | Yes | Vendor ID. Format is instance-specific (depends on the configured numbering sequence). Use `acumatica_list_entities` (entityName=`Vendor`) to look up by name. |
 
-**Endpoint:** `GET /entity/Default/25.200.001/Vendor/{vendorId}`
-**Expands:** `MainContact`
+**Endpoint:** `GET /entity/Default/25.200.001/Vendor/{vendorID}`
+**Expands:** `MainContact`, `PrimaryContact`
 
 **Returns:** Vendor name, status, payment terms, tax info, and primary contact.
 
@@ -156,11 +161,11 @@ Retrieve a sales order by order type and order number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `orderType` | string | No | `SO` | Order type (e.g., `SO`) |
-| `orderNbr` | string | Yes | -- | Order number |
+| `orderType` | string | No | `SO` | Order type code. `SO` is the standard out-of-the-box sales order type; other types are configured per instance in Sales Order Types (SO201000). |
+| `orderNbr` | string | Yes | -- | Sales order number. Format is instance-specific — use `acumatica_list_entities` (entityName=`SalesOrder`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/SalesOrder/{orderType}/{orderNbr}`
-**Expands:** `Details`, `ShippingSettings`
+**Expands:** `Details`
 
 **Returns:** Header info, line items, totals, shipping details, and status.
 
@@ -174,8 +179,8 @@ Retrieve an AR invoice by type and reference number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | No | `Invoice` | Document type (`Invoice`, `Credit Memo`, `Debit Memo`) |
-| `referenceNbr` | string | Yes | -- | Invoice reference number |
+| `type` | string | No | `Invoice` | Document type. Common values: `Invoice`, `Credit Memo`, `Debit Memo`. |
+| `referenceNbr` | string | Yes | -- | Invoice reference number. Format is instance-specific — use `acumatica_list_entities` (entityName=`Invoice`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Invoice/{type}/{referenceNbr}`
 **Expands:** `Details`, `TaxDetails`
@@ -190,8 +195,8 @@ Retrieve an AP bill by type and reference number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | No | `Bill` | Document type (`Bill`, `Credit Adj.`, `Debit Adj.`) |
-| `referenceNbr` | string | Yes | -- | Bill reference number |
+| `type` | string | No | `Bill` | Document type. Common values: `Bill`, `Credit Adj.`, `Debit Adj.`. |
+| `referenceNbr` | string | Yes | -- | Bill reference number. Format is instance-specific — use `acumatica_list_entities` (entityName=`Bill`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Bill/{type}/{referenceNbr}`
 **Expands:** `Details`, `TaxDetails`
@@ -206,10 +211,9 @@ Retrieve a GL journal transaction batch by batch number.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `batchNbr` | string | Yes | Journal batch number |
+| `batchNbr` | string | Yes | Journal batch number. Format is instance-specific — use `acumatica_list_entities` (entityName=`JournalTransaction`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/JournalTransaction/{batchNbr}`
-**Expands:** `Details`
 
 **Returns:** Module, ledger, post period, and detail lines with account, debit/credit amounts.
 
@@ -221,8 +225,8 @@ Retrieve an AR payment by type and reference number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | No | `Payment` | Payment type (`Payment`, `Prepayment`, `Refund`, `Voided Check`) |
-| `referenceNbr` | string | Yes | -- | Payment reference number |
+| `type` | string | No | `Payment` | Payment type. Common values: `Payment`, `Prepayment`, `Refund`, `Voided Check`. |
+| `referenceNbr` | string | Yes | -- | Payment reference number. Format is instance-specific — use `acumatica_list_entities` (entityName=`Payment`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Payment/{type}/{referenceNbr}`
 **Expands:** `DocumentsToApply`, `OrdersToApply`
@@ -237,7 +241,7 @@ Retrieve a GL account from the chart of accounts.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `accountCD` | string | Yes | GL account code (e.g., `10000`, `40000`) |
+| `accountCD` | string | Yes | GL account code (Acumatica calls this `AccountCD`; the `CD` suffix is its term for a user-readable code). Format depends on the chart of accounts — use `acumatica_list_entities` (entityName=`Account`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Account/{accountCD}`
 
@@ -251,8 +255,8 @@ Retrieve an AP check (vendor payment) by type and reference number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | No | `Check` | Document type (`Check`, `Prepayment`, `Voided Check`) |
-| `referenceNbr` | string | Yes | -- | Check reference number |
+| `type` | string | No | `Check` | Document type. Common values: `Check`, `Prepayment`, `Voided Check`. |
+| `referenceNbr` | string | Yes | -- | Check reference number. Format is instance-specific — use `acumatica_list_entities` (entityName=`Check`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Check/{type}/{referenceNbr}`
 **Expands:** `Details`, `History`
@@ -269,7 +273,7 @@ Retrieve a stock item by inventory ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `inventoryID` | string | Yes | Inventory ID (e.g., `AALEGO500`) |
+| `inventoryID` | string | Yes | Inventory ID. Format is instance-specific (depends on the item numbering sequence). If you only have a description, use `acumatica_list_entities` (entityName=`StockItem`, filter on `Description`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/StockItem/{inventoryID}`
 **Expands:** `WarehouseDetails`, `VendorDetails`
@@ -284,7 +288,7 @@ Retrieve a non-stock item (service, labor, expense) by inventory ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `inventoryID` | string | Yes | Inventory ID for the non-stock item |
+| `inventoryID` | string | Yes | Inventory ID for the non-stock item. Format is instance-specific — use `acumatica_list_entities` (entityName=`NonStockItem`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/NonStockItem/{inventoryID}`
 
@@ -298,9 +302,10 @@ Retrieve real-time available quantity for an inventory item across all warehouse
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `inventoryID` | string | Yes | Inventory ID to check availability for |
+| `inventoryID` | string | Yes | Inventory ID to check availability for. If unknown, use `acumatica_list_entities` (entityName=`StockItem`) to find the item first. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/InventoryQuantityAvailable/{inventoryID}`
+**Expands:** `Results`
 
 **Returns:** On-hand, available, and allocated quantities.
 
@@ -312,10 +317,11 @@ Retrieve aggregated inventory balances for an item, optionally filtered by wareh
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `inventoryID` | string | Yes | Inventory ID to summarize |
-| `warehouseID` | string | No | Optional warehouse ID to filter by |
+| `inventoryID` | string | Yes | Inventory ID to summarize. If unknown, use `acumatica_list_entities` (entityName=`StockItem`) to find the item first. |
+| `warehouseID` | string | No | Optional warehouse ID to filter by. Omit to return rows across all warehouses. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/InventorySummaryInquiry/{inventoryID}` (with optional warehouse filter)
+**Expands:** `Results`
 
 **Returns:** Summary rows with on-hand, available, and other quantity breakdowns.
 
@@ -327,7 +333,7 @@ Retrieve a warehouse by ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `warehouseID` | string | Yes | Warehouse ID (e.g., `MAIN`, `WHOLESALE`) |
+| `warehouseID` | string | Yes | Warehouse ID. Codes are configured per instance — use `acumatica_list_entities` (entityName=`Warehouse`) to discover what's defined. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Warehouse/{warehouseID}`
 **Expands:** `Locations`
@@ -342,7 +348,7 @@ Retrieve an item class by class ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `classID` | string | Yes | Item class ID (e.g., `STOCKITEM`, `INTANGIBLE`) |
+| `classID` | string | Yes | Item class ID. Codes are configured per instance — use `acumatica_list_entities` (entityName=`ItemClass`) to discover defined classes. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/ItemClass/{classID}`
 
@@ -358,8 +364,8 @@ Retrieve a purchase order by type and order number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | No | `Normal` | PO type (`Normal`, `DropShip`, `Blanket`) |
-| `orderNbr` | string | Yes | -- | Purchase order number |
+| `type` | string | No | `Normal` | PO type. Common values: `Normal`, `DropShip`, `Blanket`. |
+| `orderNbr` | string | Yes | -- | Purchase order number. Format is instance-specific — use `acumatica_list_entities` (entityName=`PurchaseOrder`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/PurchaseOrder/{type}/{orderNbr}`
 **Expands:** `Details`
@@ -374,8 +380,8 @@ Retrieve a purchase receipt by type and receipt number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | No | `Receipt` | Receipt type (`Receipt`, `Return`) |
-| `receiptNbr` | string | Yes | -- | Purchase receipt number |
+| `type` | string | No | `Receipt` | Receipt type. Common values: `Receipt`, `Return`. |
+| `receiptNbr` | string | Yes | -- | Purchase receipt number. Format is instance-specific — use `acumatica_list_entities` (entityName=`PurchaseReceipt`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/PurchaseReceipt/{type}/{receiptNbr}`
 **Expands:** `Details`
@@ -392,7 +398,7 @@ Retrieve a project by project ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `projectID` | string | Yes | Project ID |
+| `projectID` | string | Yes | Project ID. Format is instance-specific — use `acumatica_list_entities` (entityName=`Project`) to look up by description. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Project/{projectID}`
 
@@ -406,8 +412,8 @@ Retrieve a project task by project ID and task ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `projectID` | string | Yes | Project ID |
-| `projectTaskID` | string | Yes | Project task ID |
+| `projectID` | string | Yes | Project ID (instance-specific format). |
+| `projectTaskID` | string | Yes | Project task ID. Use `acumatica_list_entities` (entityName=`ProjectTask`, filter on `ProjectID`) to enumerate tasks for a project. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/ProjectTask/{projectID}/{projectTaskID}`
 
@@ -421,10 +427,10 @@ Retrieve a project budget line by project, task, and account group.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `projectID` | string | Yes | Project ID |
-| `projectTaskID` | string | Yes | Project task ID |
-| `accountGroup` | string | Yes | Account group |
-| `inventoryID` | string | No | Optional inventory ID for item-level budget |
+| `projectID` | string | Yes | Project ID (instance-specific format). |
+| `projectTaskID` | string | Yes | Project task ID. |
+| `accountGroup` | string | Yes | Account group code. Account groups are configured per instance — use `acumatica_list_entities` (entityName=`AccountGroup`) to discover defined groups. |
+| `inventoryID` | string | No | Optional inventory ID for an item-level budget line. Omit for non-item budget lines. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/ProjectBudget/{projectID}/{projectTaskID}/{accountGroup}`
 
@@ -438,8 +444,8 @@ Retrieve a project transaction by module and reference number.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `module` | string | Yes | Module (e.g., `PM`, `AR`, `AP`, `GL`) |
-| `referenceNbr` | string | Yes | Transaction reference number |
+| `module` | string | Yes | Module code. Standard Acumatica modules: `PM` (project management), `AR` (receivables), `AP` (payables), `GL` (general ledger), `IN` (inventory), `CA` (cash management). |
+| `referenceNbr` | string | Yes | Transaction reference number (instance-specific format). |
 
 **Endpoint:** `GET /entity/Default/25.200.001/ProjectTransaction/{module}/{referenceNbr}`
 **Expands:** `Details`
@@ -456,7 +462,7 @@ Retrieve a support case by case ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `caseID` | string | Yes | Case ID (e.g., `C000001`) |
+| `caseID` | string | Yes | Case ID. Format is instance-specific — use `acumatica_list_entities` (entityName=`Case`, filter on `Subject` or `BusinessAccount`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Case/{caseID}`
 
@@ -470,8 +476,8 @@ Retrieve a field service order by type and number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `serviceOrderType` | string | No | `SL` | Service order type |
-| `serviceOrderNbr` | string | Yes | -- | Service order number |
+| `serviceOrderType` | string | No | `SL` | Service order type code. `SL` is the standard out-of-the-box type; other types are configured per instance. |
+| `serviceOrderNbr` | string | Yes | -- | Service order number. Format is instance-specific — use `acumatica_list_entities` (entityName=`ServiceOrder`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/ServiceOrder/{serviceOrderType}/{serviceOrderNbr}`
 **Expands:** `Details`, `Appointments`
@@ -486,11 +492,11 @@ Retrieve a field service appointment by type and number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `serviceOrderType` | string | No | `SL` | Service order type |
-| `appointmentNbr` | string | Yes | -- | Appointment number |
+| `serviceOrderType` | string | No | `SL` | Service order type code. |
+| `appointmentNbr` | string | Yes | -- | Appointment number. Format is instance-specific — use `acumatica_list_entities` (entityName=`Appointment`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Appointment/{serviceOrderType}/{appointmentNbr}`
-**Expands:** `Services`, `Staff`
+**Expands:** `Details`, `Staff`, `Logs`
 
 **Returns:** Scheduled/actual dates and durations, customer, staff, services, cost, profit, and status.
 
@@ -504,7 +510,7 @@ Retrieve a CRM contact by contact ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `contactID` | string | Yes | Contact ID (numeric) |
+| `contactID` | string | Yes | Contact ID — system-generated integer (passed as a string). If unknown, use `acumatica_list_entities` (entityName=`Contact`, filter on `Email`, `FirstName`/`LastName`, or `BusinessAccount`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Contact/{contactID}`
 
@@ -518,7 +524,7 @@ Retrieve a business account (prospect, customer, or vendor) by ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `businessAccountID` | string | Yes | Business account ID |
+| `businessAccountID` | string | Yes | Business account ID. Format is instance-specific — use `acumatica_list_entities` (entityName=`BusinessAccount`, filter on `Name`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/BusinessAccount/{businessAccountID}`
 **Expands:** `MainContact`
@@ -533,10 +539,10 @@ Retrieve a sales opportunity by ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `opportunityID` | string | Yes | Opportunity ID |
+| `opportunityID` | string | Yes | Opportunity ID. Format is instance-specific — use `acumatica_list_entities` (entityName=`Opportunity`, filter on `Subject` or `BusinessAccount`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Opportunity/{opportunityID}`
-**Expands:** `Products`
+**Expands:** `Products`, `TaxDetails`
 
 **Returns:** Subject, stage, status, amount, discount, total, business account, contact, products, source, and estimation date.
 
@@ -548,7 +554,7 @@ Retrieve a marketing lead by lead ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `leadID` | string | Yes | Lead ID (numeric) |
+| `leadID` | string | Yes | Lead ID — system-generated integer (passed as a string). If unknown, use `acumatica_list_entities` (entityName=`Lead`, filter on `Email`, `Name`, or `Company`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Lead/{leadID}`
 
@@ -562,7 +568,7 @@ Retrieve a salesperson by ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `salespersonID` | string | Yes | Salesperson ID |
+| `salespersonID` | string | Yes | Salesperson ID. Format is instance-specific — use `acumatica_list_entities` (entityName=`Salesperson`) to look up by name. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Salesperson/{salespersonID}`
 
@@ -578,10 +584,10 @@ Retrieve a shipment by shipment number.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `shipmentNbr` | string | Yes | Shipment number |
+| `shipmentNbr` | string | Yes | Shipment number. Format is instance-specific — use `acumatica_list_entities` (entityName=`Shipment`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Shipment/{shipmentNbr}`
-**Expands:** `Details`, `Packages`
+**Expands:** `Details`, `Packages`, `Orders`
 
 **Returns:** Customer, warehouse, ship via, shipped quantities/weight/volume, packages with tracking numbers, line items, and freight details.
 
@@ -593,8 +599,8 @@ Retrieve a sales invoice by type and reference number.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | No | `Invoice` | Document type (`Invoice`, `Credit Memo`) |
-| `referenceNbr` | string | Yes | -- | Sales invoice reference number |
+| `type` | string | No | `Invoice` | Document type. Common values: `Invoice`, `Credit Memo`. |
+| `referenceNbr` | string | Yes | -- | Sales invoice reference number. Format is instance-specific — use `acumatica_list_entities` (entityName=`SalesInvoice`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/SalesInvoice/{type}/{referenceNbr}`
 **Expands:** `Details`, `TaxDetails`
@@ -611,10 +617,10 @@ Retrieve an employee by employee ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `employeeID` | string | Yes | Employee ID (e.g., `EP00000001`) |
+| `employeeID` | string | Yes | Employee ID. Format is instance-specific — use `acumatica_list_entities` (entityName=`Employee`, filter on `Name`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Employee/{employeeID}`
-**Expands:** `Contact`, `EmployeeSettings`, `FinancialSettings`
+**Expands:** `ContactInfo`, `EmployeeSettings`, `FinancialSettings`
 
 **Returns:** Name, status, contact info, employee settings, and financial settings.
 
@@ -626,7 +632,7 @@ Retrieve an expense claim by reference number.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `refNbr` | string | Yes | Expense claim reference number |
+| `refNbr` | string | Yes | Expense claim reference number. Format is instance-specific — use `acumatica_list_entities` (entityName=`ExpenseClaim`) to look up. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/ExpenseClaim/{refNbr}`
 **Expands:** `Details`, `TaxDetails`
@@ -641,7 +647,7 @@ Retrieve a time entry by ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `timeEntryID` | string | Yes | Time entry ID (GUID) |
+| `timeEntryID` | string | Yes | Time entry ID — system-generated GUID. Use `acumatica_list_entities` (entityName=`TimeEntry`, filter on `EmployeeID`, `Date`, or `ProjectID`) to find IDs. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/TimeEntry/{timeEntryID}`
 
@@ -657,7 +663,7 @@ Retrieve a CRM email activity by note ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `noteID` | string | Yes | Email note ID (GUID) |
+| `noteID` | string | Yes | Email note ID — system-generated GUID. Use `acumatica_list_entities` (entityName=`Email`, filter on `Subject`, `From`, or `To`) to find note IDs. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Email/{noteID}`
 
@@ -671,7 +677,7 @@ Retrieve a CRM event by note ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `noteID` | string | Yes | Event note ID (GUID) |
+| `noteID` | string | Yes | Event note ID — system-generated GUID. Use `acumatica_list_entities` (entityName=`Event`, filter on `Summary` or `StartDate`) to find note IDs. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Event/{noteID}`
 **Expands:** `Attendees`
@@ -686,7 +692,7 @@ Retrieve a CRM activity by note ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `noteID` | string | Yes | Activity note ID (GUID) |
+| `noteID` | string | Yes | Activity note ID — system-generated GUID. Use `acumatica_list_entities` (entityName=`Activity`) to find note IDs. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Activity/{noteID}`
 
@@ -700,9 +706,8 @@ Retrieve a CRM task by note ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `noteID` | string | Yes | Task note ID (GUID) |
+| `noteID` | string | Yes | Task note ID — system-generated GUID. Use `acumatica_list_entities` (entityName=`Task`, filter on `Summary` or `DueDate`) to find note IDs. |
 
 **Endpoint:** `GET /entity/Default/25.200.001/Task/{noteID}`
-**Expands:** `RelatedActivities`, `RelatedTasks`
 
 **Returns:** Summary, status, priority, due date, completion percentage, related activities/tasks, and owner.

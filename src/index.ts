@@ -23,7 +23,7 @@ import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.29.1",
+    version: "0.30.0",
   });
 
   private redactPatterns?: string;
@@ -103,7 +103,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       {
         inquiryName: z
           .string()
-          .describe("Generic Inquiry name as configured in Acumatica (e.g., 'GI000001')"),
+          .describe("Generic Inquiry name as configured in Acumatica (e.g., 'ProjectBudgetSummary'). Names are arbitrary identifiers chosen when the GI was created — use acumatica_list_generic_inquiries to discover available names."),
         filterExpression: z
           .string()
           .optional()
@@ -131,11 +131,11 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
     this.server.tool(
       "acumatica_list_entities",
-      "List or search any Acumatica entity with filtering, sorting, and field selection. Use this to find records matching criteria (e.g., all open invoices over $10,000, customers in a state, stock items below reorder point). IMPORTANT: Always use filterExpression to scope queries. Never retrieve all records from large entities (JournalTransaction, Invoice, Bill, etc.). Do NOT paginate by making multiple calls to fetch all data — if results are truncated, help the user refine their filter. Supported entity names include: Customer, Vendor, SalesOrder, Invoice, Bill, Payment, Check, StockItem, NonStockItem, PurchaseOrder, PurchaseReceipt, Shipment, SalesInvoice, Project, Case, ServiceOrder, Appointment, Contact, BusinessAccount, Opportunity, Lead, Employee, ExpenseClaim, JournalTransaction, and more.",
+      "List or search any Acumatica entity in the contract-based Default endpoint with filtering, sorting, and field selection. Use this to find records matching criteria (e.g., open invoices over $10,000, customers in a state, stock items below reorder point) or to look up an ID by name when calling an acumatica_get_* tool. IMPORTANT: Always pass filterExpression to scope queries — never retrieve all records from large entities (JournalTransaction, Invoice, Bill, Payment, etc.). Do NOT paginate by making multiple calls to fetch all data — if the response is truncated, ask the user to narrow their filter. Auth/role metadata entities (User, UserRole, Role) are intentionally blocked and will return an error. To discover available entity names, use the entityName from any acumatica_get_* tool, or call acumatica_describe_entity to verify a candidate name.",
       {
         entityName: z
           .string()
-          .describe("Acumatica entity name (e.g., 'Customer', 'Invoice', 'SalesOrder', 'StockItem')"),
+          .describe("Acumatica entity name (e.g., 'Customer', 'Invoice', 'SalesOrder', 'StockItem'). Bare entity name only — do not include a 'Default/' path prefix."),
         filterExpression: z
           .string()
           .optional()
@@ -150,7 +150,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         selectFields: z
           .string()
           .optional()
-          .describe("Comma-separated field names to return (e.g., 'CustomerID,CustomerName,Status')"),
+          .describe("Comma-separated field names to return (e.g., 'CustomerID,CustomerName,Status'). Some entities reject $select on certain fields and 500; the tool auto-retries without $select and returns a warning if that happens."),
         orderBy: z
           .string()
           .optional()
@@ -158,7 +158,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         expand: z
           .string()
           .optional()
-          .describe("Comma-separated sub-entities to include (e.g., 'Details', 'MainContact,BillingContact')"),
+          .describe("Comma-separated sub-entities to include (e.g., 'Details', 'MainContact,BillingContact'). Single-level only — nested paths like 'Details/Tax' or 'MainContact/UserInfo' are rejected. To pull deeper detail, call the matching acumatica_get_* tool on the related record."),
       },
       async ({ entityName, filterExpression, topN, selectFields, orderBy, expand }) => {
         return this.callTool(
@@ -171,7 +171,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
     this.server.tool(
       "acumatica_describe_entity",
-      "Describe the fields and structure of any Acumatica entity. Call this before using acumatica_list_entities to discover available field names, types, and sub-entities for filtering, sorting, and selection.",
+      "Describe the fields and structure of any Acumatica entity. Call this before acumatica_list_entities to discover available field names, types, and sub-entities for filtering, sorting, and selection. Schemas are cached for 24 hours — if an Acumatica administrator just added a custom field or modified the entity, call acumatica_clear_cache (target='schema:EntityName') first.",
       {
         entityName: z
           .string()
@@ -213,7 +213,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
     this.server.tool(
       "acumatica_describe_inquiry",
-      "Returns the field schema for a Generic Inquiry (GI) exposed via OData — field names and inferred types. Use this before calling acumatica_run_inquiry to know which fields are available for filtering and selection.",
+      "Returns the field schema for a Generic Inquiry (GI) exposed via OData. Field names and types are inferred from a single live sample row — types may be approximate (e.g. a column that is null in the sample reports as 'unknown'), and a GI that returns no rows yields an empty field list. Use this before calling acumatica_run_inquiry to know which fields are available for filtering and selection. For authoritative entity schemas (not GIs), use acumatica_describe_entity instead.",
       {
         inquiryName: z
           .string()
@@ -230,12 +230,20 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
     this.server.tool(
       "acumatica_clear_cache",
-      "Clear cached metadata (entity schemas, GI lists, GI field schemas). Use when Acumatica customizations have changed and cached schema data is stale. With no arguments, clears all cached metadata. Optionally specify a target to clear only that cache.",
+      "Clear cached metadata (entity schemas, GI lists, GI field schemas). Use when an Acumatica administrator has changed customizations and cached schema data is stale. With no arguments, clears all cached metadata.",
       {
         target: z
           .string()
           .optional()
-          .describe("What to clear: 'schema:EntityName' (one entity schema), 'schemas' (all entity schemas), 'gi' (GI list + metadata), 'gi_schema:InquiryName' (one GI schema), or omit to clear everything."),
+          .describe(
+            "What to clear. Accepted values:\n" +
+              "  - omitted        → clear everything\n" +
+              "  - 'schemas'      → clear all entity schemas (bulk)\n" +
+              "  - 'gi'           → clear the GI list + OData $metadata (bulk)\n" +
+              "  - 'schema:<EntityName>'    → clear one entity schema (e.g. 'schema:Customer')\n" +
+              "  - 'gi_schema:<InquiryName>' → clear one GI's inferred field schema (e.g. 'gi_schema:ProjectBudgetSummary')\n" +
+              "Other strings are rejected. Note 'schemas' (plural, bulk) vs 'schema:Foo' (singular, specific)."
+          ),
       },
       async ({ target }) => {
         return this.callTool(

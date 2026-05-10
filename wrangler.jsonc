@@ -1,0 +1,119 @@
+// MCP4Acumatica — Cloudflare Workers configuration
+//
+// This file is the deployment template. Two install paths use it:
+//
+//   1. "Deploy to Cloudflare" button (GUI install)
+//        Cloudflare reads this file from your fork, auto-creates the KV
+//        namespace and R2 bucket, prompts for the Acumatica vars and
+//        secrets, and deploys. No terminal needed.
+//
+//   2. ./setup.sh (CLI install)
+//        The setup script substitutes ACUMATICA_URL, ACUMATICA_TENANT,
+//        ACUMATICA_ENDPOINT_VERSION, and the KV namespace id into this
+//        file in place. After your first run, hide local mods with:
+//          git update-index --skip-worktree wrangler.jsonc
+//
+// In both paths, after deploy you can edit any var or secret from the
+// Cloudflare dashboard:
+//   Workers & Pages → mcp4acumatica → Settings → Variables and Secrets
+{
+	"name": "mcp4acumatica",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-03-01",
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
+
+	// Acumatica instance configuration. Edit these for your deployment
+	// (or leave the placeholders and override via the dashboard after deploy).
+	"vars": {
+		"ACUMATICA_URL": "https://your-instance.acumatica.com",
+		"ACUMATICA_TENANT": "YourTenant",
+		"ACUMATICA_ENDPOINT_VERSION": "25.200.001",
+		"ACUMATICA_MAX_RECORDS": "1000",
+		"ACUMATICA_MCP_ROLE": "MCP Access",
+		"REDACT_PATTERNS": "",
+		"REDACT_SKIP": ""
+	},
+
+	// KV namespaces — used for per-user Acumatica tokens, OAuth state, the
+	// metadata cache, and runtime config overrides. Both bindings point at
+	// the same physical namespace; OAUTH_KV is required by
+	// @cloudflare/workers-oauth-provider internally.
+	//
+	// The Deploy-to-Cloudflare button creates the namespace automatically.
+	// setup.sh creates one and writes its id into both bindings below.
+	"kv_namespaces": [
+		{
+			"binding": "TOKEN_STORE",
+			"id": ""
+		},
+		{
+			"binding": "OAUTH_KV",
+			"id": ""
+		}
+	],
+
+	// Keep the *.workers.dev subdomain so the deploy is reachable without
+	// any DNS setup. Add custom-domain routes to your local copy if you
+	// want a branded hostname (see commented example below).
+	"workers_dev": true,
+
+	// Custom-domain routes (optional). To enable, uncomment and edit, OR
+	// add the route via the Cloudflare dashboard:
+	//   Workers & Pages → mcp4acumatica → Settings → Domains & Routes.
+	// "routes": [
+	// 	{ "pattern": "mcp.example.com/*", "zone_name": "example.com" }
+	// ],
+
+	// Durable Object for McpAgent (agents SDK)
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MCP_OBJECT",
+				"class_name": "AcumaticaMcpServer"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"AcumaticaMcpServer"
+			]
+		}
+	],
+
+	// Logpush — emit trace events for Logpush to capture and send to R2.
+	// Requires Workers Paid plan ($5/month).
+	"logpush": true,
+
+	// Workers Logs — short-retention live tail in the Cloudflare dashboard.
+	"observability": {
+		"enabled": true
+	},
+
+	// Allow importing .md and .sh files as text modules (docs site + /install.sh route).
+	"rules": [
+		{
+			"type": "Text",
+			"globs": [
+				"**/*.md",
+				"**/*.sh"
+			],
+			"fallthrough": true
+		}
+	],
+
+	// R2 bucket for long-term log storage via Logpush.
+	// The Deploy-to-Cloudflare button creates this automatically;
+	// setup.sh creates it via `wrangler r2 bucket create`.
+	"r2_buckets": [
+		{
+			"binding": "mcp4acumatica_logs",
+			"bucket_name": "mcp4acumatica-logs",
+			"remote": true
+		}
+	]
+}

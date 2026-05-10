@@ -244,11 +244,18 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import express from "express";
 
-// Import tool handlers (these are fully portable)
-import { handleGetCustomer } from "./tools/customers";
-import { handleGetVendor } from "./tools/vendors";
-import { handleGetSalesOrder } from "./tools/sales-orders";
-// ... import all tool handlers
+// Import the shared getter registry and the utility-tool handlers.
+// These modules are fully portable — they take AppEnv (not the Cloudflare Env)
+// and never touch worker-specific bindings.
+import { GETTER_TOOLS, paramsShape, runGetter } from "./tools/getter-registry";
+import { handleListEntities } from "./tools/entity-list";
+import { handleDescribeEntity } from "./tools/entity-schema";
+import { handleRunInquiry } from "./tools/generic-inquiries";
+import {
+  handleListGenericInquiries,
+  handleDescribeInquiry,
+} from "./tools/generic-inquiry-discovery";
+import { handleClearCache } from "./tools/clear-cache";
 
 const app = express();
 app.use(express.json());
@@ -256,24 +263,34 @@ app.use(express.json());
 // Create MCP server
 const server = new McpServer({
   name: "mcp4acumatica",
-  version: "0.23.0",
+  version: "0.30.0",
 });
 
-// Register tools (same Zod schemas + handlers as index.ts)
-server.tool(
-  "acumatica_get_customer",
-  "Retrieve customer record by Customer ID.",
-  { customerId: z.string().describe("Acumatica Customer ID") },
-  async ({ customerId }) => {
-    try {
-      const result = await handleGetCustomer(appEnv, username, { customerId });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (error) {
-      return { content: [{ type: "text", text: `Error: ${error.message}` }] };
+// Register all 38 per-entity getter tools from the shared registry. This is
+// the same loop used in src/index.ts — adding a new single-record lookup is a
+// new entry in GETTER_TOOLS, not a new server.tool(...) block.
+for (const spec of GETTER_TOOLS) {
+  server.tool(
+    spec.name,
+    spec.description,
+    paramsShape(spec.params),
+    async (args: Record<string, string | undefined>) => {
+      try {
+        const result = await runGetter(spec, appEnv, username, args);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Error: ${(error as Error).message}` }] };
+      }
     }
-  }
-);
-// ... register all 44 tools
+  );
+}
+
+// Register the 6 utility/discovery tools (acumatica_list_entities,
+// acumatica_describe_entity, acumatica_run_inquiry,
+// acumatica_list_generic_inquiries, acumatica_describe_inquiry,
+// acumatica_clear_cache). Each takes AppEnv + username and ports without
+// modification — copy the corresponding server.tool(...) blocks from
+// src/index.ts (the Zod schemas and descriptions are identical).
 
 // MCP endpoint
 app.post("/mcp", async (req, res) => {

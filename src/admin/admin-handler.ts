@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import type { Env } from "../types/acumatica";
 import { getConfig, setConfig, deleteConfig, CONFIG_KEYS, validateConfigValue } from "../lib/config";
 import { hmacSign, hmacVerify, constantTimeEqual, parseCookies } from "../lib/crypto";
+import { runPreflight, type PreflightCheck } from "../lib/preflight";
 
 // ── Session cookie + CSRF helpers ─────────────────────────────────
 //
@@ -167,6 +168,7 @@ function renderAdminPage(title: string, activeTab: string, bodyHtml: string): st
   const tabs = [
     { slug: "logs", label: "Logs" },
     { slug: "settings", label: "Settings" },
+    { slug: "preflight", label: "Preflight" },
   ];
 
   const navLinks = tabs
@@ -707,6 +709,89 @@ adminApp.post("/sessions/revoke-all", async (c) => {
   headers.append("Set-Cookie", sessionCookie);
   headers.append("Set-Cookie", csrfCookie);
   return new Response(JSON.stringify({ ok: true, deleted }), { status: 200, headers });
+});
+
+// ── Preflight page ───────────────────────────────────────────────
+//
+// On-demand diagnostic that exercises every Acumatica touch-point the
+// worker needs at runtime (reachability, OIDC discovery, Connected App
+// credentials, tenant path, endpoint version). Purely admin-facing — does
+// not send data anywhere, just issues probes and reports pass/fail.
+
+adminApp.get("/preflight", (c) => {
+  const html = `
+    <h1>Preflight</h1>
+    <p>Exercises the Acumatica + deployment wiring and reports any misconfigured values. Run this after changes to <code>wrangler.jsonc</code>, Connected App settings, or Acumatica roles.</p>
+    <div id="preflight-alert"></div>
+    <button class="btn btn-primary" onclick="runPreflight()">Run checks</button>
+    <div id="preflight-results" style="margin-top:20px">
+      <div class="empty-state">Click "Run checks" to probe Acumatica.</div>
+    </div>
+    <script>
+      async function runPreflight() {
+        document.getElementById('preflight-results').innerHTML = '<div class="empty-state">Running checks… this can take up to 30 seconds.</div>';
+        try {
+          const res = await fetch('/docs/admin/preflight/api');
+          const data = await res.json();
+          if (data.error) {
+            document.getElementById('preflight-results').innerHTML = '<div class="alert alert-error">' + esc(data.error) + '</div>';
+            return;
+          }
+          renderResults(data.checks || []);
+        } catch (err) {
+          document.getElementById('preflight-results').innerHTML = '<div class="alert alert-error">Failed to run preflight: ' + esc(err && err.message) + '</div>';
+        }
+      }
+      function esc(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+      function renderResults(checks) {
+        const passCount = checks.filter(c => c.status === 'pass').length;
+        const failCount = checks.filter(c => c.status === 'fail').length;
+        const warnCount = checks.filter(c => c.status === 'warn').length;
+        const summary = failCount > 0
+          ? '<div class="alert alert-error">' + failCount + ' check(s) failed. Fix the items below.</div>'
+          : warnCount > 0
+            ? '<div class="alert alert-info">' + passCount + ' passed, ' + warnCount + ' warning(s).</div>'
+            : '<div class="alert alert-success">All ' + passCount + ' check(s) passed.</div>';
+
+        let html = summary + '<table><thead><tr><th style="width:160px">Check</th><th style="width:80px">Status</th><th>Detail</th></tr></thead><tbody>';
+        for (const check of checks) {
+          const color = check.status === 'pass' ? 'success'
+            : check.status === 'fail' ? 'error'
+            : check.status === 'warn' ? 'info'
+            : 'info';
+          html += '<tr>';
+          html += '<td><strong>' + esc(check.name) + '</strong></td>';
+          html += '<td><span class="alert alert-' + color + '" style="padding:2px 8px;font-size:11px;font-weight:600;text-transform:uppercase">' + esc(check.status) + '</span></td>';
+          html += '<td>' + esc(check.detail);
+          if (check.remediation) {
+            html += '<div style="margin-top:6px;padding:8px;background:var(--code-bg);border-radius:4px;font-size:12px">' + esc(check.remediation) + '</div>';
+          }
+          html += '</td></tr>';
+        }
+        html += '</tbody></table>';
+        document.getElementById('preflight-results').innerHTML = html;
+      }
+    </script>`;
+  return c.html(renderAdminPage("Preflight", "preflight", html));
+});
+
+adminApp.get("/preflight/api", async (c) => {
+  const origin = new URL(c.req.url).origin;
+  const checks: PreflightCheck[] = await runPreflight({
+    acumaticaUrl: c.env.ACUMATICA_URL,
+    acumaticaTenant: c.env.ACUMATICA_TENANT,
+    acumaticaEndpointVersion: c.env.ACUMATICA_ENDPOINT_VERSION,
+    acumaticaClientId: c.env.ACUMATICA_CLIENT_ID,
+    acumaticaClientSecret: c.env.ACUMATICA_CLIENT_SECRET,
+    adminSecret: c.env.ADMIN_SECRET,
+    cookieEncryptionKey: c.env.COOKIE_ENCRYPTION_KEY,
+    expectedCallbackUrl: `${origin}/callback`,
+  });
+  return c.json({ checks });
 });
 
 // ── Logs page ────────────────────────────────────────────────────

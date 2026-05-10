@@ -7,8 +7,8 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.29.1`
-- **Deployed at:** `https://acumatica-mcp.hallboys.com` (custom domain) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
+- **Current tag:** `25R2-0.30.0`
+- **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.it-495.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
 ## Architecture
@@ -76,6 +76,14 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 12. **Registry-driven getters.** The 38 per-entity `acumatica_get_*` tools are defined as data in `src/tools/getter-registry.ts` (`GETTER_TOOLS`). Each entry describes an entity name, parameter list with defaults/optionality, and optional `$expand`. `src/index.ts` loops over the registry and registers each tool via a shared `runGetter()` handler. Adding a new single-record lookup is a ~7-line registry entry — no per-tool handler file, no per-tool `server.tool(...)` block. Utility/discovery tools that do more than a plain GET (pagination envelope, `$metadata` parse, cache invalidation) stay as dedicated handler files.
 
+13. **Config diagnostics.** `src/lib/preflight.ts` exposes a `runPreflight()` probe that exercises every external touch-point: `ACUMATICA_URL` reachable, OIDC discovery, Connected App `client_credentials` grant (distinguishes `invalid_client` — bad creds — from `unsupported_grant_type` — creds valid, grant disabled), tenant OData path (`/t/{tenant}/...` → 401 = exists, 404 = wrong tenant), and contract API endpoint version. Surfaced two places: the admin console (`/docs/admin/preflight` → on-demand diagnostic table) and the `/callback` token-exchange path (known OAuth errors like `invalid_client` / `invalid_grant` are rendered as targeted pages via `interpretTokenError()` instead of a generic 502). Only the `error` field of IdentityServer error bodies is read — other fields can echo the submitted form, which includes `client_secret`.
+
+14. **One-shot deploy.** `setup.sh` at the repo root wraps the full Cloudflare setup (KV namespace create, R2 bucket create, in-place substitution of values into `wrangler.jsonc`, `wrangler secret put` for each secret, `wrangler deploy`). Idempotent — detects an existing KV id in `wrangler.jsonc` and reuses it; skips R2 creation if the bucket already exists; before overwriting `wrangler.jsonc` it saves the previous file to `wrangler.jsonc.local-backup` (gitignored). The substitution targets `ACUMATICA_URL`, `ACUMATICA_TENANT`, `ACUMATICA_ENDPOINT_VERSION`, and the KV `id` field (matches the empty placeholder shipped in the tracked template AND any prior real id, so re-running with the same answers is a no-op). `COOKIE_ENCRYPTION_KEY` is always generated fresh; `ADMIN_SECRET` is auto-generated if the user leaves the prompt blank (and printed once). After deploy, the script extracts the `*.workers.dev` URL from the deploy output, logs in with the just-set `ADMIN_SECRET`, and calls `/docs/admin/preflight/api` so Acumatica-side misconfig is surfaced in the terminal before the user ever opens a browser. The Acumatica-side prerequisites (Connected App, `MCP Access` role, `MCPAccess` GI) can't be automated and are called out as follow-ups. After first run, prints a hint to run `git update-index --skip-worktree wrangler.jsonc` so future setup re-runs / pulls don't fight with local values.
+
+15. **One-line installer.** `install.sh` at the repo root is served by the worker at `/install.sh` (imported as a text module via the `**/*.sh` rule in `wrangler.jsonc`). Users run `curl -fsSL https://<worker>/install.sh | bash`; it checks for `git`/`node`/`npm`, clones the repo, `npm install`s, and `exec`s `./setup.sh < /dev/tty`. The `/dev/tty` redirect is load-bearing — when piped from curl, stdin is the pipe, so setup.sh's interactive prompts would otherwise immediately EOF. Served with `Content-Type: text/x-shellscript` and `Cache-Control: max-age=300`.
+
+16. **GUI install via Deploy-to-Cloudflare button.** The README links `https://deploy.workers.cloudflare.com/?url=https://github.com/hallboys/MCP4Acumatica`, which forks the repo to the user's GitHub, reads `wrangler.jsonc`, auto-creates the KV namespace and R2 bucket from the bindings declared with empty `id`/auto-creatable resources, prompts for secrets, and deploys. Vars (`ACUMATICA_URL`, `ACUMATICA_TENANT`, etc.) ship as placeholders that the user edits via the Cloudflare dashboard's `Variables and Secrets` UI after the first deploy — Cloudflare automatically redeploys when vars change. Custom-domain routes are commented out in the committed template; users add them via the Cloudflare dashboard or by editing `wrangler.jsonc` in their fork. This path is the only one that works with no terminal — every other step (Connected App, MCP Access role, MCPAccess GI, dashboard edits) is already a web UI.
+
 ## Key Design Decisions
 
 1. **Acumatica as sole OAuth provider.** The MCP server redirects directly to Acumatica for login. No separate identity provider layer. See "Historical Note" below for why. The `/callback` route binds the OAuth `state` query parameter to an HttpOnly `acu_oauth_state` cookie set at `/authorize`; mismatch burns the KV state record (`acumatica_state:{state}`) as well as rejecting the request, so the record is single-use even on mismatch.
@@ -121,6 +129,7 @@ src/
 │   ├── metadata-cache.ts           # KV-backed cache (uses IKeyValueStore)
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   ├── logger.ts                  # Structured JSON audit logging (tool, auth, redaction events)
+│   ├── preflight.ts               # Config diagnostics — admin page + /callback error mapping
 │   └── redact.ts                  # Pattern-based sensitive field redaction
 ├── platform/
 │   └── cloudflare-kv-store.ts     # CloudflareKVStore — wraps KVNamespace as IKeyValueStore
@@ -137,13 +146,15 @@ src/
 
 ## Configuration
 
+### Tracked deploy template:
+- `wrangler.jsonc` — committed at repo root with placeholder values (`""` KV ids, `https://your-instance.acumatica.com`, etc.). Both install paths consume it: the "Deploy to Cloudflare" button reads it from a fork to auto-create bindings; `setup.sh` substitutes real values into it in place. Local production values (real KV id, hallboys-specific routes) are kept in the working tree but suppressed from `git status` via `git update-index --skip-worktree wrangler.jsonc`. The file `wrangler.jsonc.local-backup` is written by setup.sh before overwriting and is gitignored.
+
 ### Gitignored (instance-specific):
-- `wrangler.jsonc` — real KV IDs and instance vars (**still edit this file when config changes — do not skip it because it's gitignored**)
 - `.dev.vars` — secrets for local dev
 - `swagger.json` — instance OpenAPI spec
+- `wrangler.jsonc.local-backup` — last pre-overwrite copy of `wrangler.jsonc`, written by setup.sh
 
-### Tracked templates:
-- `wrangler.jsonc.example` — placeholder config for new users
+### Other tracked templates:
 - `.dev.vars.example` — documents required secrets
 
 ### Environment Variables (in wrangler.jsonc `vars`):
@@ -174,7 +185,7 @@ Settings can be changed at runtime via the admin console at `/docs/admin/setting
 - `config:acumatica_max_records`
 
 ### Acumatica Connected Application (SM303010):
-- **Redirect URI:** `https://acumatica-mcp.hallboys.com/callback` (add both custom domain and workers.dev URLs if using both)
+- **Redirect URI:** `https://mcp4acumatica.hallboys.com/callback` (plus `https://acumatica-mcp.hallboys.com/callback` while the legacy alias is still live, and the *.workers.dev URL if you use that too — every hostname users connect to must be listed)
 - **Scope:** `api openid profile email`
 
 ### Acumatica Role & GI Prerequisites:

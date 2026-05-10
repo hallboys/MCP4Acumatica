@@ -56,7 +56,63 @@ Claude (claude.ai / Desktop / API)
 
 ## Setup
 
-### 1. Clone and install
+There are three install paths. All three rely on the same Acumatica-side prerequisites — finish those first (see "[Acumatica-side configuration](#acumatica-side-configuration)" below) regardless of which path you pick.
+
+| Path | Best for | Terminal needed? |
+|------|----------|------------------|
+| **A. Deploy to Cloudflare button** | Adopters who want a fully GUI install | No |
+| **B. One-line installer** | Developers who already have `git` / `node` / `npm` | Yes (one command) |
+| **C. Manual setup** | Anyone who wants to inspect each step | Yes |
+
+### Path A — Deploy to Cloudflare button (no terminal)
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/hallboys/MCP4Acumatica)
+
+The button forks this repo to your GitHub account, reads `wrangler.jsonc`, auto-creates the KV namespace and R2 bucket, prompts for secrets, and deploys. Step-by-step:
+
+1. **Click the button.** Cloudflare will ask you to sign in (or create an account) and authorize a GitHub fork.
+2. **Confirm bindings.** The KV namespace (`TOKEN_STORE` / `OAUTH_KV`) and R2 bucket (`mcp4acumatica-logs`) are created automatically.
+3. **Set secrets.** When prompted, paste:
+   - `ACUMATICA_CLIENT_ID` — from your Connected Application (SM303010)
+   - `ACUMATICA_CLIENT_SECRET` — from the same screen
+   - `COOKIE_ENCRYPTION_KEY` — open your browser console on any page and run:
+     ```js
+     [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2,'0')).join('')
+     ```
+     Copy the resulting 64-character hex string.
+   - `ADMIN_SECRET` — any password you'll remember (protects the `/docs/admin` console). Generate one with `[...crypto.getRandomValues(new Uint8Array(24))].map(b => b.toString(16).padStart(2,'0')).join('')` if you don't have a preference.
+4. **Deploy.** Cloudflare connects the fork to Workers Builds and pushes the first deployment.
+5. **Update the Acumatica vars.** After the deploy completes, open `Workers & Pages → mcp4acumatica → Settings → Variables and Secrets` in the Cloudflare dashboard and edit:
+   - `ACUMATICA_URL` (e.g. `https://yourcompany.acumatica.com`)
+   - `ACUMATICA_TENANT` (your login company)
+   - Optionally `ACUMATICA_MAX_RECORDS`, `ACUMATICA_MCP_ROLE`, `REDACT_PATTERNS`, `REDACT_SKIP`
+   Click **Save and Deploy** — Cloudflare redeploys with the new values.
+6. **Add a redirect URI to your Connected Application.** Your worker is now reachable at `https://mcp4acumatica.<your-account>.workers.dev`. Add `https://<that-host>/callback` to the redirect URIs in Acumatica's SM303010 screen. (To use a custom domain instead, see "[Custom domain](#custom-domain-optional)" below.)
+7. **Test the deploy.** Visit `https://<your-host>/docs/admin/preflight`, log in with your `ADMIN_SECRET`, and run the preflight diagnostic. It probes Acumatica connectivity, the OIDC discovery endpoint, the Connected App credentials, the tenant path, and the contract API version — any misconfiguration is called out by name.
+
+After this point Claude can connect (see "[Connecting Claude](#connecting-claude)" below).
+
+### Path B — One-line installer (terminal)
+
+If you already have `git`, `node`, and `npm`, run:
+
+```bash
+curl -fsSL https://mcp4acumatica.hallboys.com/install.sh | bash
+```
+
+This clones the repo, installs dependencies, and runs `./setup.sh`. The setup script prompts for the Acumatica values you must supply (URL, tenant, Connected App client ID and secret), auto-generates the crypto secrets, creates the KV namespace and R2 bucket, uploads secrets, deploys, and then runs the preflight check.
+
+If you prefer to inspect the script first:
+
+```bash
+curl -fsSL https://mcp4acumatica.hallboys.com/install.sh -o install.sh
+less install.sh   # read it
+bash install.sh   # then run
+```
+
+### Path C — Manual setup (terminal)
+
+#### 1. Clone and install
 
 ```bash
 git clone https://github.com/hallboys/MCP4Acumatica.git
@@ -64,72 +120,82 @@ cd MCP4Acumatica
 npm install
 ```
 
-### 2. Configure Acumatica Connected Application
-
-In your Acumatica instance, navigate to **System > Integration > Connected Applications (SM303010)**:
-
-1. Create a new Connected Application
-2. Set the **OAuth 2.0 Flow** to **Authorization Code**
-3. Add a redirect URI: `https://<your-worker-url>/callback`
-4. Set the scope to `api openid profile email`
-5. Note the **Client ID** and **Client Secret**
-
-### 3. Create KV namespace
+#### 2. Create KV namespace
 
 ```bash
 npx wrangler kv namespace create TOKEN_STORE
 ```
 
-Note the namespace ID from the output. You'll use this same ID for both the `TOKEN_STORE` and `OAUTH_KV` bindings in the next step.
+Note the namespace ID from the output — you'll paste it into `wrangler.jsonc` next. The same ID is used for both the `TOKEN_STORE` and `OAUTH_KV` bindings.
 
-### 4. Configure wrangler
+#### 3. Configure wrangler
+
+`wrangler.jsonc` is tracked in the repo as the deploy template. Edit it in place and fill in:
+
+- The KV namespace ID from step 2 (both `TOKEN_STORE` and `OAUTH_KV` bindings — same id)
+- `ACUMATICA_URL` — your Acumatica instance URL (e.g. `https://yourcompany.acumatica.com`)
+- `ACUMATICA_TENANT` — your Acumatica company/tenant name
+
+To keep your local values out of `git status` (so you can still pull updates without conflicts):
 
 ```bash
-cp wrangler.jsonc.example wrangler.jsonc
+git update-index --skip-worktree wrangler.jsonc
 ```
 
-Edit `wrangler.jsonc` and fill in:
-- Your KV namespace ID from step 3 (for both `TOKEN_STORE` and `OAUTH_KV` bindings)
-- `ACUMATICA_URL` -- your Acumatica instance URL (e.g., `https://yourcompany.acumatica.com`)
-- `ACUMATICA_TENANT` -- your Acumatica company/tenant name
-
-### 5. Set secrets
+#### 4. Set secrets
 
 ```bash
 npx wrangler secret put ACUMATICA_CLIENT_ID
 npx wrangler secret put ACUMATICA_CLIENT_SECRET
-npx wrangler secret put COOKIE_ENCRYPTION_KEY
+npx wrangler secret put COOKIE_ENCRYPTION_KEY      # use `openssl rand -hex 32`
+npx wrangler secret put ADMIN_SECRET                # any password — protects /docs/admin
 ```
 
-For `COOKIE_ENCRYPTION_KEY`, generate a random 256-bit hex key:
-
-```bash
-openssl rand -hex 32
-```
-
-### 6. Configure Acumatica role and Generic Inquiry
-
-The MCP server requires users to have a specific Acumatica role before they can access AI tools. This is enforced via a canary Generic Inquiry (GI) that is assigned only to that role.
-
-1. **Create role:** In Acumatica, go to **System > Access Rights > User Roles (SM201005)** and create a role named `MCP Access`. No screen permissions are needed -- it is purely a marker role.
-2. **Create Generic Inquiry:** Go to **System > Customization > Generic Inquiry (SM208000)** and create a GI named `MCPAccess` with any trivial query (e.g., a single column from any table). Assign it only to the `MCP Access` role. Enable **Expose via OData**.
-3. **Assign role to users:** Assign the `MCP Access` role to each Acumatica user who should have AI assistant access.
-
-> **Note:** The role name is configurable via the `ACUMATICA_MCP_ROLE` environment variable in `wrangler.jsonc`.
-
-### 7. Deploy
+#### 5. Deploy
 
 ```bash
 npx wrangler deploy
 ```
 
-### 8. Local development (optional)
+#### 6. Local development (optional)
 
 ```bash
 cp .dev.vars.example .dev.vars
 # Edit .dev.vars with your Acumatica credentials
 npx wrangler dev
 ```
+
+### Acumatica-side configuration
+
+These steps are required regardless of which install path you pick. They can't be automated — Acumatica's API doesn't expose them.
+
+#### Connected Application (SM303010)
+
+1. In Acumatica: **System > Integration > Connected Applications (SM303010)**.
+2. Create a new Connected Application.
+3. Set the **OAuth 2.0 Flow** to **Authorization Code**.
+4. Add a redirect URI: `https://<your-worker-url>/callback` (use the `*.workers.dev` hostname or your custom domain).
+5. Set the scope to `api openid profile email`.
+6. Note the **Client ID** and **Client Secret** — you'll provide these as secrets during deploy.
+
+#### Role and Generic Inquiry (SM201005, SM208000)
+
+The MCP server requires users to have a specific Acumatica role before they can access AI tools. This is enforced via a canary Generic Inquiry (GI) that is assigned only to that role.
+
+1. **Create role:** **System > Access Rights > User Roles (SM201005)** → create a role named `MCP Access`. No screen permissions are needed — it's purely a marker role.
+2. **Create Generic Inquiry:** **System > Customization > Generic Inquiry (SM208000)** → create a GI named `MCPAccess` with any trivial query (a single column from any table is fine). Assign it only to the `MCP Access` role. Enable **Expose via OData**.
+3. **Assign role to users:** Assign the `MCP Access` role to each Acumatica user who should have AI assistant access.
+
+> The role name is configurable via the `ACUMATICA_MCP_ROLE` variable. Edit it in the Cloudflare dashboard (`Variables and Secrets`) or in `wrangler.jsonc`.
+
+### Custom domain (optional)
+
+The deploy gives you a `*.workers.dev` hostname out of the box. To attach a branded hostname:
+
+- **Via the Cloudflare dashboard:** `Workers & Pages → mcp4acumatica → Settings → Domains & Routes → Add`. The domain's zone must be on your Cloudflare account.
+- **Via `wrangler.jsonc`:** uncomment the `routes` block at the top of the file, edit `pattern` and `zone_name`, redeploy.
+
+If you change hostnames, remember to add the new `https://<host>/callback` to your Connected Application's redirect URIs in SM303010.
 
 ## Connecting Claude
 
