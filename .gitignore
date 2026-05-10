@@ -4,6 +4,13 @@ node_modules/
 dist/
 swagger.json
 
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Local Claude Code settings
+.claude/
+
 # Local-only wrangler overrides. wrangler.jsonc is now tracked as the deploy
 # template (committed); after running setup.sh you can keep your real values
 # out of git with `git update-index --skip-worktree wrangler.jsonc`. The
