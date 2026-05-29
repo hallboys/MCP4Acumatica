@@ -1,7 +1,7 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
+import { OAuthProvider, getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -19,11 +19,12 @@ import { logRedaction, logError, writeLogsToR2 } from "./lib/logger";
 import { getConfig } from "./lib/config";
 import { CloudflareKVStore } from "./platform/cloudflare-kv-store";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
+import { ReauthRequiredError } from "./auth/acumatica-oauth";
 
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.31.1",
+    version: "0.32.0",
   });
 
   private redactPatterns?: string;
@@ -346,6 +347,38 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
   }
 
   /**
+   * Revoke this user's MCP grant(s) so the next `/mcp` request fails bearer
+   * validation (401 + WWW-Authenticate) and the client silently re-runs OAuth.
+   * Called when the downstream Acumatica authorization is permanently dead.
+   *
+   * The grant's `userId` is the Acumatica username (see completeAuthorization
+   * in the auth handler), so we can find this user's grants without threading a
+   * grant ID through props. All of the user's grants share the one per-user
+   * Acumatica token — if it's dead it's dead for every client, so revoking all
+   * of them is correct; each re-auths independently on its next call.
+   *
+   * `env.OAUTH_PROVIDER` is injected only on the Worker request path, not on the
+   * DO's env, so we reconstruct the helpers from the shared provider options.
+   */
+  private async revokeUserGrantsForReauth(): Promise<void> {
+    const username = this.props.acumaticaUsername;
+    if (!username) return;
+    try {
+      const api = getOAuthApi(oauthProviderOptions, this.env);
+      let cursor: string | undefined;
+      do {
+        const page = await api.listUserGrants(username, cursor ? { cursor } : undefined);
+        await Promise.allSettled(page.items.map((g) => api.revokeGrant(g.id, username)));
+        cursor = page.cursor;
+      } while (cursor);
+    } catch (err) {
+      // Revocation is best-effort — if it fails the user falls back to the
+      // existing "please reconnect" behavior rather than silent re-auth.
+      console.error("Failed to revoke MCP grant for re-auth:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  /**
    * Wraps a tool handler, catching known errors and returning
    * MCP-formatted text content.
    */
@@ -450,6 +483,14 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       // Buffer log entries (flushed to R2 on threshold or delayed alarm)
       await this.bufferLogs(r2Entries);
 
+      // Hard auth failure: revoke the MCP grant so the next request 401s and
+      // the client re-runs OAuth automatically instead of the user manually
+      // disconnecting/reconnecting. This turn still returns the error text;
+      // Claude typically retries, at which point the re-auth kicks in.
+      if (error instanceof ReauthRequiredError) {
+        await this.revokeUserGrantsForReauth();
+      }
+
       return {
         content: [{ type: "text" as const, text: `Error: ${message}` }],
       };
@@ -469,7 +510,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 type ExportedHandlerWithFetch<E> = ExportedHandler<E> & Required<Pick<ExportedHandler<E>, "fetch">>;
 const mcpApiHandler = AcumaticaMcpServer.serve("/mcp") as unknown as ExportedHandlerWithFetch<Env>;
 
-export default new OAuthProvider({
+// Shared between the live provider and the DO's grant-revocation path
+// (getOAuthApi reconstructs the helpers from these same options).
+export const oauthProviderOptions = {
   apiRoute: ["/mcp", "/sse"],
   apiHandler: mcpApiHandler,
   defaultHandler: AcumaticaAuthHandler,
@@ -478,4 +521,6 @@ export default new OAuthProvider({
   clientRegistrationEndpoint: "/register",
   clientIdMetadataDocumentEnabled: true,
   scopesSupported: ["api"],
-});
+};
+
+export default new OAuthProvider(oauthProviderOptions);

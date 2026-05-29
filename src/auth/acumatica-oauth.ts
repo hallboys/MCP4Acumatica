@@ -6,6 +6,23 @@ import { decryptString, encryptString } from "../lib/crypto";
 
 const USER_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days — matches write-side TTL
 
+/**
+ * Thrown when the user's Acumatica authorization is permanently gone and the
+ * only recovery is a fresh login: no stored token, no refresh token, or a
+ * refresh that came back `invalid_grant` (rotated/expired/revoked refresh
+ * token). The DO catches this in `callTool` and revokes the user's MCP grant
+ * so the next `/mcp` request 401s and the client silently re-runs OAuth.
+ *
+ * A transient refresh failure (network error, IdentityServer 5xx) is NOT this
+ * error — those throw a plain Error so we don't evict the user over a blip.
+ */
+export class ReauthRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ReauthRequiredError";
+  }
+}
+
 // Coalesce concurrent refresh-token lookups for the same user. Without this,
 // parallel tool calls that hit an expired access token each send the *same*
 // refresh_token to Acumatica; IdentityServer rotates refresh tokens on use,
@@ -35,7 +52,7 @@ export async function getAcumaticaTokenForUser(
     const raw = await env.store.get(tokenKey);
 
     if (!raw) {
-      throw new Error(
+      throw new ReauthRequiredError(
         "No Acumatica token found for your account. Please reconnect to re-authorize with Acumatica."
       );
     }
@@ -50,7 +67,7 @@ export async function getAcumaticaTokenForUser(
     // Refresh required — but some legacy records (created before we stored
     // refresh_token) don't have one. Force re-auth rather than crashing.
     if (!stored.refresh_token) {
-      throw new Error(
+      throw new ReauthRequiredError(
         "Your Acumatica session has expired and no refresh token is available. Please reconnect to re-authorize."
       );
     }
@@ -87,9 +104,27 @@ async function refreshUserToken(
   });
 
   if (!response.ok) {
-    // Do not include the body — IdentityServer may echo the submitted form (with client_secret).
+    // Read ONLY the `error` field — IdentityServer error bodies can echo the
+    // submitted form, which includes client_secret. `invalid_grant` means the
+    // refresh token is dead (expired/rotated/revoked): the user must re-login,
+    // so signal a re-auth. Any other status (5xx, network-level) is treated as
+    // transient and thrown as a plain Error so we don't evict on a blip.
+    let oauthError: string | undefined;
+    try {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === "string") oauthError = body.error;
+    } catch {
+      // non-JSON body — leave oauthError undefined
+    }
+
+    if (oauthError === "invalid_grant") {
+      throw new ReauthRequiredError(
+        "Your Acumatica session has expired. Re-authorizing — please try again."
+      );
+    }
+
     throw new Error(
-      `Acumatica token refresh failed (${response.status}). Please reconnect to re-authorize.`
+      `Acumatica token refresh failed (${response.status}). Please try again shortly.`
     );
   }
 

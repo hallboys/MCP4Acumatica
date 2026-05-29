@@ -322,7 +322,7 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 ## Security
 
 - **No stored credentials.** The MCP server does not store Acumatica passwords. It uses OAuth 2.0 authorization code flow -- users authenticate directly with Acumatica.
-- **Per-user tokens.** Each user's Acumatica access token is stored in the platform key-value store (Cloudflare KV on the default deployment), scoped to their username. Tokens are automatically refreshed when expired.
+- **Per-user tokens.** Each user's Acumatica access token is stored in the platform key-value store (Cloudflare KV on the default deployment), scoped to their username. Tokens are automatically refreshed when expired. If a refresh token expires, the connection re-authenticates automatically instead of requiring a manual reconnect.
 - **Role gate.** Only users with the `MCP Access` role (configurable) can connect. This is enforced via a canary Generic Inquiry check during login -- users without the role see an access denied page.
 - **Consent interstitial.** After passing the role check, users must acknowledge that their data will be processed by an external AI model before the MCP session activates.
 - **Sensitive field redaction.** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) and matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` and `REDACT_SKIP` environment variables.

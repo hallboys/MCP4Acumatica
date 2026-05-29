@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.31.1`
+- **Current tag:** `25R2-0.32.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -66,7 +66,7 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 7. **Admin login throttling.** The admin console at `/docs/admin/login` is throttled per client IP via `admin_login_fail:{ip}` counters (KV, 15-minute window, 5 attempts). Further attempts 429 until the window expires; successful login clears the counter. All failures are padded to ≥ 1 s so the throttle path is indistinguishable from a slow mismatch. Client IP is sourced from `CF-Connecting-IP` with `X-Forwarded-For` fallback.
 
-8. **Refresh-token coalescing.** Concurrent tool calls with an expired access token would previously each POST the same refresh_token to Acumatica; IdentityServer rotates refresh tokens on use, so the second request would get `invalid_grant` and evict the user. `getAcumaticaTokenForUser()` (`src/auth/acumatica-oauth.ts`) now coalesces via an in-isolate `inflightLookups: Map<username, Promise<string>>` so parallel callers share a single refresh. The second caller reads the freshly stored access token without re-refreshing.
+8. **Refresh-token coalescing.** Concurrent tool calls with an expired access token would previously each POST the same refresh_token to Acumatica; IdentityServer rotates refresh tokens on use, so the second request would get `invalid_grant` and evict the user. `getAcumaticaTokenForUser()` (`src/auth/acumatica-oauth.ts`) now coalesces via an in-isolate `inflightLookups: Map<username, Promise<string>>` so parallel callers share a single refresh. The second caller reads the freshly stored access token without re-refreshing. When a refresh nonetheless comes back `invalid_grant` (refresh token expired/rotated/revoked), or no token/refresh token exists, `getAcumaticaTokenForUser()` throws a distinct `ReauthRequiredError`. The DO's `callTool` catch then revokes the user's MCP grant(s) via `getOAuthApi(oauthProviderOptions, this.env)` — `env.OAUTH_PROVIDER` is injected only on the Worker request path, not on the DO's env, so the helpers are reconstructed from the shared `oauthProviderOptions`. With the grant gone, the next `/mcp` request fails bearer validation (401 + `WWW-Authenticate: ... error="invalid_token"`) and the client silently re-runs OAuth instead of the user manually disconnecting/reconnecting. Transient failures (5xx, network) throw a plain `Error` and do **not** revoke, so a blip can't evict the user. The grant `userId` is the Acumatica username and all of a user's grants share the one per-user Acumatica token, so revoke-all is correct — each client re-auths independently on its next call. The current tool turn still returns the error text (the streamable-http transport has already committed a 200 for the in-flight request and a tool handler can't turn that into a 401 mid-stream); the re-auth kicks in on Claude's automatic retry.
 
 9. **Role-check misconfig vs. denial.** `checkUserRole()` returns a discriminated result (`granted | denied | misconfigured`). 200 → granted, 403 → denied (user-facing access denied page), 404/5xx/network → misconfigured (separate "Configuration Error" page that points at the likely cause: missing GI, wrong tenant, OData not enabled). Misconfig events are logged as `login_denied` with `reason: role_check_misconfigured` so admins can see real outages rather than them being hidden behind "access denied" tickets.
 
@@ -305,7 +305,7 @@ When the user says **"close session"**, perform all of the following:
 ### High Priority — Features
 - [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
 - [ ] Add action tools: Release Invoice, Confirm Shipment (per project brief Phase 3)
-- [ ] Better error message when refresh token expires (tell user to reconnect)
+- [x] Transparent re-auth when refresh token expires — `ReauthRequiredError` revokes the MCP grant so the client silently re-runs OAuth instead of a manual disconnect/reconnect (0.32.0)
 
 ### Low Priority — Read-Only Tools
 

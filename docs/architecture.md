@@ -189,7 +189,7 @@ MCP Client (Claude)                Worker                      Acumatica
 
 - **Single login.** Users authenticate once with Acumatica (or their configured SSO).
 - **No stored passwords.** Only OAuth tokens are stored.
-- **Token refresh.** When an access token expires, the server uses the refresh token to get a new one automatically.
+- **Token refresh.** When an access token expires, the server uses the refresh token to get a new one automatically. If the refresh token itself is dead (expired/rotated/revoked), the server revokes the MCP grant so the client transparently re-authenticates rather than failing permanently.
 - **Acumatica is the sole identity provider.** No separate identity layer.
 - **Role gate before access.** After login, a canary GI check ensures the user has the required Acumatica role (see Access Control below).
 - **Consent required.** Users must acknowledge an AI data processing consent page before the MCP session activates.
