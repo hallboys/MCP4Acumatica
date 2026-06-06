@@ -24,7 +24,7 @@ import { ReauthRequiredError } from "./auth/acumatica-oauth";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.32.0",
+    version: "0.32.1",
   });
 
   private redactPatterns?: string;

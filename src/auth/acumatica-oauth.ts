@@ -105,26 +105,49 @@ async function refreshUserToken(
 
   if (!response.ok) {
     // Read ONLY the `error` field — IdentityServer error bodies can echo the
-    // submitted form, which includes client_secret. `invalid_grant` means the
-    // refresh token is dead (expired/rotated/revoked): the user must re-login,
-    // so signal a re-auth. Any other status (5xx, network-level) is treated as
-    // transient and thrown as a plain Error so we don't evict on a blip.
+    // submitted form, which includes client_secret. We use it for diagnostics,
+    // NOT for the transient-vs-permanent decision: classify by HTTP status
+    // instead. Matching the exact string `invalid_grant` was too brittle —
+    // Acumatica returned a 400 with a body that didn't parse to that exact
+    // code, so dead refresh tokens fell through to the "transient" branch and
+    // the model looped forever on "please try again shortly" instead of
+    // re-authenticating.
     let oauthError: string | undefined;
     try {
       const body = (await response.json()) as { error?: unknown };
       if (typeof body.error === "string") oauthError = body.error;
     } catch {
-      // non-JSON body — leave oauthError undefined
+      // non-JSON / empty body — leave oauthError undefined
     }
 
-    if (oauthError === "invalid_grant") {
-      throw new ReauthRequiredError(
-        "Your Acumatica session has expired. Re-authorizing — please try again."
+    // Status + error CODE only (never the description/body, which can echo the
+    // client_secret) so refresh failures are diagnosable from `wrangler tail`.
+    console.log(
+      JSON.stringify({
+        level: "warn",
+        type: "token_refresh_failed",
+        timestamp: new Date().toISOString(),
+        acumaticaUsername,
+        status: response.status,
+        oauthError: oauthError ?? null,
+      })
+    );
+
+    // 5xx / 429 are the only genuinely transient failures — IdentityServer is
+    // up but momentarily unhappy, and the SAME refresh token may succeed on
+    // retry. Throw a plain Error so the DO does NOT evict the user over a blip.
+    if (response.status >= 500 || response.status === 429) {
+      throw new Error(
+        `Acumatica token refresh failed (${response.status}). Please try again shortly.`
       );
     }
 
-    throw new Error(
-      `Acumatica token refresh failed (${response.status}). Please try again shortly.`
+    // Any 4xx (invalid_grant, invalid_request, invalid_client, …) means this
+    // refresh token will not start working again on retry — the grant is dead.
+    // Signal a re-auth so the DO revokes the MCP grant and the client silently
+    // re-runs OAuth.
+    throw new ReauthRequiredError(
+      "Your Acumatica session has expired. Re-authorizing — reconnect the MCP server if you are not prompted automatically."
     );
   }
 
