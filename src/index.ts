@@ -18,13 +18,18 @@ import { redactFields, redactParamsForLog } from "./lib/redact";
 import { logRedaction, logError, writeLogsToR2 } from "./lib/logger";
 import { getConfig } from "./lib/config";
 import { CloudflareKVStore } from "./platform/cloudflare-kv-store";
+import { DOTokenProvider } from "./platform/do-token-provider";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 import { ReauthRequiredError } from "./auth/acumatica-oauth";
+
+// Re-exported so the Cloudflare runtime can find the DO class named in
+// wrangler.jsonc's durable_objects bindings / migrations.
+export { TokenManager } from "./token-manager";
 
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.32.1",
+    version: "0.33.0",
   });
 
   private redactPatterns?: string;
@@ -67,6 +72,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       REDACT_PATTERNS: this.env.REDACT_PATTERNS,
       REDACT_SKIP: this.env.REDACT_SKIP,
       store: new CloudflareKVStore(this.env.TOKEN_STORE),
+      tokenProvider: new DOTokenProvider(this.env.TOKEN_MANAGER),
     };
 
     // Read runtime config from KV with env var fallback

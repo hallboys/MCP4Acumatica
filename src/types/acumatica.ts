@@ -1086,6 +1086,9 @@ export interface AppEnv {
   REDACT_SKIP?: string;
   // Platform-agnostic key-value store (tokens, config, cache)
   store: import("../lib/kv-store").IKeyValueStore;
+  // Serializes per-user Acumatica token refresh so concurrent sessions can't
+  // race on IdentityServer's rotate-on-use refresh tokens (CF: per-user DO).
+  tokenProvider: import("../lib/token-provider").ITokenProvider;
 }
 
 /**
@@ -1114,6 +1117,8 @@ export interface Env {
   OAUTH_PROVIDER: OAuthProviderHelpers;
   // Durable Object
   MCP_OBJECT: DurableObjectNamespace;
+  // Per-user token-refresh serializer (see TokenManager DO)
+  TOKEN_MANAGER: DurableObjectNamespace<import("../token-manager").TokenManager>;
   // Admin interface — secret for admin login (set via wrangler secret put ADMIN_SECRET)
   ADMIN_SECRET?: string;
   // R2 bucket for long-term log storage via Logpush
