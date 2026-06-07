@@ -361,15 +361,27 @@ app.post("/consent", async (c) => {
     pending.acumaticaTokens.refresh_token,
     c.env.COOKIE_ENCRYPTION_KEY
   );
-  await c.env.TOKEN_STORE.put(
-    userTokenKey,
-    JSON.stringify({
-      access_token: pending.acumaticaTokens.access_token,
-      refresh_token: encryptedRefresh,
-      expires_at: Date.now() + pending.acumaticaTokens.expires_in * 1000,
-    }),
-    { expirationTtl: USER_TOKEN_TTL_SECONDS }
-  );
+  const storedToken = {
+    access_token: pending.acumaticaTokens.access_token,
+    refresh_token: encryptedRefresh,
+    expires_at: Date.now() + pending.acumaticaTokens.expires_in * 1000,
+  };
+  await c.env.TOKEN_STORE.put(userTokenKey, JSON.stringify(storedToken), {
+    expirationTtl: USER_TOKEN_TTL_SECONDS,
+  });
+
+  // Seed the per-user TokenManager DO directly so its authoritative copy is
+  // fresh immediately — otherwise the DO might read a stale (expired) KV
+  // record in the eventual-consistency window right after re-auth and try to
+  // refresh a dead token. (The DO also adopts from KV on cold read, but
+  // seeding removes the race entirely.)
+  try {
+    const tmId = c.env.TOKEN_MANAGER.idFromName(pending.acumaticaUsername);
+    await c.env.TOKEN_MANAGER.get(tmId).setToken(storedToken);
+  } catch (e) {
+    // Non-fatal: the DO will adopt the token from KV on its first read.
+    console.warn("TokenManager seed failed (will adopt from KV):", e instanceof Error ? e.message : e);
+  }
 
   logAuthEvent("consent_accepted", pending.acumaticaUsername);
 

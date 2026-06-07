@@ -103,6 +103,8 @@ A [Durable Object](https://developers.cloudflare.com/durable-objects/) that exte
 
 The DO binding must be named `MCP_OBJECT` (required by the `agents` SDK's `McpAgent.serve()`).
 
+A second Durable Object, **`TokenManager`** (binding `TOKEN_MANAGER`), owns each user's Acumatica token. It is keyed by `idFromName(username)`, so there is exactly one instance per user globally and all of a user's concurrent sessions share it. This serializes token refresh: IdentityServer rotates the refresh token on every use, and without a single owner two sessions could POST the same refresh token concurrently — one wins, the other gets a `4xx` and is wrongly treated as dead. Routing all refreshes through the per-user DO makes that race impossible. The DO's storage is the authoritative token copy; KV is a write-through backup.
+
 ### 4. AcumaticaClient
 
 HTTP client for the Acumatica contract-based REST API. Features:

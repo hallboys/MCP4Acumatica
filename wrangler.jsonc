@@ -80,6 +80,10 @@
 			{
 				"name": "MCP_OBJECT",
 				"class_name": "AcumaticaMcpServer"
+			},
+			{
+				"name": "TOKEN_MANAGER",
+				"class_name": "TokenManager"
 			}
 		]
 	},
@@ -88,6 +92,12 @@
 			"tag": "v1",
 			"new_sqlite_classes": [
 				"AcumaticaMcpServer"
+			]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"TokenManager"
 			]
 		}
 	],

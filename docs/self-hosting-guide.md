@@ -231,8 +231,37 @@ const appEnv: AppEnv = {
   ACUMATICA_CLIENT_SECRET: process.env.ACUMATICA_CLIENT_SECRET!,
   COOKIE_ENCRYPTION_KEY: process.env.COOKIE_ENCRYPTION_KEY!,
   store,
+  tokenProvider,  // see step 2b
 };
 ```
+
+### 2b. Implement `ITokenProvider` (token-refresh serialization)
+
+`AppEnv` requires a `tokenProvider: ITokenProvider` (`src/lib/token-provider.ts`) — a `getAccessToken(username)` that returns a fresh access token. **This must serialize refreshes per user.** Acumatica's IdentityServer rotates the refresh token on every use, so two concurrent refreshes of the same user's token race: the loser submits an already-rotated token and is rejected. On Cloudflare a per-user Durable Object provides the lock for free; self-hosted you supply your own.
+
+The shared `refreshAcumaticaToken(config, refreshToken, username)` helper (exported from `src/auth/acumatica-oauth.ts`) does the HTTP call + transient-vs-permanent classification; your provider only needs to add storage + a per-user lock around it. Sketch with a Redis lock:
+
+```typescript
+import type { ITokenProvider, TokenResult } from "./lib/token-provider";
+import { refreshAcumaticaToken } from "./auth/acumatica-oauth";
+
+class LockingTokenProvider implements ITokenProvider {
+  constructor(private store: IKeyValueStore, private redis: Redis, private cfg: { url: string; clientId: string; clientSecret: string; cookieKey: string }) {}
+
+  async getAccessToken(username: string): Promise<TokenResult> {
+    // 1. read stored token; if access token has >60s life, return { status: "ok", accessToken }
+    // 2. acquire a per-user lock (e.g. SET lock:{username} NX PX 10000, spin/back-off if held)
+    // 3. re-read inside the lock (another holder may have just refreshed)
+    // 4. call refreshAcumaticaToken(this.cfg, decrypt(stored.refresh_token), username)
+    //    - "ok"        → persist new (encrypted) token, return { status: "ok", accessToken }
+    //    - "reauth"    → return { status: "reauth", message }
+    //    - "transient" → return { status: "transient", message }
+    // 5. release the lock
+  }
+}
+```
+
+The CF reference implementation is `src/platform/do-token-provider.ts` + `src/token-manager.ts`.
 
 ### 3. Wire Up the MCP Server
 
