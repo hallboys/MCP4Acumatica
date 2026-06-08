@@ -64,10 +64,12 @@ export class TokenManager extends DurableObject<Env> {
     try {
       stored = await this.readToken(username);
     } catch (e) {
+      this.logOutcome(username, "transient", "storage_read_error");
       return { status: "transient", message: e instanceof Error ? e.message : "storage error" };
     }
 
     if (!stored) {
+      this.logOutcome(username, "reauth", "no_token");
       return {
         status: "reauth",
         message:
@@ -81,6 +83,7 @@ export class TokenManager extends DurableObject<Env> {
     }
 
     if (!stored.refresh_token) {
+      this.logOutcome(username, "reauth", "no_refresh_token");
       return {
         status: "reauth",
         message:
@@ -93,6 +96,7 @@ export class TokenManager extends DurableObject<Env> {
       refreshToken = await decryptString(stored.refresh_token, this.env.COOKIE_ENCRYPTION_KEY);
     } catch {
       // Corrupt record or rotated COOKIE_ENCRYPTION_KEY — unrecoverable.
+      this.logOutcome(username, "reauth", "decrypt_failed");
       return {
         status: "reauth",
         message: "Your stored Acumatica credentials could not be read. Please reconnect to re-authorize.",
@@ -124,6 +128,7 @@ export class TokenManager extends DurableObject<Env> {
     }
 
     if (outcome.status === "reauth") {
+      this.logOutcome(username, "reauth", "refresh_4xx");
       return {
         status: "reauth",
         message:
@@ -131,23 +136,56 @@ export class TokenManager extends DurableObject<Env> {
       };
     }
 
+    this.logOutcome(username, "transient", `refresh_${outcome.detail}`);
     return {
       status: "transient",
       message: `Acumatica token refresh failed (${outcome.detail}). Please try again shortly.`,
     };
   }
 
-  /** Authoritative read: DO storage, falling back to (and adopting) the KV
-   *  record for users who authenticated before this DO existed. */
+  /** Structured diagnostic for any non-ok token resolution, so the cause of a
+   *  revoke is visible in `wrangler tail` / R2 logs. Never logs token material. */
+  private logOutcome(username: string, status: string, reason: string): void {
+    console.log(
+      JSON.stringify({
+        level: "warn",
+        type: "token_resolve_outcome",
+        timestamp: new Date().toISOString(),
+        acumaticaUsername: username,
+        status,
+        reason,
+      })
+    );
+  }
+
+  /**
+   * Read the authoritative token, reconciling DO storage with KV by recency.
+   *
+   * The DO's storage is normally authoritative, BUT `/callback` writes a fresh
+   * token to KV and seeds the DO separately (`setToken`), and that seed is
+   * best-effort. If it ever fails — or the DO is otherwise holding a token from
+   * before a reconnect — blindly preferring DO storage would make the DO serve
+   * a stale, already-rotated refresh token forever and 4xx (→ revoke) on every
+   * refresh. So we take whichever record has the later `expires_at`: a fresh
+   * login (newer KV) always wins over a stale DO copy, and a just-refreshed DO
+   * copy wins over a lagging KV backup. When KV wins, we adopt it into storage.
+   */
   private async readToken(username: string): Promise<StoredToken | undefined> {
     const fromDo = await this.ctx.storage.get<StoredToken>(STORAGE_KEY);
-    if (fromDo) return fromDo;
-
     const raw = await this.env.TOKEN_STORE.get(`user_token:${username}`);
-    if (!raw) return undefined;
-    const adopted = JSON.parse(raw) as StoredToken;
-    await this.ctx.storage.put(STORAGE_KEY, adopted);
-    return adopted;
+    const fromKv = raw ? (JSON.parse(raw) as StoredToken) : undefined;
+
+    if (fromDo && fromKv) {
+      if (fromKv.expires_at > fromDo.expires_at) {
+        await this.ctx.storage.put(STORAGE_KEY, fromKv);
+        return fromKv;
+      }
+      return fromDo;
+    }
+
+    const chosen = fromDo ?? fromKv;
+    if (chosen && !fromDo) await this.ctx.storage.put(STORAGE_KEY, chosen);
+    return chosen;
   }
 
   /** Write-through: DO storage (authoritative) + KV (warm backup, TTL'd). */
