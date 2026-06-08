@@ -86,7 +86,7 @@ This layer is transparent to the MCP tools. By the time a request reaches the Mc
 
 A [Hono](https://hono.dev) application that handles the Acumatica OAuth 2.0 authorization code flow:
 
-1. **`/authorize`** -- Builds the Acumatica OAuth authorization URL with `scope=api openid profile email` and redirects the user to Acumatica's login page
+1. **`/authorize`** -- Builds the Acumatica OAuth authorization URL with `scope=api openid profile email offline_access` and redirects the user to Acumatica's login page
 2. **`/callback`** -- Receives the authorization code from Acumatica, exchanges it for access + refresh tokens, identifies the user via OIDC userinfo, performs the **role gate check** (see below), and redirects to the consent page
 3. **`/consent`** (GET) -- Displays the **consent interstitial** page explaining AI data processing, audit logging, and field redaction
 4. **`/consent`** (POST) -- User acknowledges the consent; tokens are stored in KV and the MCP OAuth flow completes
