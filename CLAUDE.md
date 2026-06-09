@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.33.1`
+- **Current tag:** `25R2-0.33.2`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -222,7 +222,8 @@ npx wrangler kv namespace create X  # Create KV namespace
 Before every commit, push, or tag:
 
 1. **Update documentation** — ensure all docs (`README.md`, `docs/*.md`) reflect any changes made in the commit.
-2. **Update version strings in documentation** — if the tag is changing, update the version in:
+2. **Update `CHANGELOG.md`** — add an entry for the new version (Keep a Changelog format, newest first; surfaced on the docs site at `/docs/changelog`).
+3. **Update version strings in documentation** — if the tag is changing, update the version in:
    - `CLAUDE.md` → `Current tag` field in Project Overview
    - `docs/tool-reference.md` → version in the opening paragraph
    - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
@@ -241,10 +242,11 @@ When the user says **"close session"**, perform all of the following:
    - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
    - `package.json` → `version` field
-4. **Commit** all changes with a descriptive message
-5. **Push** to `origin/main`
-6. **Tag** with `25R2-X.Y.Z` format
-7. **Deploy** with `npx wrangler deploy` and verify the deployment succeeds
+4. **Update `CHANGELOG.md`** — prepend an entry for the new version (newest first; shown at `/docs/changelog`)
+5. **Commit** all changes with a descriptive message
+6. **Push** to `origin/main`
+7. **Tag** with `25R2-X.Y.Z` format
+8. **Deploy** with `npx wrangler deploy` and verify the deployment succeeds
 
 ## Known Issues / Tech Debt
 
