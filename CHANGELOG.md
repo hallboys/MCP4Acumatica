@@ -5,6 +5,11 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.34.1] - 2026-06-11
+### Docs
+- Documented the DAC-layer stance: DAC metadata is intentionally **not** a tool — stock DACs are covered by Acumatica's public DAC Schema Browser (`help.acumatica.com/dacBrowser`, reachable via the client's web access), custom DACs by the customization source, and API-exposed custom fields by the existing schema tools. (A DAC-via-GI customization was prototyped and dropped as redundant + high-maintenance.)
+- Added a "DAC-layer questions" pointer to `/docs/schema-discovery`; removed a third-party-comparison aside and a stale "DAC index (planned)" item from the upgrade guide.
+
 ## [0.34.0] - 2026-06-11
 ### Added
 - **Schema-knowledge tools** for power users building integrations and customizations:

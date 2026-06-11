@@ -6,13 +6,11 @@ guess at shape. They're separate from the data-query tools: they answer from an 
 **schema index** built from your instance's own API description, or (for the GI explainer)
 from XML you paste.
 
-> **Why not just use a third-party "Acumatica knowledge" MCP?** Those redistribute
-> Acumatica's documentation/schema as a static snapshot from an unidentified operator with
-> undisclosed licensing, and they can't see your customizations. MCP4Acumatica derives the
-> same knowledge from **your own instance**, so it's always current, includes your
-> customizations, and ships no third-party IP. Acumatica **documentation** questions are
-> deliberately *not* a tool here — your AI client's web search already reaches the public
-> Help Wiki at <https://help.acumatica.com/>.
+> These tools derive schema knowledge from **your own instance** (its `swagger.json` and live
+> `$adHocSchema`), so results are always current and include your customizations — no static
+> snapshots, no third-party data. Acumatica **documentation** questions are deliberately
+> *not* a tool here — your AI client's web search already reaches the public Help Wiki at
+> <https://help.acumatica.com/>.
 
 ## Tools
 
@@ -29,6 +27,23 @@ from XML you paste.
   fast, cross-entity discovery and shape — no tenant round-trip, no record sampling.
 - Use **`acumatica_describe_entity`** (live `$adHocSchema`) when you need the authoritative
   current schema for one entity, e.g. to confirm a just-added custom field.
+
+### DAC-layer questions (building customizations)
+
+If you're working at the **DAC** (C# data-access-class) layer — e.g. writing a graph
+extension and needing the field names/types/relationships *beneath* the API — there's no
+MCP tool for that, by design:
+
+- **Stock DACs** → Acumatica's public **DAC Schema Browser**, <https://help.acumatica.com/dacBrowser>
+  (your AI client's web access reads it) — authoritative and zero-maintenance.
+- **Your custom DACs / extensions** → read the **source code** directly (it's in your
+  customization repo) — richer than any reflected index.
+- **Custom fields exposed via the API** → already covered by `acumatica_search_schema` /
+  `acumatica_describe_entity` above.
+
+Same reasoning as the Help Wiki: the DAC reference is public, web-accessible, and
+authoritative, and the one gap (custom DACs) is best answered from the source you already
+have — so we don't reproduce it as a tool.
 
 ## Building the schema index
 
