@@ -238,6 +238,25 @@ npx wrangler secret put X     # Set a secret
 npx wrangler kv namespace create X  # Create KV namespace
 ```
 
+## Acumatica Version Upgrades
+
+When the connected instance moves to a new Acumatica release (e.g. 2025 R2 → 2026 R1) or is
+repointed at a different instance/tenant, follow **`docs/upgrading-acumatica.md`** (served at
+`/docs/upgrading-acumatica`). Summary of what's version-coupled in this server:
+
+1. **`ACUMATICA_ENDPOINT_VERSION`** (contract base `/entity/Default/{version}`) — update the var, redeploy; preflight (`/docs/admin/preflight`) flags a wrong value.
+2. **Schema-knowledge index** — re-export the instance's `swagger.json` and `npm run build-index` (0.34.0+); otherwise `acumatica_search_schema`/`_get_schema_entity`/`_list_schema_entities` describe the old shape. No redeploy needed; the next DO instance reads the new R2 object.
+3. **Runtime metadata cache** — `acumatica_clear_cache` (entity `$adHocSchema`, GI list, GI field schemas are cached 24 h / 1 h).
+4. **Access-control prerequisites** — `MCP Access` role + `MCPAccess` canary GI (OData-exposed) + Connected App scopes (`offline_access` required) survive upgrades but should be re-verified.
+5. **Hardcoded entities** — `GETTER_TOOLS` (`src/tools/getter-registry.ts`) entity names are stable across releases but spot-check key entities and update entries if upstream renames/removes one.
+6. **Two independent version numbers** — the **MCP server version** (`0.34.0`, bumps each release) vs. the **targeted Acumatica release** (the `25R2`/`26R1` *tag prefix*, changed only when re-targeting).
+
+> **Maintenance instruction (standing):** whenever a feature is added that depends on the
+> Acumatica version — a new index built from instance data (DAC, GI examples), a hardcoded
+> endpoint/entity, a new cached artifact, or a published meta-GI — add its concrete upgrade
+> step to `docs/upgrading-acumatica.md` (it has a "Forward-looking" section staging the
+> planned ones). Treat this as part of finishing such a feature, not a follow-up.
+
 ## Commit / Push / Tag Checklist
 
 Before every commit, push, or tag:
@@ -250,6 +269,7 @@ Before every commit, push, or tag:
    - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
    - `package.json` → `version` field
+4. **Update the upgrade guide if relevant** — if the change adds/alters anything version-coupled (a new instance-derived index, a hardcoded endpoint/entity, a cached artifact, the targeted-release prefix), update `docs/upgrading-acumatica.md` accordingly.
 
 ## Close Session Procedure
 

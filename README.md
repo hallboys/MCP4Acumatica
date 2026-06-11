@@ -316,8 +316,10 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 - **[Tool Reference](docs/tool-reference.md)** -- Complete specification for all 48 tools with parameters and endpoints
 - **[Example Prompts](docs/example-prompts.md)** -- Example prompts for Claude and other MCP clients organized by use case
 - **[OData Filtering Guide](docs/odata-filtering.md)** -- Guide to `$filter`, `$orderby`, `$select`, `$expand`, and `$top` query parameters
+- **[Schema Knowledge](docs/schema-discovery.md)** -- Offline schema-discovery tools for building integrations/customizations, and how the schema index is built
 - **[Architecture](docs/architecture.md)** -- Detailed architecture, OAuth flow, security model, and design decisions
 - **[Self-Hosting Guide](docs/self-hosting-guide.md)** -- How to run the MCP server on Node.js or other platforms outside Cloudflare
+- **[Upgrading Acumatica](docs/upgrading-acumatica.md)** -- Steps to take when changing or upgrading the connected Acumatica version
 
 ## Security
 

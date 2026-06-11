@@ -14,6 +14,7 @@ import odataContent from "../../docs/odata-filtering.md";
 import schemaDiscoveryContent from "../../docs/schema-discovery.md";
 import architectureContent from "../../docs/architecture.md";
 import selfHostingContent from "../../docs/self-hosting-guide.md";
+import upgradingContent from "../../docs/upgrading-acumatica.md";
 import changelogContent from "../../CHANGELOG.md";
 
 interface DocPage {
@@ -30,6 +31,7 @@ const pages: DocPage[] = [
   { slug: "schema-discovery", title: "Schema Knowledge", content: schemaDiscoveryContent },
   { slug: "architecture", title: "Architecture", content: architectureContent },
   { slug: "self-hosting-guide", title: "Self-Hosting", content: selfHostingContent },
+  { slug: "upgrading-acumatica", title: "Upgrading Acumatica", content: upgradingContent },
   { slug: "changelog", title: "Changelog", content: changelogContent },
 ];
 
