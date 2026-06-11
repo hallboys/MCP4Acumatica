@@ -11,6 +11,7 @@ import readmeContent from "../../README.md";
 import toolRefContent from "../../docs/tool-reference.md";
 import examplePromptsContent from "../../docs/example-prompts.md";
 import odataContent from "../../docs/odata-filtering.md";
+import schemaDiscoveryContent from "../../docs/schema-discovery.md";
 import architectureContent from "../../docs/architecture.md";
 import selfHostingContent from "../../docs/self-hosting-guide.md";
 import changelogContent from "../../CHANGELOG.md";
@@ -26,6 +27,7 @@ const pages: DocPage[] = [
   { slug: "tool-reference", title: "Tool Reference", content: toolRefContent },
   { slug: "example-prompts", title: "Example Prompts", content: examplePromptsContent },
   { slug: "odata-filtering", title: "OData Filtering", content: odataContent },
+  { slug: "schema-discovery", title: "Schema Knowledge", content: schemaDiscoveryContent },
   { slug: "architecture", title: "Architecture", content: architectureContent },
   { slug: "self-hosting-guide", title: "Self-Hosting", content: selfHostingContent },
   { slug: "changelog", title: "Changelog", content: changelogContent },
@@ -231,7 +233,7 @@ function renderPage(slug: string, html: string): string {
     <nav>
       <div class="brand">
         <h1>MCP4Acumatica</h1>
-        <span>v0.33.2 &middot; 44 tools</span>
+        <span>v0.34.0 &middot; 48 tools</span>
       </div>
       ${renderNav(slug)}
       <div class="links">

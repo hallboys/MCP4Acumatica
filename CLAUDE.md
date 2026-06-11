@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.33.2`
+- **Current tag:** `25R2-0.34.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -25,8 +25,9 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /token, /register (DCR+CIMD) │
 │    ├─ /docs → Documentation site │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ 44 tools (38 read-only  │
-│       │   + 6 utility/discovery) │
+│       ├─ 48 tools (38 read-only  │
+│       │   + 6 utility/discovery  │
+│       │   + 4 schema-knowledge)  │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
                ▼
@@ -129,23 +130,42 @@ src/
 │   ├── kv-store.ts                # IKeyValueStore interface (platform-agnostic storage)
 │   ├── token-provider.ts          # ITokenProvider interface + TokenResult (platform-agnostic token serialization)
 │   ├── metadata-cache.ts           # KV-backed cache (uses IKeyValueStore)
+│   ├── blob-store.ts              # IBlobStore interface (platform-agnostic read of large index blobs)
+│   ├── index-store.ts             # loadIndex()/indexExists() — per-isolate-cached read of schema-knowledge indexes
+│   ├── schema-search.ts           # ISchemaSearch + KeywordSchemaSearch (seam for future Vectorize impl)
 │   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
 │   ├── logger.ts                  # Structured JSON audit logging (tool, auth, redaction events)
 │   ├── preflight.ts               # Config diagnostics — admin page + /callback error mapping
 │   └── redact.ts                  # Pattern-based sensitive field redaction
 ├── platform/
 │   ├── cloudflare-kv-store.ts     # CloudflareKVStore — wraps KVNamespace as IKeyValueStore
+│   ├── cloudflare-r2-blob-store.ts # CloudflareR2BlobStore — IBlobStore backed by an R2 bucket
 │   └── do-token-provider.ts       # DOTokenProvider — ITokenProvider backed by the TokenManager DO
-├── tools/                         # Registry-driven getters + 6 utility handlers
+├── tools/                         # Registry-driven getters + utility + schema-knowledge handlers
 │   ├── getter-registry.ts         # 38 per-entity `acumatica_get_*` tools as data (GETTER_TOOLS)
 │   ├── entity-list.ts             # acumatica_list_entities (Utility)
 │   ├── entity-schema.ts           # acumatica_describe_entity (Utility)
 │   ├── generic-inquiries.ts       # acumatica_run_inquiry (Utility)
 │   ├── generic-inquiry-discovery.ts # acumatica_list_generic_inquiries, _describe_inquiry (Utility)
-│   └── clear-cache.ts             # acumatica_clear_cache (Utility)
+│   ├── clear-cache.ts             # acumatica_clear_cache (Utility)
+│   ├── schema-discovery.ts        # acumatica_search_schema, _get_schema_entity, _list_schema_entities (offline schema index)
+│   └── gi-explain.ts              # acumatica_explain_gi_xml (stateless GI XML structural summary)
 └── types/
     └── acumatica.ts               # All TypeScript types, AppEnv, Env, AuthProps
+
+scripts/                           # OSS ingestion scripts (Apache-2.0); generated indexes stay private (.index/, gitignored)
+├── build-schema-index.mjs         # swagger.json → .index/schema-index.json
+└── upload-indexes.mjs             # uploads present .index/*.json to the mcp4acumatica-index R2 bucket
 ```
+
+## Schema Knowledge Tools (0.34.0)
+
+Four tools help power users build *against* Acumatica (discover entities/fields/relationships, read GI structure) rather than query business data. Architecture, shared with planned DAC + GI-XML workstreams: an **OSS ingestion script** (`scripts/`) the operator runs against a source they're licensed to access → a compact **private JSON index** in R2 (gitignored `.index/`, uploaded out-of-band) → **OSS tools** querying it. This keeps the build pipeline open-source while the derived index (instance-specific / licensed material) stays private.
+
+- **Source.** `acumatica_search_schema` / `_get_schema_entity` / `_list_schema_entities` read `schema-index.json`, built from the instance's own `swagger.json` (contract API description, incl. customizations — no third-party IP). They answer offline (no tenant round-trip), complementing the *live* `acumatica_describe_entity` (`$adHocSchema`). `acumatica_explain_gi_xml` is **stateless** — it summarizes a pasted GI definition XML and needs no index, so it always registers.
+- **Storage abstraction.** `IBlobStore` (`src/lib/blob-store.ts`; CF impl `CloudflareR2BlobStore`) on `AppEnv.indexStore`, backed by the `INDEX_STORE` R2 bucket (`mcp4acumatica-index`). `loadIndex()` (`src/lib/index-store.ts`) memoizes the parsed index per isolate; `indexExists()` is a cheap `R2.head` used at `init()` for **conditional registration** — the three index-backed tools register only when the index is present, so a deploy without a built index never advertises tools that would error.
+- **Search.** Keyword + structured today, behind `ISchemaSearch` (`src/lib/schema-search.ts`) so a `VectorSchemaSearch` (Vectorize + Workers AI) can be added later without touching handlers.
+- **Out of scope (by design):** Acumatica *documentation* lookups — the public Help Wiki (`help.acumatica.com`) is reachable via the AI client's own web search, so we don't vectorize/redistribute it. DAC metadata and GI XML example libraries are deferred private-index workstreams (extraction source TBD; they'd ship the same way — OSS script + private index).
 
 ## Configuration
 
@@ -181,6 +201,7 @@ src/
 
 ### R2 Buckets:
 - `mcp4acumatica_logs` — long-term log storage via Logpush (requires Workers Paid plan for Logpush; R2 free tier: 10 GB)
+- `mcp4acumatica-index` (binding `INDEX_STORE`) — schema-knowledge indexes (`schema-index.json`, future `dac-index.json`/`gi-examples-index.json`). Built offline by `scripts/` and uploaded with `npm run upload-index` (or auto by `setup.sh` post-deploy). Optional — the schema-knowledge tools degrade gracefully when the bucket is unbound or empty.
 
 ### Runtime Config (KV-backed):
 Settings can be changed at runtime via the admin console at `/docs/admin/settings` without redeploying. KV overrides take precedence over env vars. Changes take effect when the next DO instance starts (DOs recycle within minutes on idle). Config keys stored in KV with `config:` prefix:

@@ -5,6 +5,20 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.34.0] - 2026-06-11
+### Added
+- **Schema-knowledge tools** for power users building integrations and customizations:
+  - `acumatica_search_schema` — find entities by name/keyword and/or "which entities contain field X".
+  - `acumatica_get_schema_entity` — full offline schema for one entity (fields + types, actions, `$expand` sub-entities).
+  - `acumatica_list_schema_entities` — browse/filter the entity catalog by name/module prefix.
+  - `acumatica_explain_gi_xml` — stateless structural summary of a pasted Generic Inquiry definition XML (tables, joins, parameters, filters, results).
+- These answer from an **offline schema index** built from your instance's own `swagger.json` (always current, includes your customizations, no third-party IP), instead of sampling live records to infer shape. The three index-backed tools register only when the index is present; the GI explainer is always available.
+- New platform abstraction `IBlobStore` (CF impl `CloudflareR2BlobStore`) on `AppEnv.indexStore`, backed by a new `mcp4acumatica-index` R2 bucket (`INDEX_STORE`). Self-hosting story preserved.
+- Open-source ingestion scripts (`scripts/build-schema-index.mjs`, `scripts/upload-indexes.mjs`) + `npm run build-index`; `setup.sh` builds/uploads the schema index automatically after deploy when `swagger.json` is present.
+- New `/docs/schema-discovery` documentation page.
+### Notes
+- Acumatica **documentation** lookups are intentionally not a tool — the public Help Wiki (<https://help.acumatica.com/>) is reachable via the AI client's own web search. DAC metadata and GI XML example libraries are planned as later, private-index workstreams.
+
 ## [0.33.2] - 2026-06-08
 ### Added
 - This `CHANGELOG.md` (full history reconstructed from git tags/commits) and a `/docs/changelog` page on the documentation site.

@@ -4,6 +4,14 @@ node_modules/
 dist/
 swagger.json
 
+# Schema-knowledge build artifacts. The ingestion scripts in scripts/ are
+# tracked (Apache-2.0); the indexes they generate are derived from
+# instance-specific / licensed Acumatica material and stay private — built
+# locally and uploaded to R2 out-of-band, never committed.
+.index/
+gi-xml/
+dac-source/
+
 # macOS
 .DS_Store
 **/.DS_Store

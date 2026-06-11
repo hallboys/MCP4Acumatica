@@ -205,19 +205,22 @@ if [ -z "$KV_ID" ]; then
   ok "Created KV namespace: $KV_ID"
 fi
 
-# ── Create R2 bucket (idempotent) ──────────────────────────────
-step "Cloudflare R2 bucket"
+# ── Create R2 buckets (idempotent) ─────────────────────────────
+# mcp4acumatica-logs  → long-term audit logs (Logpush + DO-written)
+# mcp4acumatica-index → schema-knowledge indexes (schema-index.json, etc.)
+step "Cloudflare R2 buckets"
 
-R2_BUCKET="mcp4acumatica-logs"
-R2_OUT="$(npx wrangler r2 bucket create "$R2_BUCKET" 2>&1 || true)"
-if echo "$R2_OUT" | grep -qi 'created\|success'; then
-  ok "Created R2 bucket: $R2_BUCKET"
-elif echo "$R2_OUT" | grep -qi 'already exists\|10004'; then
-  ok "R2 bucket already exists: $R2_BUCKET"
-else
-  warn "Unexpected output from R2 bucket create — verify manually:"
-  echo "$R2_OUT"
-fi
+for R2_BUCKET in "mcp4acumatica-logs" "mcp4acumatica-index"; do
+  R2_OUT="$(npx wrangler r2 bucket create "$R2_BUCKET" 2>&1 || true)"
+  if echo "$R2_OUT" | grep -qi 'created\|success'; then
+    ok "Created R2 bucket: $R2_BUCKET"
+  elif echo "$R2_OUT" | grep -qi 'already exists\|10004'; then
+    ok "R2 bucket already exists: $R2_BUCKET"
+  else
+    warn "Unexpected output from R2 bucket create ($R2_BUCKET) — verify manually:"
+    echo "$R2_OUT"
+  fi
+done
 
 # ── Render wrangler.jsonc ──────────────────────────────────────
 step "Rendering wrangler.jsonc"
@@ -294,6 +297,21 @@ else
   # Prefer the *.workers.dev URL because it's unconditional; custom
   # routes depend on a zone config we can't verify from here.
   WORKER_URL="$(grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' "$DEPLOY_LOG" | head -n1 || true)"
+
+  # ── Schema-knowledge index ───────────────────────────────────
+  # If swagger.json is present, build the schema index and upload it so the
+  # acumatica_search_schema / _get_schema_entity / _list_schema_entities tools
+  # work immediately. Without it those tools simply don't register.
+  if [ -f swagger.json ]; then
+    step "Building & uploading schema index"
+    if node scripts/build-schema-index.mjs && node scripts/upload-indexes.mjs; then
+      ok "Schema index uploaded to mcp4acumatica-index"
+    else
+      warn "Schema index build/upload failed — schema-knowledge tools won't appear until you run 'npm run build-index'."
+    fi
+  else
+    warn "swagger.json not found — skipping schema index. To enable the schema-knowledge tools, export your instance's swagger.json to the repo root and run 'npm run build-index'."
+  fi
 fi
 
 # ── Auto-preflight ─────────────────────────────────────────────

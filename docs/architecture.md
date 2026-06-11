@@ -50,7 +50,7 @@ The MCP4Acumatica is a remote [Model Context Protocol](https://modelcontextproto
 │  │  /mcp  - MCP protocol endpoint   │       │
 │  │  /sse  - SSE transport           │       │
 │  │                                  │       │
-│  │  44 tools registered in init()   │       │
+│  │  48 tools registered in init()   │       │
 │  └──────────────┬───────────────────┘       │
 │                 │                            │
 │  ┌──────────────┴───────────────────┐       │
@@ -97,7 +97,7 @@ A [Hono](https://hono.dev) application that handles the Acumatica OAuth 2.0 auth
 
 A [Durable Object](https://developers.cloudflare.com/durable-objects/) that extends `McpAgent` from the `agents` SDK. Each MCP session gets its own DO instance with:
 
-- **`init()`** -- Registers all 44 tools with the MCP server
+- **`init()`** -- Registers all 48 tools with the MCP server
 - **`callTool()`** -- Wrapper that catches errors and returns MCP-formatted responses
 - **`this.props.acumaticaUsername`** -- The authenticated user's Acumatica username, set during the OAuth callback
 
@@ -346,7 +346,7 @@ Settings can be changed without redeploying via the admin console or direct KV w
 
 ### Tool Registration
 
-All 44 tools are registered in the `init()` method of `AcumaticaMcpServer`. Each tool has:
+All 48 tools are registered in the `init()` method of `AcumaticaMcpServer`. Each tool has:
 
 1. **Name** -- e.g., `acumatica_get_customer`
 2. **Description** -- Human-readable description for the MCP client

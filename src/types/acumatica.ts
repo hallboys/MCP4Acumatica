@@ -1089,6 +1089,10 @@ export interface AppEnv {
   // Serializes per-user Acumatica token refresh so concurrent sessions can't
   // race on IdentityServer's rotate-on-use refresh tokens (CF: per-user DO).
   tokenProvider: import("../lib/token-provider").ITokenProvider;
+  // Read-only store for the schema-knowledge indexes (CF: R2). Optional — when
+  // absent (no index uploaded / self-host without a blob store), the
+  // schema-knowledge tools degrade to a "build the index" hint. (CF: R2)
+  indexStore?: import("../lib/blob-store").IBlobStore;
 }
 
 /**
@@ -1123,6 +1127,9 @@ export interface Env {
   ADMIN_SECRET?: string;
   // R2 bucket for long-term log storage via Logpush
   mcp4acumatica_logs?: R2Bucket;
+  // R2 bucket holding the schema-knowledge indexes (schema-index.json, etc.).
+  // Optional — the schema-knowledge tools degrade gracefully when unbound or empty.
+  INDEX_STORE?: R2Bucket;
 }
 
 /** Helpers injected by @cloudflare/workers-oauth-provider */

@@ -1,11 +1,15 @@
 {
   "name": "mcp4acumatica",
-  "version": "0.33.2",
+  "version": "0.34.0",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build-schema-index": "node scripts/build-schema-index.mjs",
+    "build-gi-index": "node scripts/build-gi-index.mjs",
+    "upload-index": "node scripts/upload-indexes.mjs",
+    "build-index": "node scripts/build-schema-index.mjs && node scripts/upload-indexes.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.3.2",

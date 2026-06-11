@@ -12,12 +12,20 @@ import { handleListEntities } from "./tools/entity-list";
 import { handleDescribeEntity } from "./tools/entity-schema";
 import { handleListGenericInquiries, handleDescribeInquiry } from "./tools/generic-inquiry-discovery";
 import { handleClearCache } from "./tools/clear-cache";
+import {
+  handleSearchSchema,
+  handleGetSchemaEntity,
+  handleListSchemaEntities,
+} from "./tools/schema-discovery";
+import { handleExplainGiXml } from "./tools/gi-explain";
+import { indexExists, INDEX_KEYS } from "./lib/index-store";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError } from "./lib/rate-limiter";
 import { redactFields, redactParamsForLog } from "./lib/redact";
 import { logRedaction, logError, writeLogsToR2 } from "./lib/logger";
 import { getConfig } from "./lib/config";
 import { CloudflareKVStore } from "./platform/cloudflare-kv-store";
+import { CloudflareR2BlobStore } from "./platform/cloudflare-r2-blob-store";
 import { DOTokenProvider } from "./platform/do-token-provider";
 import { AcumaticaAuthHandler } from "./auth/acumatica-auth-handler";
 import { ReauthRequiredError } from "./auth/acumatica-oauth";
@@ -29,7 +37,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.33.2",
+    version: "0.34.0",
   });
 
   private redactPatterns?: string;
@@ -73,6 +81,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       REDACT_SKIP: this.env.REDACT_SKIP,
       store: new CloudflareKVStore(this.env.TOKEN_STORE),
       tokenProvider: new DOTokenProvider(this.env.TOKEN_MANAGER),
+      indexStore: this.env.INDEX_STORE ? new CloudflareR2BlobStore(this.env.INDEX_STORE) : undefined,
     };
 
     // Read runtime config from KV with env var fallback
@@ -257,6 +266,102 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
           () => handleClearCache(this.appEnv, target),
           "acumatica_clear_cache",
           { target }
+        );
+      }
+    );
+
+    // ── Schema-knowledge tools ────────────────────────────────
+    // Offline catalog/search over the schema index built from swagger.json
+    // (scripts/build-schema-index.mjs → INDEX_STORE R2). No tenant round-trip.
+    // Registered only when the schema index is present, so a deploy without a
+    // built index simply doesn't advertise tools that would error.
+    if (await indexExists(this.appEnv, INDEX_KEYS.schema)) {
+      this.server.tool(
+        "acumatica_search_schema",
+        "Search the Acumatica entity catalog (contract/OData API schema) by name/keyword and/or find which entities contain a given field. Use this to discover the right entity and its shape when building integrations or queries — it answers offline from your instance's API schema, with no record query. For authoritative live per-entity detail (including custom fields), follow up with acumatica_describe_entity.",
+        {
+          query: z
+            .string()
+            .optional()
+            .describe("Entity name or keyword (e.g. 'tax', 'salesorder', 'inventory'). Matches entity names and module tags."),
+          field: z
+            .string()
+            .optional()
+            .describe("A field name to locate (e.g. 'CustomerID', 'TaxZoneID'). Returns entities containing a matching field. Partial matches allowed."),
+          topN: z
+            .coerce.number()
+            .int()
+            .min(1)
+            .max(500)
+            .default(25)
+            .describe("Maximum number of matching entities to return (default 25)."),
+        },
+        async ({ query, field, topN }) => {
+          return this.callTool(
+            () => handleSearchSchema(this.appEnv, { query, field, topN }),
+            "acumatica_search_schema",
+            { query, field, topN }
+          );
+        }
+      );
+
+      this.server.tool(
+        "acumatica_get_schema_entity",
+        "Return the full schema for one Acumatica entity from the offline catalog: fields (name + type), available actions, and expandable sub-entities ($expand targets). Fast and tenant-free — use it to learn an entity's shape before calling acumatica_list_entities or an acumatica_get_* tool. Use acumatica_describe_entity instead when you need the authoritative live schema (e.g. to confirm a just-added custom field).",
+        {
+          entityName: z
+            .string()
+            .describe("Entity name (e.g. 'SalesOrder', 'Customer', 'StockItem'). Use acumatica_search_schema to find the exact name."),
+        },
+        async ({ entityName }) => {
+          return this.callTool(
+            () => handleGetSchemaEntity(this.appEnv, { entityName }),
+            "acumatica_get_schema_entity",
+            { entityName }
+          );
+        }
+      );
+
+      this.server.tool(
+        "acumatica_list_schema_entities",
+        "List the Acumatica entity catalog from the offline schema index, optionally filtered by a name/module prefix. Use this to browse what entities exist. Returns names + field counts; call acumatica_get_schema_entity for detail.",
+        {
+          namespace: z
+            .string()
+            .optional()
+            .describe("Optional name/module prefix to filter by (e.g. 'Sales', 'Project', 'Inventory'). Omit to list everything."),
+          topN: z
+            .coerce.number()
+            .int()
+            .min(1)
+            .max(500)
+            .default(200)
+            .describe("Maximum number of entities to return (default 200)."),
+        },
+        async ({ namespace, topN }) => {
+          return this.callTool(
+            () => handleListSchemaEntities(this.appEnv, { namespace, topN }),
+            "acumatica_list_schema_entities",
+            { namespace, topN }
+          );
+        }
+      );
+    }
+
+    // Stateless GI XML explainer — no index, no tenant call, always available.
+    this.server.tool(
+      "acumatica_explain_gi_xml",
+      "Summarize the structure of a Generic Inquiry definition XML (as exported from the GI editor, SM208000): tables joined, relations, parameters, filters, grouping/sorting, and output columns. Paste the GI XML to understand an existing inquiry's design. This is a reading aid that parses the pasted XML — it does not query Acumatica or validate the GI.",
+      {
+        xml: z
+          .string()
+          .describe("The Generic Inquiry definition XML to summarize (paste the full export)."),
+      },
+      async ({ xml }) => {
+        return this.callTool(
+          () => handleExplainGiXml({ xml }),
+          "acumatica_explain_gi_xml",
+          { xmlLength: xml?.length ?? 0 }
         );
       }
     );

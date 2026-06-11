@@ -1,10 +1,11 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 44 tools available in the MCP4Acumatica (v0.33.2).
+Complete specification for all 48 tools available in the MCP4Acumatica (v0.34.0).
 
 ## Table of Contents
 
 - [Utility / Discovery Tools](#utility--discovery-tools)
+- [Schema Knowledge Tools](#schema-knowledge-tools)
 - [Core](#core)
 - [Financial / Accounting](#financial--accounting)
 - [Inventory & Warehouse](#inventory--warehouse)
@@ -120,6 +121,65 @@ Clear cached metadata (entity schemas, GI lists, GI field schemas). Use when Acu
 **Caching details:** Entity schemas are cached for 24 hours. GI lists, GI metadata, and GI field schemas are cached for 1 hour. Cache is stored in KV with `cache:` key prefix.
 
 **Returns:** `{ cleared: [...] }` listing the cache keys that were removed.
+
+---
+
+## Schema Knowledge Tools
+
+Offline schema discovery for building integrations and customizations — answered from an
+index built from your instance's own `swagger.json`, with no record query. See
+[Schema Knowledge](schema-discovery) for how the index is built. The three index-backed
+tools appear only when the schema index is present; `acumatica_explain_gi_xml` is always
+available.
+
+### `acumatica_search_schema`
+
+Find entities by name/keyword and/or locate which entities contain a given field.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | No* | Entity name or keyword (e.g. `tax`, `salesorder`). Matches names and module tags. |
+| `field` | string | No* | A field name to locate (e.g. `CustomerID`). Returns entities containing a matching field (partial matches allowed). |
+| `topN` | number | No | Max matches to return (default 25, max 500). |
+
+\* Provide at least one of `query` / `field`.
+
+**Returns:** `{ results: [{ name, tag, fieldCount, matchedOn }], resultCount, note }`.
+
+### `acumatica_get_schema_entity`
+
+Full offline schema for one entity: fields (name + type), available actions, and
+expandable sub-entities (`$expand` targets).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `entityName` | string | Yes | Entity name (e.g. `SalesOrder`). Use `acumatica_search_schema` to find the exact name. |
+
+**Returns:** `{ name, tag, fields, actions, subCollections, expandHint }`. For the
+authoritative *live* schema (incl. just-added custom fields), use `acumatica_describe_entity`.
+
+### `acumatica_list_schema_entities`
+
+Browse the entity catalog, optionally filtered by a name/module prefix.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `namespace` | string | No | Name/module prefix to filter by (e.g. `Sales`, `Project`). Omit for all. |
+| `topN` | number | No | Max entities to return (default 200, max 500). |
+
+**Returns:** `{ entities: [{ name, tag, fieldCount }], count }`.
+
+### `acumatica_explain_gi_xml`
+
+Summarize the structure of a pasted Generic Inquiry definition XML (from SM208000):
+tables, relations/joins, parameters, filters, grouping/sorting, output columns. A reading
+aid that parses the XML you provide — it does not query Acumatica.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `xml` | string | Yes | The GI definition XML to summarize (paste the full export). |
+
+**Returns:** `{ root, title?, sections, otherElements, note }`.
 
 ---
 
