@@ -120,9 +120,6 @@ reconnect to force a fresh `init()`.
 These steps don't exist yet but will once the corresponding workstreams land — add the
 concrete commands here when they do:
 
-- **DAC index (planned).** On upgrade, re-extract the DAC index from the new release's
-  binaries/source and re-upload (`dac-index.json`). The contract/OData layer (step 3) is
-  separate from the DAC layer.
 - **GI XML examples (planned).** Re-export and rebuild `gi-examples-index.json` if examples
   are version-specific.
 - **GI descriptions (planned, 26R1).** If the `MCPGIIndex` meta-GI is published, confirm it

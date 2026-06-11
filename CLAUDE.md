@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.34.0`
+- **Current tag:** `25R2-0.34.1`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -165,7 +165,7 @@ Four tools help power users build *against* Acumatica (discover entities/fields/
 - **Source.** `acumatica_search_schema` / `_get_schema_entity` / `_list_schema_entities` read `schema-index.json`, built from the instance's own `swagger.json` (contract API description, incl. customizations — no third-party IP). They answer offline (no tenant round-trip), complementing the *live* `acumatica_describe_entity` (`$adHocSchema`). `acumatica_explain_gi_xml` is **stateless** — it summarizes a pasted GI definition XML and needs no index, so it always registers.
 - **Storage abstraction.** `IBlobStore` (`src/lib/blob-store.ts`; CF impl `CloudflareR2BlobStore`) on `AppEnv.indexStore`, backed by the `INDEX_STORE` R2 bucket (`mcp4acumatica-index`). `loadIndex()` (`src/lib/index-store.ts`) memoizes the parsed index per isolate; `indexExists()` is a cheap `R2.head` used at `init()` for **conditional registration** — the three index-backed tools register only when the index is present, so a deploy without a built index never advertises tools that would error.
 - **Search.** Keyword + structured today, behind `ISchemaSearch` (`src/lib/schema-search.ts`) so a `VectorSchemaSearch` (Vectorize + Workers AI) can be added later without touching handlers.
-- **Out of scope (by design):** Acumatica *documentation* lookups — the public Help Wiki (`help.acumatica.com`) is reachable via the AI client's own web search, so we don't vectorize/redistribute it. DAC metadata and GI XML example libraries are deferred private-index workstreams (extraction source TBD; they'd ship the same way — OSS script + private index).
+- **Out of scope (by design):** Acumatica *documentation* lookups — the public Help Wiki (`help.acumatica.com`) is reachable via the AI client's own web search, so we don't vectorize/redistribute it. **DAC-layer metadata is intentionally NOT a tool** for the same reason: stock DACs are covered by Acumatica's public DAC Schema Browser (`help.acumatica.com/dacBrowser`, web-readable by the client), and the only gap — *custom* DACs/extensions — is best answered from the customization source the developer already has (API-exposed custom fields are already covered by the schema tools). A DAC-via-GI customization was prototyped and dropped (see `git log`) once this redundancy was clear. A GI XML *example* library remains a possible future workstream.
 
 ## Configuration
 
