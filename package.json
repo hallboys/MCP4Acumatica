@@ -1,6 +1,6 @@
 {
   "name": "mcp4acumatica",
-  "version": "0.34.1",
+  "version": "0.34.2",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
