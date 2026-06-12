@@ -5,6 +5,10 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.34.2] - 2026-06-11
+### Fixed
+- The OIDC-fallback `UserSecurityInfo` identity lookup in `/callback` hardcoded the contract version `25.200.001` instead of using `ACUMATICA_ENDPOINT_VERSION`. On a re-targeted instance (e.g. 26R1) that path would 404, silently dropping users to the UUID-based key fallback and breaking token reuse across sessions. Now uses the configured endpoint version like every other contract-API URL. (Originally authored by Adam Coates in the hoser-dev fork.)
+
 ## [0.34.1] - 2026-06-11
 ### Docs
 - Documented the DAC-layer stance: DAC metadata is intentionally **not** a tool — stock DACs are covered by Acumatica's public DAC Schema Browser (`help.acumatica.com/dacBrowser`, reachable via the client's web access), custom DACs by the customization source, and API-exposed custom fields by the existing schema tools. (A DAC-via-GI customization was prototyped and dropped as redundant + high-maintenance.)

@@ -244,7 +244,7 @@ app.get("/callback", async (c) => {
     } else {
       console.log(`User info (OIDC): HTTP ${oidcResp.status}, trying auth contract...`);
       // Attempt 2: auth contract
-      const authUrl = `${c.env.ACUMATICA_URL}/entity/auth/25.200.001/UserSecurityInfo`;
+      const authUrl = `${c.env.ACUMATICA_URL}/entity/auth/${c.env.ACUMATICA_ENDPOINT_VERSION}/UserSecurityInfo`;
       const authResp = await fetch(authUrl, {
         headers: {
           Authorization: `Bearer ${acumaticaTokens.access_token}`,
