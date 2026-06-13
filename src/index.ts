@@ -37,7 +37,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.34.2",
+    version: "0.35.0",
   });
 
   private redactPatterns?: string;
@@ -123,7 +123,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         filterExpression: z
           .string()
           .optional()
-          .describe("OData v3 $filter expression (e.g., \"BranchID eq 'BTC' and Status eq 'Open'\"). Use substringof('needle', Field) for partial match (needle comes first). Do NOT use contains() (v4 syntax) or wrap fields in toupper()/tolower() — Acumatica does not support these and returns a 500. Substring matching is case-insensitive, so pass the needle in any casing."),
+          .describe("OData v3 $filter expression (e.g., \"BranchID eq 'BTC' and Status eq 'Open'\"). For partial match use the BARE boolean function — substringof('needle', Field) (needle comes first), startswith(Field,'prefix'), or endswith(Field,'suffix'). Do NOT append `eq true`: write substringof('needle', Field), NOT substringof('needle', Field) eq true — Acumatica's parser silently returns an empty result set for the `eq true` form. Do NOT use contains() (v4 syntax) or wrap fields in toupper()/tolower() — Acumatica does not support these and returns a 500. Substring matching is case-insensitive, so pass the needle in any casing."),
         topN: z
           .coerce.number()
           .int()
@@ -147,7 +147,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
     this.server.tool(
       "acumatica_list_entities",
-      "List or search any Acumatica entity in the contract-based Default endpoint with filtering, sorting, and field selection. Use this to find records matching criteria (e.g., open invoices over $10,000, customers in a state, stock items below reorder point) or to look up an ID by name when calling an acumatica_get_* tool. IMPORTANT: Always pass filterExpression to scope queries — never retrieve all records from large entities (JournalTransaction, Invoice, Bill, Payment, etc.). Do NOT paginate by making multiple calls to fetch all data — if the response is truncated, ask the user to narrow their filter. Auth/role metadata entities (User, UserRole, Role) are intentionally blocked and will return an error. To discover available entity names, use the entityName from any acumatica_get_* tool, or call acumatica_describe_entity to verify a candidate name.",
+      "List or search any Acumatica entity in the contract-based Default endpoint with filtering, sorting, and field selection. Use this to find records matching criteria (e.g., open invoices over $10,000, customers in a state, stock items below reorder point) or to look up an ID by name when calling an acumatica_get_* tool. IMPORTANT: Always pass filterExpression to scope queries — never retrieve all records from large entities (JournalTransaction, Invoice, Bill, Payment, etc.). Do NOT paginate by making multiple calls to fetch all data — if the response is truncated, ask the user to narrow their filter. Auth/role metadata entities (User, UserRole, Role) are intentionally blocked and will return an error. To discover available entity names, use the entityName from any acumatica_get_* tool, or call acumatica_describe_entity to verify a candidate name. NOTE: some complex document entities (PurchaseOrder, PhysicalInventoryCount, Shipment) cannot be server-side $filtered except by their key field — a broad/non-key filter (including substringof) either errors with a CannotOptimizeException or silently returns an empty set even when matching records exist. On these, filter by the key field for a single record (e.g. OrderNbr/ShipmentNbr eq '<value>' with topN=1), and use a Generic Inquiry (acumatica_run_inquiry) for any broad search.",
       {
         entityName: z
           .string()
@@ -155,7 +155,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         filterExpression: z
           .string()
           .optional()
-          .describe("OData v3 $filter expression (e.g., \"Status eq 'Open' and Amount gt 10000\", \"CustomerClass eq 'LOCAL'\", \"Date gt datetimeoffset'2026-01-01'\"). Use substringof('needle', Field) for partial match (needle comes first). Do NOT use contains() (v4 syntax) or wrap fields in toupper()/tolower() — Acumatica does not support these and returns a 500. Substring matching is case-insensitive, so pass the needle in any casing."),
+          .describe("OData v3 $filter expression (e.g., \"Status eq 'Open' and Amount gt 10000\", \"CustomerClass eq 'LOCAL'\", \"Date gt datetimeoffset'2026-01-01'\"). For partial match use the BARE boolean function — substringof('needle', Field) (needle comes first), startswith(Field,'prefix'), or endswith(Field,'suffix'). Do NOT append `eq true`: write substringof('needle', Field), NOT substringof('needle', Field) eq true — Acumatica's parser silently returns an empty result set for the `eq true` form. Do NOT use contains() (v4 syntax) or wrap fields in toupper()/tolower() — Acumatica does not support these and returns a 500. Substring matching is case-insensitive, so pass the needle in any casing."),
         topN: z
           .coerce.number()
           .int()

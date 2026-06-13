@@ -45,6 +45,9 @@ The `filterExpression` parameter maps to OData `$filter`. Use it to return only 
 | `endswith(field, 'value')` | Ends with | `endswith(Email, '@gmail.com')` |
 | `substringof('value', field)` | Contains (case-insensitive). **Note the reversed argument order — needle first.** | `substringof('widget', Description)` |
 
+> **Write the boolean functions BARE — do not append `eq true`:**
+> Use `substringof('widget', Description)`, **not** `substringof('widget', Description) eq true`. Acumatica's contract-REST parser silently returns an empty set (HTTP 200, no error) for the compared form, even though it's valid OData v3. The MCP normalizes this for you — it strips a trailing `eq true` off `substringof`/`startswith`/`endswith` before sending — but pass the bare form to be safe. `eq false` is left as-is: the only equivalent negation (`not substringof(...)`) is rejected by Acumatica with a 500, so there is no reliable "does not contain" filter on the contract API.
+
 > **Unsupported — these return a 500:**
 > - `contains(field, 'value')` — this is OData v4 syntax. Acumatica's contract-based REST API is v3. Use `substringof` instead.
 > - `tolower(field)` / `toupper(field)` — Acumatica's filter parser rejects these whether used standalone (`toupper(Status) eq 'OPEN'`) or nested inside other functions (`substringof('X', toupper(CustomerName))`). **`substringof` is already case-insensitive, so no casing helper is needed** — pass the needle in any casing and it will match.
@@ -237,7 +240,7 @@ orderBy: "OrderTotal desc"
 
 ```
 entityName: "SalesOrder"
-filterExpression: "CustomerID eq 'C000042'"
+filterExpression: "CustomerID eq '<customer-id — look up via acumatica_list_entities>'"
 expand: "Details"
 ```
 
@@ -257,7 +260,9 @@ expand: "Details"
 
 6. **`$top` is capped server-side** (default 1000). Requests for more are silently clamped. When results hit the limit, a note is returned. Use `$filter` and `$select` to keep queries focused.
 
-7. **Sub-entity fields** cannot be filtered directly in `$filter`. Filter on header-level fields only.
+7. **Sub-entity / child-collection fields** cannot be filtered directly in `$filter` — filter on header-level fields only. A filter that reaches into a child collection (e.g. `StockItem` by `CrossReferences/AlternateID`) errors; the MCP returns a structured `filterErrorKind: "child_collection"` message pointing you to a Generic Inquiry.
+
+8. **Some complex document entities cannot be server-side `$filtered` except by their key field.** On `PurchaseOrder`, `Shipment`, and `PhysicalInventoryCount`, a broad/non-key filter (including `substringof`) on an unbound/computed/BQL-delegate field either errors (`CannotOptimizeException` and friends — surfaced as a `filterNotApplicable` message) **or silently returns `[]` even when matching records exist**. For these, filter on the key field for a single record (`OrderNbr`/`ShipmentNbr eq '<value>'`, `topN: 1`), and use a Generic Inquiry (`acumatica_run_inquiry`) for any broad search. When one of these returns 0 rows on a non-key filter, the MCP adds a `possibleFalseNegative` warning — don't read 0 as "no such record."
 
 8. **Boolean values** use `true`/`false` (lowercase): `CreditHold eq true`
 

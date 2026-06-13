@@ -5,6 +5,15 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.35.0] - 2026-06-13
+### Fixed
+- **`substringof`/`startswith`/`endswith` filters silently returned `[]`.** Acumatica's contract-REST `$filter` parser returns an empty set (HTTP 200, no error) when a boolean string function is compared to a literal — `substringof('X', Field) eq true` — but works for the bare function. Models habitually append `eq true` (valid OData v3), so every partial-text/"contains" search returned zero rows. `normalizeODataFilter()` (`src/lib/odata-filter.ts`) now strips a trailing `eq true` off the three boolean functions before the request goes out, for both `acumatica_list_entities` and `acumatica_run_inquiry`. `eq false` is left verbatim — the only equivalent negation (`not substringof(...)`) is rejected by the contract API with a 500. (This was a parser quirk, not a URL-encoding bug.)
+### Added
+- **Structured errors for non-optimizable `$filter` queries.** Acumatica's OData filter binder 500s when it can't apply a `$filter` to a complex document entity (unbound/computed/BQL-delegate field → `CannotOptimizeException`, a child-collection field → "not a single value", a type mismatch, or an unknown field). `getFilterErrorKind()` (`src/lib/complex-entities.ts`) classifies these and `acumatica_list_entities` returns a structured, actionable error (`filterNotApplicable: true`, `filterErrorKind`, a key-field hint, and a pointer to `acumatica_describe_entity` / a Generic Inquiry) instead of an opaque "Acumatica internal error".
+- **False-negative guard for complex document entities.** When `acumatica_list_entities` returns 0 rows on a non-key filter against a known complex entity (`PurchaseOrder`, `Shipment`, `PhysicalInventoryCount`), the response now includes a `possibleFalseNegative: true` warning — Acumatica can silently drop a non-optimizable filter and return `[]` even when matching records exist, so the model is told not to conclude "no such record exists" and to verify with a keyed lookup or a Generic Inquiry.
+- **Tool descriptions** for `acumatica_list_entities` / `acumatica_run_inquiry` now tell the model to write boolean functions bare (no `eq true`) and call out the complex-document-entity filtering limitation.
+- **Unit-test harness** — first tests in the repo (`test/`, Node's built-in `node --test` runner with TypeScript type-stripping, zero new dependencies), wired to `npm test`. Covers `normalizeODataFilter` and the filter-error classification helpers.
+
 ## [0.34.2] - 2026-06-11
 ### Fixed
 - The OIDC-fallback `UserSecurityInfo` identity lookup in `/callback` hardcoded the contract version `25.200.001` instead of using `ACUMATICA_ENDPOINT_VERSION`. On a re-targeted instance (e.g. 26R1) that path would 404, silently dropping users to the UUID-based key fallback and breaking token reuse across sessions. Now uses the configured endpoint version like every other contract-API URL. (Originally authored by Adam Coates in the hoser-dev fork.)

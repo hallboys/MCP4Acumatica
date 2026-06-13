@@ -4,6 +4,12 @@
 import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient, AcumaticaApiError, unwrapFields } from "../lib/acumatica-client";
 import { getConfig, parsePositiveIntConfig, validateStringArg } from "../lib/config";
+import { normalizeODataFilter } from "../lib/odata-filter";
+import {
+  getComplexEntityInfo,
+  getFilterErrorKind,
+  isKeyedFilter,
+} from "../lib/complex-entities";
 
 // Entities that contain auth/credential/role metadata — blocked from the
 // generic lister because there's no legitimate AI-assistant use case and
@@ -81,10 +87,15 @@ export async function handleListEntities(
   const requestedTop = args.topN ?? 100;
   const effectiveTop = Math.min(requestedTop, MAX_TOP);
 
+  // Acumatica's contract-REST parser returns an empty set for
+  // `substringof(...) eq true`; strip the `eq true` so the bare boolean
+  // function reaches Acumatica. See normalizeODataFilter for details.
+  const filterExpression = normalizeODataFilter(args.filterExpression);
+
   const query: Record<string, string> = {};
 
-  if (args.filterExpression) {
-    query.$filter = args.filterExpression;
+  if (filterExpression) {
+    query.$filter = filterExpression;
   }
 
   query.$top = String(effectiveTop);
@@ -108,7 +119,7 @@ export async function handleListEntities(
       "acumatica_list_entities",
       {
         entityName: entityName,
-        filter: args.filterExpression,
+        filter: filterExpression,
         topN: effectiveTop,
         select: args.selectFields,
         orderBy: args.orderBy,
@@ -117,6 +128,38 @@ export async function handleListEntities(
       query
     );
   } catch (error) {
+    // Acumatica's contract-API OData filter binder 500s when it can't apply a
+    // $filter — an unbound/computed/BQL-delegate field (CannotOptimizeException),
+    // a type mismatch, an unknown field, or a child-collection reference. These
+    // all surface as an opaque "Acumatica internal error" 500. Convert them into
+    // a structured, actionable error. Checked before the $select retry: the
+    // filter, not $select, is the cause, so dropping $select wouldn't help. The
+    // body-based classifier returns null for a genuine $select 500, so that case
+    // still falls through to the retry below.
+    const filterErrorKind =
+      filterExpression && error instanceof AcumaticaApiError && error.statusCode === 500
+        ? getFilterErrorKind(error.body)
+        : null;
+    if (filterErrorKind) {
+      const info = getComplexEntityInfo(entityName);
+      const keyHint = info?.keyField
+        ? `filter on the key field for a single record (filterExpression="${info.keyField} eq '<value>'", topN=1)`
+        : `filter on the entity's key field for a single record (topN=1)`;
+      const giHint = `use a Generic Inquiry (acumatica_list_generic_inquiries to find one, then acumatica_run_inquiry) for a broad search`;
+      const message =
+        filterErrorKind === "child_collection"
+          ? `The filterExpression on entity '${entityName}' references a child-collection field, which the contract API cannot filter on. Instead, ${giHint}, or filter on a top-level field.`
+          : `Entity '${entityName}' could not be server-side $filtered with this expression — Acumatica could not bind or optimize it ` +
+            `(common causes: an unbound/computed/BQL-delegate field, a type mismatch, or an unknown field name; this includes CannotOptimizeException). ` +
+            `Verify field names and types with acumatica_describe_entity, ${keyHint}, or ${giHint}.`;
+      return {
+        error: message,
+        entity: entityName,
+        filterNotApplicable: true,
+        filterErrorKind,
+        ...(info?.keyField ? { keyField: info.keyField } : {}),
+      };
+    }
     // If the query fails with $select, retry without it and advise the user.
     // Some Acumatica entities return 500 when $select includes unsupported fields.
     if (args.selectFields && error instanceof AcumaticaApiError && error.statusCode === 500) {
@@ -127,7 +170,7 @@ export async function handleListEntities(
         "acumatica_list_entities",
         {
           entityName: entityName,
-          filter: args.filterExpression,
+          filter: filterExpression,
           topN: effectiveTop,
           orderBy: args.orderBy,
           expand: args.expand,
@@ -146,6 +189,33 @@ export async function handleListEntities(
   }
 
   const unwrapped = Array.isArray(results) ? results.map(unwrapFields) : unwrapFields(results);
+
+  // False-negative guard (failure mode B). A complex document entity can
+  // silently return [] (HTTP 200) for a non-key $filter that Acumatica's
+  // optimizer dropped — even when matching records exist (e.g. substringof on
+  // Shipment.Description). Flag an empty result on these entities so the model
+  // doesn't conclude "no such record exists". A keyed filter is optimizable and
+  // trustworthy, so we don't warn when the filter references the key field.
+  const complexInfo = getComplexEntityInfo(entityName);
+  if (
+    complexInfo &&
+    Array.isArray(unwrapped) &&
+    unwrapped.length === 0 &&
+    filterExpression &&
+    !isKeyedFilter(filterExpression, complexInfo.keyField)
+  ) {
+    const keyedSuggestion = complexInfo.keyField
+      ? `a keyed lookup (filterExpression="${complexInfo.keyField} eq '<value>'", topN=1)`
+      : `a keyed lookup on the entity's key field (topN=1)`;
+    return {
+      results: [],
+      possibleFalseNegative: true,
+      warning:
+        `0 rows returned, but '${entityName}' is a complex document entity that Acumatica often cannot server-side $filter on a non-key field — ` +
+        `it may silently return an empty set instead of matching rows. This 0 may be a FALSE NEGATIVE; do NOT conclude that no matching record exists. ` +
+        `Verify with ${keyedSuggestion}, or use a Generic Inquiry (acumatica_list_generic_inquiries, then acumatica_run_inquiry) for the search.`,
+    };
+  }
 
   // Acumatica's contract API does not return a total count, so we cannot
   // distinguish "result set happened to equal the cap" from "more records

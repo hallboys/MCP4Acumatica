@@ -4,6 +4,7 @@
 import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient } from "../lib/acumatica-client";
 import { getConfig, parsePositiveIntConfig, validateStringArg } from "../lib/config";
+import { normalizeODataFilter } from "../lib/odata-filter";
 
 /** OData query response with value array */
 interface ODataQueryResponse {
@@ -32,10 +33,14 @@ export async function handleRunInquiry(
   const requestedTop = args.topN ?? 100;
   const effectiveTop = Math.min(requestedTop, MAX_TOP);
 
+  // Keep filter handling identical to acumatica_list_entities: strip
+  // `substringof(...) eq true` → bare boolean function. See normalizeODataFilter.
+  const filterExpression = normalizeODataFilter(args.filterExpression);
+
   const query: Record<string, string> = {};
 
-  if (args.filterExpression) {
-    query.$filter = args.filterExpression;
+  if (filterExpression) {
+    query.$filter = filterExpression;
   }
 
   query.$top = String(effectiveTop);
@@ -47,7 +52,7 @@ export async function handleRunInquiry(
   const response = await client.getOData<ODataQueryResponse>(
     args.inquiryName,
     "acumatica_run_inquiry",
-    { inquiryName: args.inquiryName, filter: args.filterExpression, topN: effectiveTop, select: args.selectFields },
+    { inquiryName: args.inquiryName, filter: filterExpression, topN: effectiveTop, select: args.selectFields },
     query
   );
 

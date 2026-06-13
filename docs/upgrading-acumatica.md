@@ -89,6 +89,12 @@ add/rename/deprecate entities or change field shapes:
 - `acumatica_search_schema` for any new entities you expect from the release.
 - `acumatica_list_entities` + `acumatica_run_inquiry` smoke test (one filtered call each).
 - If an entity was removed/renamed upstream, update its `GETTER_TOOLS` entry.
+- Re-verify the hardcoded **complex-document-entity list** in `src/lib/complex-entities.ts`
+  (`PurchaseOrder`, `Shipment`, `PhysicalInventoryCount` + their key fields `OrderNbr`/`ShipmentNbr`).
+  These drive the "can't server-side `$filter` on a non-key field" structured error and the
+  `possibleFalseNegative` warning. If a release renames one of these entities or its key field,
+  or makes a previously-unfilterable field optimizable, update the list. The mode-A 500 classifier
+  (`getFilterErrorKind`) is body-based and entity-agnostic, so it needs no per-release change.
 
 ## 8. Update version strings & tag prefix
 

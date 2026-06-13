@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.34.2`
+- **Current tag:** `25R2-0.35.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -126,6 +126,8 @@ src/
 │   └── markdown.d.ts              # TypeScript declaration for .md text module imports
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
+│   ├── odata-filter.ts            # normalizeODataFilter() — strips `eq true` off substringof/startswith/endswith
+│   ├── complex-entities.ts        # known complex document entities + getFilterErrorKind() (filter-binder 500 classifier)
 │   ├── config.ts                  # KV-backed runtime config (uses IKeyValueStore)
 │   ├── kv-store.ts                # IKeyValueStore interface (platform-agnostic storage)
 │   ├── token-provider.ts          # ITokenProvider interface + TokenResult (platform-agnostic token serialization)
@@ -156,6 +158,10 @@ src/
 scripts/                           # OSS ingestion scripts (Apache-2.0); generated indexes stay private (.index/, gitignored)
 ├── build-schema-index.mjs         # swagger.json → .index/schema-index.json
 └── upload-indexes.mjs             # uploads present .index/*.json to the mcp4acumatica-index R2 bucket
+
+test/                              # Node built-in test runner (node --test, TS type-stripping) — `npm test`
+├── odata-filter.test.ts           # normalizeODataFilter regression (substringof eq true)
+└── complex-entities.test.ts       # getFilterErrorKind / known-list / keyed-filter detection
 ```
 
 ## Schema Knowledge Tools (0.34.0)
@@ -233,6 +239,7 @@ Settings can be changed at runtime via the admin console at `/docs/admin/setting
 npx wrangler dev              # Local dev
 npx wrangler deploy           # Deploy to Cloudflare
 npx tsc --noEmit              # Type check
+npm test                      # Run unit tests (node --test, TS type-stripping)
 npx wrangler tail             # Live logs
 npx wrangler secret put X     # Set a secret
 npx wrangler kv namespace create X  # Create KV namespace
@@ -266,7 +273,7 @@ Before every commit, push, or tag:
 3. **Update version strings in documentation** — if the tag is changing, update the version in:
    - `CLAUDE.md` → `Current tag` field in Project Overview
    - `docs/tool-reference.md` → version in the opening paragraph
-   - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
+   - `src/docs/docs-handler.ts` → `<span>v... &middot; 48 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
    - `package.json` → `version` field
 4. **Update the upgrade guide if relevant** — if the change adds/alters anything version-coupled (a new instance-derived index, a hardcoded endpoint/entity, a cached artifact, the targeted-release prefix), update `docs/upgrading-acumatica.md` accordingly.
@@ -280,7 +287,7 @@ When the user says **"close session"**, perform all of the following:
 3. **Update version strings** in:
    - `CLAUDE.md` → `Current tag` field in Project Overview
    - `docs/tool-reference.md` → version in the opening paragraph
-   - `src/docs/docs-handler.ts` → `<span>v... &middot; 44 tools</span>` in the nav brand
+   - `src/docs/docs-handler.ts` → `<span>v... &middot; 48 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
    - `package.json` → `version` field
 4. **Update `CHANGELOG.md`** — prepend an entry for the new version (newest first; shown at `/docs/changelog`)
@@ -294,6 +301,8 @@ When the user says **"close session"**, perform all of the following:
 - **User identity retrieval:** The OIDC `/identity/connect/userinfo` endpoint (with `openid profile email` scopes) is the primary method. Falls back to `/entity/auth/25.200.001/UserSecurityInfo` which may not exist on all instances. If both fail, username defaults to a UUID-based key (breaks token reuse across sessions).
 - **Acumatica system entities not available via contract API:** `User`, `UserRole`, and screen-based API (`/entity/Default/.../screen/SM201010`) all return 404 on SaaS instances. The canary GI approach for role checking was adopted because of this limitation.
 - **`$select` on some entities causes Acumatica 500:** Some entities (e.g., Payment) return internal server errors when `$select` is used with certain field names. The `acumatica_list_entities` tool auto-retries without `$select` when this occurs.
+- **`substringof(...) eq true` silently returns `[]`:** Acumatica's contract-REST `$filter` parser returns an empty set (HTTP 200, no error) for a boolean string function compared to a literal — `substringof('X', F) eq true` / `startswith(...) eq true` / `endswith(...) eq true` — but the *bare* function works. Models habitually append `eq true` (valid OData v3). `normalizeODataFilter()` (`src/lib/odata-filter.ts`) strips it server-side for both `acumatica_list_entities` and `acumatica_run_inquiry`. `eq false` is left verbatim — the only equivalent negation (`not substringof(...)`) 500s on the contract API. NOT a transport/encoding bug (an early parens-encoding hypothesis was disproven live).
+- **Complex document entities can't be server-side `$filtered` on non-key fields:** PurchaseOrder, Shipment, PhysicalInventoryCount (and any filter that reaches a child collection, e.g. `StockItem/CrossReferences/AlternateID`) fail in two ways — (A) HTTP 500 from the OData filter binder (`CannotOptimizeException`, "type conversions not supported", "not a single value", "key not present") or (B) a *silent* `[]` even when matching rows exist (e.g. `substringof` on PurchaseOrder `VendorID`). A keyed filter (`OrderNbr`/`ShipmentNbr eq '...'`, topN=1) is optimizable and works; broad search must use a Generic Inquiry. `getFilterErrorKind()` (`src/lib/complex-entities.ts`) classifies mode-A 500s into a structured `filterNotApplicable` error; mode-B empties on the known-list entities get a `possibleFalseNegative` warning so the model doesn't conclude "no such record exists." The known-list is hardcoded — see `docs/upgrading-acumatica.md` §7.
 - Old Entra ID secrets may still exist on Cloudflare — clean up with `wrangler secret delete ENTRA_CLIENT_ID`, etc.
 - **Zod schema constraint:** MCP tool parameter schemas MUST use only simple types (`z.string()`, `z.string().optional()`, `z.string().default("value")`). Complex types like `z.record()`, `z.unknown()`, `z.number()` cause MCP SDK JSON Schema serialization failures and tools won't appear in client discovery. Use `z.string()` with manual `parseInt()` in the handler for numeric parameters.
 - **ChatGPT CIMD bug (as of April 2026):** ChatGPT's MCP client sees `client_id_metadata_document_supported: true` in our metadata but fails to complete CIMD (it doesn't have its own metadata document URL) and does not auto-fallback to DCR. Users must manually select DCR when adding the server in ChatGPT. Our server correctly advertises both — this is a ChatGPT client-side issue.
@@ -396,7 +405,7 @@ When the user says **"close session"**, perform all of the following:
 ### Low Priority — Infrastructure
 - [ ] Add Attachment upload/download tools
 - [ ] Remove old Entra ID secrets from Cloudflare (`wrangler secret delete`)
-- [ ] Add unit tests
+- [~] Add unit tests — `test/` harness added (`npm test`, node --test); covers filter normalization + complex-entity detection. Broader coverage still pending.
 - [ ] Add CI/CD pipeline
 
 ## MCP Client Compatibility (as of April 2026)
