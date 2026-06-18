@@ -70,7 +70,7 @@ There are three install paths. All three rely on the same Acumatica-side prerequ
 The button forks this repo to your GitHub account, reads `wrangler.jsonc`, auto-creates the KV namespace and R2 bucket, prompts for secrets, and deploys. Step-by-step:
 
 1. **Click the button.** Cloudflare will ask you to sign in (or create an account) and authorize a GitHub fork.
-2. **Confirm bindings.** The KV namespace (`TOKEN_STORE` / `OAUTH_KV`) and R2 bucket (`mcp4acumatica-logs`) are created automatically.
+2. **Confirm bindings.** You'll be prompted to create KV namespaces **twice** — once for the `TOKEN_STORE` binding (app data: tokens, OAuth state, cache, config, admin sessions) and once for `OAUTH_KV` (used internally by the OAuth library). This is expected: they're two separate bindings and never share keys, so accept **"+ Create new"** for both. Give them distinct names (e.g. `mcp4acumatica` and `mcp4acumatica-oauth`) so they're easy to tell apart in the dashboard later — using the same name for both works but is confusing. The R2 buckets (`mcp4acumatica-logs`, `mcp4acumatica-index`) are created the same way. (The terminal install paths point both KV bindings at a single namespace for convenience; the GUI can't do that in one pass, but two namespaces are functionally identical.)
 3. **Set secrets.** When prompted, paste:
    - `ACUMATICA_CLIENT_ID` — from your Connected Application (SM303010)
    - `ACUMATICA_CLIENT_SECRET` — from the same screen
