@@ -785,6 +785,7 @@ adminApp.get("/preflight/api", async (c) => {
     acumaticaUrl: c.env.ACUMATICA_URL,
     acumaticaTenant: c.env.ACUMATICA_TENANT,
     acumaticaEndpointVersion: c.env.ACUMATICA_ENDPOINT_VERSION,
+    acumaticaEndpointName: c.env.ACUMATICA_ENDPOINT_NAME,
     acumaticaClientId: c.env.ACUMATICA_CLIENT_ID,
     acumaticaClientSecret: c.env.ACUMATICA_CLIENT_SECRET,
     adminSecret: c.env.ADMIN_SECRET,

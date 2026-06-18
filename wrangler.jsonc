@@ -31,6 +31,7 @@
 		"ACUMATICA_URL": "https://your-instance.acumatica.com",
 		"ACUMATICA_TENANT": "YourTenant",
 		"ACUMATICA_ENDPOINT_VERSION": "25.200.001",
+		"ACUMATICA_ENDPOINT_NAME": "Default",
 		"ACUMATICA_MAX_RECORDS": "1000",
 		"ACUMATICA_MCP_ROLE": "MCP Access",
 		"REDACT_PATTERNS": "",

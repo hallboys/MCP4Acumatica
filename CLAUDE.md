@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.35.0`
+- **Current tag:** `25R2-0.36.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -75,7 +75,7 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 11. **`unwrapFields` drops `custom`.** Acumatica's `custom` container holds user-defined extension fields in a deeply nested type-tagged wire format (`{"Document": {"UsrField": {"type": "...", "value": ...}}}`). It's user data, but surfacing it as-is would bloat responses and confuse the model. See the comment in `src/lib/acumatica-client.ts` — for workflows that need custom fields, extend the per-entity `acumatica_get_*` tool with `$expand=custom` and a flatten step rather than changing `unwrapFields()` globally.
 
-12. **Registry-driven getters.** The 38 per-entity `acumatica_get_*` tools are defined as data in `src/tools/getter-registry.ts` (`GETTER_TOOLS`). Each entry describes an entity name, parameter list with defaults/optionality, and optional `$expand`. `src/index.ts` loops over the registry and registers each tool via a shared `runGetter()` handler. Adding a new single-record lookup is a ~7-line registry entry — no per-tool handler file, no per-tool `server.tool(...)` block. Utility/discovery tools that do more than a plain GET (pagination envelope, `$metadata` parse, cache invalidation) stay as dedicated handler files.
+12. **Registry-driven getters.** The 38 per-entity `acumatica_get_*` tools are defined as data in `src/tools/getter-registry.ts` (`GETTER_TOOLS`). Each entry describes an entity name, parameter list with defaults/optionality, and optional `$expand`. `src/index.ts` loops over the registry and registers each tool via a shared `runGetter()` handler. Adding a new single-record lookup is a ~7-line registry entry — no per-tool handler file, no per-tool `server.tool(...)` block. Utility/discovery tools that do more than a plain GET (pagination envelope, `$metadata` parse, cache invalidation) stay as dedicated handler files. **Endpoint-aware:** the getter entity names are curated for the stock `Default` endpoint; the base path honors `ACUMATICA_ENDPOINT_NAME` (see Config), and `runGetter()` re-messages a 404 on a non-`Default` endpoint via `endpointAware404Message()` (`src/tools/getter-errors.ts`) so "entity not exposed by this endpoint" reads distinctly from "wrong key." Registration is **not** conditional on a live entity catalog — the contract API requires a per-user token, so there's no auth-free way to enumerate the endpoint's entities at DO `init()`; the runtime 404 message is the seam instead.
 
 13. **Config diagnostics.** `src/lib/preflight.ts` exposes a `runPreflight()` probe that exercises every external touch-point: `ACUMATICA_URL` reachable, OIDC discovery, Connected App `client_credentials` grant (distinguishes `invalid_client` — bad creds — from `unsupported_grant_type` — creds valid, grant disabled), tenant OData path (`/t/{tenant}/...` → 401 = exists, 404 = wrong tenant), and contract API endpoint version. Surfaced two places: the admin console (`/docs/admin/preflight` → on-demand diagnostic table) and the `/callback` token-exchange path (known OAuth errors like `invalid_client` / `invalid_grant` are rendered as targeted pages via `interpretTokenError()` instead of a generic 502). Only the `error` field of IdentityServer error bodies is read — other fields can echo the submitted form, which includes `client_secret`.
 
@@ -144,7 +144,8 @@ src/
 │   ├── cloudflare-r2-blob-store.ts # CloudflareR2BlobStore — IBlobStore backed by an R2 bucket
 │   └── do-token-provider.ts       # DOTokenProvider — ITokenProvider backed by the TokenManager DO
 ├── tools/                         # Registry-driven getters + utility + schema-knowledge handlers
-│   ├── getter-registry.ts         # 38 per-entity `acumatica_get_*` tools as data (GETTER_TOOLS)
+│   ├── getter-registry.ts         # 38 per-entity `acumatica_get_*` tools as data (GETTER_TOOLS) + runGetter
+│   ├── getter-errors.ts           # endpointAware404Message() — endpoint-aware 404 re-messaging (import-free leaf, unit-tested)
 │   ├── entity-list.ts             # acumatica_list_entities (Utility)
 │   ├── entity-schema.ts           # acumatica_describe_entity (Utility)
 │   ├── generic-inquiries.ts       # acumatica_run_inquiry (Utility)
@@ -161,7 +162,8 @@ scripts/                           # OSS ingestion scripts (Apache-2.0); generat
 
 test/                              # Node built-in test runner (node --test, TS type-stripping) — `npm test`
 ├── odata-filter.test.ts           # normalizeODataFilter regression (substringof eq true)
-└── complex-entities.test.ts       # getFilterErrorKind / known-list / keyed-filter detection
+├── complex-entities.test.ts       # getFilterErrorKind / known-list / keyed-filter detection
+└── getter-errors.test.ts          # endpointAware404Message (Default vs custom endpoint 404)
 ```
 
 ## Schema Knowledge Tools (0.34.0)
@@ -190,6 +192,7 @@ Four tools help power users build *against* Acumatica (discover entities/fields/
 - `ACUMATICA_URL` — e.g., `https://your-instance.acumatica.com`
 - `ACUMATICA_TENANT` — Acumatica tenant/login company name (e.g., `Production`). Used for OData GI endpoint URL.
 - `ACUMATICA_ENDPOINT_VERSION` — `25.200.001`
+- `ACUMATICA_ENDPOINT_NAME` — contract-API endpoint name (the `{name}` in `/entity/{name}/{version}`). Optional; defaults to `Default` (Acumatica's stock system endpoint). Override only when targeting a custom Web Service Endpoint (SM207060). A custom endpoint can rename/reshape entities, so the hardcoded names in `GETTER_TOOLS` are only guaranteed against `Default`. The getters are **endpoint-aware**: on a non-`Default` endpoint a 404 is re-messaged (via `endpointAware404Message()` in `src/tools/getter-errors.ts`) to tell the model the entity may simply not be exposed by that endpoint — distinct from a wrong key — and to confirm with `acumatica_describe_entity`/`acumatica_search_schema`. On `Default` the plain "verify the ID" message is kept.
 - `ACUMATICA_MAX_RECORDS` — max rows per query (default `1000`). Runtime-overridable via `config:acumatica_max_records` in KV (set from the admin console).
 - `ACUMATICA_MCP_ROLE` — Acumatica role name required to use MCP (default `"MCP Access"`)
 - `REDACT_PATTERNS` — comma-separated additional field name patterns to redact (e.g., `CustomSSN,EmployeeNotes`)
@@ -216,7 +219,7 @@ Settings can be changed at runtime via the admin console at `/docs/admin/setting
 
 ### Acumatica Connected Application (SM303010):
 - **Redirect URI:** `https://mcp4acumatica.hallboys.com/callback` (plus `https://acumatica-mcp.hallboys.com/callback` while the legacy alias is still live, and the *.workers.dev URL if you use that too — every hostname users connect to must be listed)
-- **Scope:** `api openid profile email offline_access` (`offline_access` is REQUIRED — without it Acumatica issues no refresh token and sessions die when the ~1h access token expires)
+- **Scope:** Not configured on the Connected Application — SM303010 has no scope field. The server requests `api openid profile email offline_access` in the `/authorize` URL (`offline_access` is REQUIRED — without it Acumatica issues no refresh token and sessions die when the ~1h access token expires).
 
 ### Acumatica Role & GI Prerequisites:
 - **Role:** Create `MCP Access` role (SM201005). No permissions needed — it's a marker role for the canary GI gate check.
@@ -254,7 +257,7 @@ repointed at a different instance/tenant, follow **`docs/upgrading-acumatica.md`
 1. **`ACUMATICA_ENDPOINT_VERSION`** (contract base `/entity/Default/{version}`) — update the var, redeploy; preflight (`/docs/admin/preflight`) flags a wrong value.
 2. **Schema-knowledge index** — re-export the instance's `swagger.json` and `npm run build-index` (0.34.0+); otherwise `acumatica_search_schema`/`_get_schema_entity`/`_list_schema_entities` describe the old shape. No redeploy needed; the next DO instance reads the new R2 object.
 3. **Runtime metadata cache** — `acumatica_clear_cache` (entity `$adHocSchema`, GI list, GI field schemas are cached 24 h / 1 h).
-4. **Access-control prerequisites** — `MCP Access` role + `MCPAccess` canary GI (OData-exposed) + Connected App scopes (`offline_access` required) survive upgrades but should be re-verified.
+4. **Access-control prerequisites** — `MCP Access` role + `MCPAccess` canary GI (OData-exposed) + Connected App (Authorization Code flow + redirect URIs; scopes are request-side, not configured on the app) survive upgrades but should be re-verified.
 5. **Hardcoded entities** — `GETTER_TOOLS` (`src/tools/getter-registry.ts`) entity names are stable across releases but spot-check key entities and update entries if upstream renames/removes one.
 6. **Two independent version numbers** — the **MCP server version** (`0.34.0`, bumps each release) vs. the **targeted Acumatica release** (the `25R2`/`26R1` *tag prefix*, changed only when re-targeting).
 
@@ -428,8 +431,9 @@ The server responds on three well-known paths (all return identical metadata):
 
 ### Endpoint format:
 ```
-GET {ACUMATICA_URL}/entity/Default/{version}/{Entity}/{key}
+GET {ACUMATICA_URL}/entity/{ACUMATICA_ENDPOINT_NAME}/{version}/{Entity}/{key}
 ```
+`ACUMATICA_ENDPOINT_NAME` defaults to `Default`. The client builds this base URL once in `AcumaticaClient` (`src/lib/acumatica-client.ts`); `Default` is no longer hardcoded.
 
 ### Common query parameters:
 - `$expand=SubEntity1,SubEntity2` — include nested records

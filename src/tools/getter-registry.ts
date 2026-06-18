@@ -3,7 +3,8 @@
 
 import { z } from "zod";
 import type { AppEnv } from "../types/acumatica";
-import { AcumaticaClient, unwrapFields } from "../lib/acumatica-client";
+import { AcumaticaClient, AcumaticaApiError, unwrapFields } from "../lib/acumatica-client";
+import { endpointAware404Message } from "./getter-errors";
 
 /**
  * Registry-driven definition of the 38 "get one record" tools.
@@ -95,8 +96,24 @@ export async function runGetter(
   const path = segments.join("/");
   const query: Record<string, string> = {};
   if (spec.expand) query.$expand = spec.expand;
-  const result = await client.get(path, spec.name, args as Record<string, unknown>, query);
-  return unwrapFields(result);
+  try {
+    const result = await client.get(path, spec.name, args as Record<string, unknown>, query);
+    return unwrapFields(result);
+  } catch (err) {
+    // On a custom contract endpoint a 404 may mean "this endpoint doesn't expose
+    // this entity" rather than "wrong key" — Acumatica returns the same status
+    // for both. Re-message so the model can distinguish. (Default endpoint: the
+    // client's plain message is kept; see endpointAware404Message.)
+    if (err instanceof AcumaticaApiError) {
+      const enriched = endpointAware404Message(
+        err.statusCode,
+        env.ACUMATICA_ENDPOINT_NAME || "Default",
+        spec.entity
+      );
+      if (enriched) throw new AcumaticaApiError(404, err.body, enriched);
+    }
+    throw err;
+  }
 }
 
 // ── Registry ─────────────────────────────────────────────────────

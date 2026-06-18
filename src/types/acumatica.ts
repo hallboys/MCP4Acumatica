@@ -1074,6 +1074,10 @@ export interface AppEnv {
   ACUMATICA_URL: string;
   ACUMATICA_TENANT: string;
   ACUMATICA_ENDPOINT_VERSION: string;
+  // Contract-API endpoint name — the `{name}` in `/entity/{name}/{version}`.
+  // Optional; defaults to "Default" (Acumatica's stock system endpoint).
+  // Override only when targeting a custom Web Service Endpoint (SM207060).
+  ACUMATICA_ENDPOINT_NAME?: string;
   ACUMATICA_MAX_RECORDS: string;
   ACUMATICA_CLIENT_ID: string;
   ACUMATICA_CLIENT_SECRET: string;
@@ -1107,6 +1111,8 @@ export interface Env {
   ACUMATICA_URL: string;
   ACUMATICA_TENANT: string;
   ACUMATICA_ENDPOINT_VERSION: string;
+  // Contract-API endpoint name — `{name}` in `/entity/{name}/{version}`. Optional; defaults to "Default".
+  ACUMATICA_ENDPOINT_NAME?: string;
   ACUMATICA_MAX_RECORDS: string;
   ACUMATICA_CLIENT_ID: string;
   ACUMATICA_CLIENT_SECRET: string;

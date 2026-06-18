@@ -37,7 +37,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.35.0",
+    version: "0.36.0",
   });
 
   private redactPatterns?: string;
@@ -72,6 +72,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       ACUMATICA_URL: this.env.ACUMATICA_URL,
       ACUMATICA_TENANT: this.env.ACUMATICA_TENANT,
       ACUMATICA_ENDPOINT_VERSION: this.env.ACUMATICA_ENDPOINT_VERSION,
+      ACUMATICA_ENDPOINT_NAME: this.env.ACUMATICA_ENDPOINT_NAME,
       ACUMATICA_MAX_RECORDS: this.env.ACUMATICA_MAX_RECORDS,
       ACUMATICA_CLIENT_ID: this.env.ACUMATICA_CLIENT_ID,
       ACUMATICA_CLIENT_SECRET: this.env.ACUMATICA_CLIENT_SECRET,

@@ -21,6 +21,7 @@ export interface PreflightInput {
   acumaticaUrl?: string;
   acumaticaTenant?: string;
   acumaticaEndpointVersion?: string;
+  acumaticaEndpointName?: string;
   acumaticaClientId?: string;
   acumaticaClientSecret?: string;
   adminSecret?: string;
@@ -242,31 +243,33 @@ export async function checkTenantPath(
 }
 
 /**
- * Contract API versioning. `/entity/Default/{version}` exists per version.
- * 401 = version path exists (auth required); 404 = wrong version.
+ * Contract API versioning. `/entity/{name}/{version}` exists per version.
+ * 401 = version path exists (auth required); 404 = wrong version or name.
  */
 export async function checkEndpointVersion(
   url: string | undefined,
-  version: string | undefined
+  version: string | undefined,
+  endpointName?: string
 ): Promise<PreflightCheck> {
   const name = "Acumatica contract API endpoint version";
   if (!url || !version) {
     return { name, status: "skip", detail: "ACUMATICA_URL or ACUMATICA_ENDPOINT_VERSION not set." };
   }
-  const probeUrl = `${url}/entity/Default/${encodeURIComponent(version)}`;
+  const epName = endpointName || "Default";
+  const probeUrl = `${url}/entity/${encodeURIComponent(epName)}/${encodeURIComponent(version)}`;
   const res = await safeFetch(probeUrl);
   if ("error" in res) {
     return { name, status: "fail", detail: `Network error: ${res.error}` };
   }
   if (res.status === 401 || res.status === 403 || res.status === 200) {
-    return { name, status: "pass", detail: `Endpoint version exists (HTTP ${res.status}).` };
+    return { name, status: "pass", detail: `Endpoint "${epName}/${version}" exists (HTTP ${res.status}).` };
   }
   if (res.status === 404) {
     return {
       name,
       status: "fail",
-      detail: `Endpoint version ${version} returned 404.`,
-      remediation: `Verify ACUMATICA_ENDPOINT_VERSION ("${version}") matches a published Web Service endpoint in Acumatica (SM207060). The default endpoint version for 25R2 is "25.200.001".`,
+      detail: `Endpoint "${epName}/${version}" returned 404.`,
+      remediation: `Verify ACUMATICA_ENDPOINT_VERSION ("${version}") and ACUMATICA_ENDPOINT_NAME ("${epName}") match a published Web Service endpoint in Acumatica (SM207060). The stock endpoint is "Default" and the default version for 25R2 is "25.200.001".`,
     };
   }
   return { name, status: "warn", detail: `Unexpected HTTP ${res.status}.` };
@@ -290,7 +293,7 @@ export async function runPreflight(input: PreflightInput): Promise<PreflightChec
     checkOidcDiscovery(input.acumaticaUrl),
     checkClientCredentials(input),
     checkTenantPath(input.acumaticaUrl, input.acumaticaTenant),
-    checkEndpointVersion(input.acumaticaUrl, input.acumaticaEndpointVersion),
+    checkEndpointVersion(input.acumaticaUrl, input.acumaticaEndpointVersion, input.acumaticaEndpointName),
   ]);
   return [
     ...secrets,

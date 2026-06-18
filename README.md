@@ -48,8 +48,7 @@ Claude (claude.ai / Desktop / API)
 - [Node.js](https://nodejs.org) >= 18
 - A [Cloudflare](https://cloudflare.com) account (Workers paid plan for Durable Objects)
 - An Acumatica 2025 R2 instance with:
-  - A **Connected Application** configured in SM303010
-  - OAuth 2.0 enabled with `api openid profile email offline_access` scopes (offline_access is required for refresh tokens)
+  - A **Connected Application** configured in SM303010 with the **Authorization Code** OAuth 2.0 flow (scopes are sent by the server in the request, not configured on the app)
   - A redirect URI pointing to your worker's `/callback` endpoint
   - An **`MCP Access` role** (SM201005) -- a marker role with no permissions required
   - An **`MCPAccess` Generic Inquiry** (SM208000) -- a trivial GI assigned only to the `MCP Access` role, with **Expose via OData** enabled (see [Architecture docs](docs/architecture.md) for details)
@@ -175,8 +174,9 @@ These steps are required regardless of which install path you pick. They can't b
 2. Create a new Connected Application.
 3. Set the **OAuth 2.0 Flow** to **Authorization Code**.
 4. Add a redirect URI: `https://<your-worker-url>/callback` (use the `*.workers.dev` hostname or your custom domain).
-5. Set the scope to `api openid profile email offline_access` (offline_access is required so Acumatica issues refresh tokens).
-6. Note the **Client ID** and **Client Secret** — you'll provide these as secrets during deploy.
+5. Note the **Client ID** and **Client Secret** — you'll provide these as secrets during deploy.
+
+> There is no scope field to configure here. OAuth scopes (`api openid profile email offline_access`, including the `offline_access` that makes Acumatica issue refresh tokens) are sent by the MCP server in the authorization request — they aren't set on the Connected Application.
 
 #### Role and Generic Inquiry (SM201005, SM208000)
 

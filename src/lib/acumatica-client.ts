@@ -52,7 +52,8 @@ export class AcumaticaClient {
   constructor(env: AppEnv, acumaticaUsername: string) {
     this.env = env;
     this.acumaticaUsername = acumaticaUsername;
-    this.baseUrl = `${env.ACUMATICA_URL}/entity/Default/${env.ACUMATICA_ENDPOINT_VERSION}`;
+    const endpointName = env.ACUMATICA_ENDPOINT_NAME || "Default";
+    this.baseUrl = `${env.ACUMATICA_URL}/entity/${endpointName}/${env.ACUMATICA_ENDPOINT_VERSION}`;
   }
 
   /**

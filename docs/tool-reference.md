@@ -1,6 +1,11 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 48 tools available in the MCP4Acumatica (v0.35.0).
+Complete specification for all 48 tools available in the MCP4Acumatica (v0.36.0).
+
+> The `**Endpoint:**` paths below show the default deployment values — the `Default` endpoint
+> name and contract version `25.200.001`. The base `/entity/{name}/{version}` is governed by
+> the `ACUMATICA_ENDPOINT_NAME` (default `Default`) and `ACUMATICA_ENDPOINT_VERSION` env vars,
+> so your instance's paths may differ.
 
 ## Table of Contents
 

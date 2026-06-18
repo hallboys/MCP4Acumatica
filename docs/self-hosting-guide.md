@@ -356,7 +356,7 @@ const username = "admin@mycompany.com";
 
 Implement the Acumatica OAuth 2.0 authorization code flow using Passport.js or a custom Express middleware. The flow is:
 
-1. Redirect user to `{ACUMATICA_URL}/identity/connect/authorize` with `scope=api openid profile email offline_access` (**`offline_access` is required** — without it Acumatica issues no refresh token, so sessions die when the ~1h access token expires; the Connected App must also permit the scope)
+1. Redirect user to `{ACUMATICA_URL}/identity/connect/authorize` with `scope=api openid profile email offline_access` (**`offline_access` is required** — without it Acumatica issues no refresh token, so sessions die when the ~1h access token expires; scopes are sent here in the request, not configured on the Connected Application)
 2. Handle the callback, exchange the code for tokens at `{ACUMATICA_URL}/identity/connect/token`
 3. Store the tokens via `store.put("user_token:{username}", ...)`
 4. Attach the username to the MCP session

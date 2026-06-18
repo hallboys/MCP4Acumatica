@@ -90,8 +90,8 @@ app.get("/authorize", async (c) => {
   // `offline_access` is REQUIRED for Acumatica/IdentityServer to issue a
   // refresh token. Without it the token response has no refresh_token, the
   // stored token can never be refreshed, and every session dies the moment
-  // its ~1h access token expires. (The Connected App in SM303010 must also
-  // permit the offline_access scope.)
+  // its ~1h access token expires. Scopes are requested here, not configured
+  // on the Connected App in SM303010 (which has no scope field).
   acumaticaAuthorizeUrl.searchParams.set("scope", "api openid profile email offline_access");
   acumaticaAuthorizeUrl.searchParams.set("state", state);
 

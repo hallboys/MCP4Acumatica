@@ -10,16 +10,27 @@ checklist. Items are ordered so you can do them top-to-bottom.
 
 ## 1. Find the new contract endpoint version
 
-The contract REST base URL is `/entity/Default/{ACUMATICA_ENDPOINT_VERSION}` — e.g.
-`/entity/Default/25.200.001`. A release upgrade usually introduces a new **Default**
-endpoint version (Acumatica keeps older versions available for backward compatibility, so
-nothing breaks immediately, but you want the new one to see new entities/fields).
+The contract REST base URL is `/entity/{ACUMATICA_ENDPOINT_NAME}/{ACUMATICA_ENDPOINT_VERSION}`
+— e.g. `/entity/Default/25.200.001`. `ACUMATICA_ENDPOINT_NAME` defaults to `Default`
+(Acumatica's stock system endpoint) and rarely changes; a release upgrade usually introduces
+a new **version** under the same endpoint name (Acumatica keeps older versions available for
+backward compatibility, so nothing breaks immediately, but you want the new one to see new
+entities/fields).
 
 - In Acumatica: **Integration → Web Service Endpoints (SM207060)** → the `Default` endpoint
   → note the highest version (e.g. `26.200.001`).
 - Or read it from the OpenAPI doc title at
   `{ACUMATICA_URL}/entity/Default/{version}/swagger.json` (the `info.title` is
   `Default/{version}`).
+
+> **Custom endpoint?** If you target a custom Web Service Endpoint instead of `Default`, set
+> `ACUMATICA_ENDPOINT_NAME` to that endpoint's name. Be aware a custom endpoint can rename or
+> reshape entities, so the hardcoded names in `GETTER_TOOLS` (`src/tools/getter-registry.ts`)
+> are only guaranteed against `Default`. The getters are endpoint-aware: on a non-`Default`
+> endpoint, a 404 from a getter is re-messaged to tell the model the entity may not be exposed
+> by that endpoint (vs. just a wrong key), pointing it at `acumatica_describe_entity` /
+> `acumatica_search_schema`. Still spot-check and adjust entries if your custom endpoint
+> differs. See **§7** for how to add/extend registry entries.
 
 ## 2. Update `ACUMATICA_ENDPOINT_VERSION`
 
@@ -74,9 +85,10 @@ A version upgrade does not normally touch these, but confirm:
 - The **`MCP Access` role** and the **`MCPAccess` canary GI** still exist and the GI is still
   **Exposed via OData** (the role gate calls it). A 403 on the canary = users locked out;
   a 404/5xx = "Configuration Error" page.
-- The **Connected Application** (SM303010) redirect URIs and scopes
-  (`api openid profile email offline_access`) are intact. `offline_access` is required for
-  refresh tokens — without it sessions die after ~1 h.
+- The **Connected Application** (SM303010) redirect URIs are intact. (Scopes aren't
+  configured on the app — the server sends `api openid profile email offline_access` in the
+  authorization request. `offline_access` is required for refresh tokens — without it sessions
+  die after ~1 h.)
 
 ## 7. Spot-check entities and tools
 
@@ -95,6 +107,58 @@ add/rename/deprecate entities or change field shapes:
   `possibleFalseNegative` warning. If a release renames one of these entities or its key field,
   or makes a previously-unfilterable field optimizable, update the list. The mode-A 500 classifier
   (`getFilterErrorKind`) is body-based and entity-agnostic, so it needs no per-release change.
+
+### Adding or extending a getter entry
+
+You only need to touch the registry to add a *dedicated* `acumatica_get_<entity>` tool. Any
+entity the endpoint exposes is **already reachable** without code via `acumatica_list_entities`
+(filter + `$top`) and `acumatica_describe_entity` (live schema) — add a getter only when an
+entity is queried often enough to deserve a first-class, well-described tool. Extended/custom
+entities (from a customization or a custom Web Service Endpoint) are added the exact same way.
+
+A getter is a data entry in `GETTER_TOOLS` (`src/tools/getter-registry.ts`) — no handler file,
+no `server.tool(...)` block. `src/index.ts` loops the registry and wires each entry through the
+shared `runGetter()` handler. To add one:
+
+1. **Confirm the entity name and its key fields.** Run `acumatica_describe_entity` (or
+   `acumatica_search_schema`) against the live instance. The entity name is the first path
+   segment; the keys are the path segments after it, **in order**. For a custom endpoint, make
+   sure the entity actually exists *in the endpoint you set via `ACUMATICA_ENDPOINT_NAME`* — a
+   custom endpoint may expose, rename, or hide entities differently from `Default`.
+2. **Add the entry.** Append to `GETTER_TOOLS`:
+
+   ```ts
+   {
+     name: "acumatica_get_widget",            // MCP tool name (snake_case, acumatica_get_ prefix)
+     description: "Retrieve a widget by Widget ID. Returns ...",  // model-facing
+     entity: "Widget",                         // first path segment — the Acumatica entity name
+     params: [
+       // path segments after the entity, in order. Each becomes a URL-encoded segment.
+       { name: "widgetID", describe: "Widget ID. Format is instance-specific — use acumatica_list_entities with entityName='Widget' to look it up." },
+       // Discriminator-style leading keys take a default:
+       //   { name: "type", describe: "...", default: "Normal" },
+       // A trailing key that may be omitted:
+       //   { name: "revision", describe: "...", optional: true },
+     ],
+     expand: "Details,Attributes",             // optional $expand (comma-separated nav properties)
+   },
+   ```
+
+   - **Required** param: no `default`, no `optional` → must be a non-empty string or `runGetter`
+     returns a loud error (an empty value would otherwise collapse the URL to a list endpoint).
+   - **`default`**: optional param with a fallback (e.g. `orderType` → `"SO"`). Good for the
+     discriminator key that leads a compound key.
+   - **`optional`**: optional param with no default; omitted → no path segment.
+   - **`expand`**: only the nav properties you want inlined. `custom` is intentionally dropped by
+     `unwrapFields()` — see the note in `src/lib/acumatica-client.ts` if you need extension fields.
+3. **Keep Zod simple.** Parameter schemas may only use `z.string()` / `.optional()` / `.default()`
+   — the registry builds these for you. Numeric or complex Zod types break MCP JSON-Schema
+   serialization (the tool silently won't appear in client discovery).
+4. **Update the tool count.** The docs say "48 tools" in several places — bump them if you add a
+   tool: `docs/tool-reference.md`, `src/docs/docs-handler.ts` nav brand, the architecture diagram
+   in `CLAUDE.md`, and this guide's tool tallies. Add a `CHANGELOG.md` entry.
+5. **Type-check and smoke test.** `npx tsc --noEmit`, deploy, then call the new tool once and
+   reconnect the Claude.ai connector if the tool list looks stale (it caches per DO session).
 
 ## 8. Update version strings & tag prefix
 
