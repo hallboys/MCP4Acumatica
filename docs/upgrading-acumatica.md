@@ -60,12 +60,19 @@ recycle to force a fresh read).
 
 ## 4. Clear the runtime metadata cache
 
-Live schema (`$adHocSchema`), the GI list, and inferred GI field schemas are cached in KV
-(24 h / 1 h). After an upgrade these can be stale (renamed fields, new GIs).
+Live schema (`$adHocSchema`), the GI list, inferred GI field schemas, **and the GI tool
+registry** (`cache:gi_registry`) are cached in KV (24 h / 1 h / ~1 h freshness). After an
+upgrade these can be stale (renamed fields, new GIs, changed `$metadata` types).
 
 - Run the `acumatica_clear_cache` tool with no argument (clears everything), **or**
 - Admin console → clear cache, **or**
 - Targeted: `target=schema:<Entity>` / `target=gi`.
+
+The GI registry (gate list + curated descriptions + `$metadata`-declared field types) is built
+lazily from the `MCPGIs`/`MCPGIFields` feeds + OData `$metadata` and self-refreshes within ~1 h
+of its `builtAt`; clearing the cache forces an immediate rebuild on the next GI request. Because
+the field **types** come from `$metadata`, an endpoint-version change is exactly when a refresh
+matters — clear it so curated tools don't describe the old shape.
 
 ## 5. Re-run preflight
 

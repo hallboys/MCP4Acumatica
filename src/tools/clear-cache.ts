@@ -46,7 +46,10 @@ export async function handleClearCache(
         keysToDelete.push(key.name);
       } else if (target === "schemas" && shortKey.startsWith("schema:")) {
         keysToDelete.push(key.name);
-      } else if (target === "gi" && (shortKey === "gi_list" || shortKey === "gi_metadata")) {
+      } else if (
+        target === "gi" &&
+        (shortKey === "gi_list" || shortKey === "gi_metadata" || shortKey === "gi_registry")
+      ) {
         keysToDelete.push(key.name);
       }
     }

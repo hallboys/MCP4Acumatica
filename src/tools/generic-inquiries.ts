@@ -5,6 +5,9 @@ import type { AppEnv } from "../types/acumatica";
 import { AcumaticaClient } from "../lib/acumatica-client";
 import { getConfig, parsePositiveIntConfig, validateStringArg } from "../lib/config";
 import { normalizeODataFilter } from "../lib/odata-filter";
+import { cleanGiRows } from "../lib/gi-rows";
+import { checkGiGate } from "../lib/gi-registry";
+import { getGiRegistry } from "../lib/gi-registry-build";
 
 /** OData query response with value array */
 interface ODataQueryResponse {
@@ -26,6 +29,13 @@ export async function handleRunInquiry(
     validateStringArg(args.filterExpression, "filterExpression", 2000) ||
     validateStringArg(args.selectFields, "selectFields", 1000);
   if (lengthErr) return { error: lengthErr };
+
+  // Opt-in gate: when a registry has been built, only GIs explicitly exposed
+  // (ExposedtoMCP) may be queried. Absent registry → gate inactive (see
+  // gi-registry.ts). Feed/canary GIs are always denied.
+  const registry = await getGiRegistry(env, acumaticaUsername);
+  const gate = checkGiGate(registry, args.inquiryName);
+  if (!gate.allowed) return { error: gate.reason };
 
   const maxRecords = await getConfig(env.store, "acumatica_max_records", env.ACUMATICA_MAX_RECORDS);
   const MAX_TOP = parsePositiveIntConfig(maxRecords, 1000);
@@ -58,16 +68,8 @@ export async function handleRunInquiry(
 
   const rows = response.value || [];
 
-  // Strip OData metadata fields from each row
-  const cleaned = rows.map((row) => {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(row)) {
-      if (!key.startsWith("@odata")) {
-        result[key] = value;
-      }
-    }
-    return result;
-  });
+  // Strip OData metadata fields and trim space-padded fixed-width values.
+  const cleaned = cleanGiRows(rows);
 
   // OData GI endpoints return no total count, so "exactly at cap" is
   // indistinguishable from "more rows exist". See entity-list.ts for the

@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.36.0`
+- **Current tag:** `25R2-0.37.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -127,6 +127,9 @@ src/
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
 │   ├── odata-filter.ts            # normalizeODataFilter() — strips `eq true` off substringof/startswith/endswith
+│   ├── gi-registry.ts             # GI opt-in gate + curated-schema assembly (pure leaf: checkGiGate, parseEdmxTypes, assembleRegistry)
+│   ├── gi-registry-build.ts       # getGiRegistry() — lazy registry build (caller's token) + KV cache (impure)
+│   ├── gi-rows.ts                 # cleanGiRow/cleanGiRows — strip @odata + trim space-padded fixed-width values
 │   ├── complex-entities.ts        # known complex document entities + getFilterErrorKind() (filter-binder 500 classifier)
 │   ├── config.ts                  # KV-backed runtime config (uses IKeyValueStore)
 │   ├── kv-store.ts                # IKeyValueStore interface (platform-agnostic storage)
@@ -163,7 +166,8 @@ scripts/                           # OSS ingestion scripts (Apache-2.0); generat
 test/                              # Node built-in test runner (node --test, TS type-stripping) — `npm test`
 ├── odata-filter.test.ts           # normalizeODataFilter regression (substringof eq true)
 ├── complex-entities.test.ts       # getFilterErrorKind / known-list / keyed-filter detection
-└── getter-errors.test.ts          # endpointAware404Message (Default vs custom endpoint 404)
+├── getter-errors.test.ts          # endpointAware404Message (Default vs custom endpoint 404)
+└── gi-registry.test.ts            # checkGiGate semantics + cleanGiRow + parseEdmxTypes/assembleRegistry
 ```
 
 ## Schema Knowledge Tools (0.34.0)
@@ -174,6 +178,18 @@ Four tools help power users build *against* Acumatica (discover entities/fields/
 - **Storage abstraction.** `IBlobStore` (`src/lib/blob-store.ts`; CF impl `CloudflareR2BlobStore`) on `AppEnv.indexStore`, backed by the `INDEX_STORE` R2 bucket (`mcp4acumatica-index`). `loadIndex()` (`src/lib/index-store.ts`) memoizes the parsed index per isolate; `indexExists()` is a cheap `R2.head` used at `init()` for **conditional registration** — the three index-backed tools register only when the index is present, so a deploy without a built index never advertises tools that would error.
 - **Search.** Keyword + structured today, behind `ISchemaSearch` (`src/lib/schema-search.ts`) so a `VectorSchemaSearch` (Vectorize + Workers AI) can be added later without touching handlers.
 - **Out of scope (by design):** Acumatica *documentation* lookups — the public Help Wiki (`help.acumatica.com`) is reachable via the AI client's own web search, so we don't vectorize/redistribute it. **DAC-layer metadata is intentionally NOT a tool** for the same reason: stock DACs are covered by Acumatica's public DAC Schema Browser (`help.acumatica.com/dacBrowser`, web-readable by the client), and the only gap — *custom* DACs/extensions — is best answered from the customization source the developer already has (API-exposed custom fields are already covered by the schema tools). A DAC-via-GI customization was prototyped and dropped (see `git log`) once this redundancy was clear. A GI XML *example* library remains a possible future workstream.
+
+## GI Tool Gating & Registry (0.37.0)
+
+Opt-in gate + curated enrichment for Generic-Inquiry tools, layered on the existing three GI tools (`acumatica_run_inquiry`, `acumatica_list_generic_inquiries`, `acumatica_describe_inquiry`) — **not** per-GI dynamic tools (that's a deferred, separate workstream; see `docs/gi-discovery-plan.md`). The REST/entity getters are unaffected.
+
+- **Lazy pull, no service account, no Cron.** The registry is built **on demand with the requesting user's token** (`getGiRegistry()`, `src/lib/gi-registry-build.ts`) when the KV cache (`cache:gi_registry`) is stale, then cached for everyone. The gate list + field schemas are *global* data (identical for all users) and contain only GI/field **metadata, never business rows**, so building from whichever user's token is in hand is safe; execution still uses each user's own token with their row-level access. This was chosen over a scheduled/service-account builder after verifying `client_credentials` is disabled on the Connected App (`unauthorized_client`) — and it matches the spec's TTL pull model.
+- **Feeds.** Two GIs supply the registry: `MCPGIs` (one row per exposed GI — `InquiryTitle`, `AIDescription`, `EntryScreen`, `GIDesign_designID`; gated by `ExposedtoMCP = true AND ExposeviaOData = true AND Parameters = 0` on the Conditions tab) and `MCPGIFields` (per-column `Object`, `DataField`, `Caption`, `AIDescription`, `LineNbr`). Field **types** come from OData `$metadata` (Path A — verified the wire is not string-flattened, so declared numeric types are trustworthy; sample inference mislabels whole-number decimals as `integer`). `parseEdmxTypes`/`assembleRegistry` (`src/lib/gi-registry.ts`, a pure unit-tested leaf) resolve authoritative property names (incl. `_N` collision suffixes by `LineNbr`), attach curated descriptions (caption-strip → `Usr`-strip → field-name matcher), and **fall back to runtime inference** for any GI/field without a declared type or description. Exposure is *never* gated on description presence.
+- **Gate semantics (`checkGiGate`) — NOT fail-open.** No registry yet (never built — feed GIs not readable, or cold bootstrap) → gate **inactive**, GI tools behave as before (rollout state, no dead period). Registry present → **fail-closed**: only listed GIs allowed; an empty list denies all; feed/canary GIs (`MCPGIs`/`MCPGIFields`/`MCPAccess`, in `EXCLUDED_GI_NAMES`) are always denied even while inactive. A failed rebuild serves the cached last-good (gate stays enforced) rather than flapping. Enforced in `run_inquiry` + `describe_inquiry`; `list` shows only gated GIs (+ curated descriptions).
+- **Space-padded trim.** Acumatica returns fixed-width keys padded (`"GARES     "`), which break equality filters; `cleanGiRow`/`cleanGiRows` (`src/lib/gi-rows.ts`) trim string values + strip `@odata.*` everywhere a GI row reaches the model.
+- **Cache.** `cache:gi_registry` (durable last-good TTL + ~1 h `builtAt` freshness) + per-isolate memo. Cleared by `acumatica_clear_cache` (everything, or `target=gi`). Registry changes apply on the next isolate (same model as runtime config).
+- **Operator prerequisite to activate:** grant the `MCP Access` role **read access to the `MCPGIs` + `MCPGIFields` GIs**, then tag in-use GIs `ExposedtoMCP`. `ExposedtoMCP` is authoritative; the `*MCP` GI-naming convention is just convention. Until then the gate stays inactive.
+- **Deferred:** usage-driven promotion of frequently-used GIs to dedicated per-GI tools (recompute `gi_promoted` during the lazy build from R2 `do-logs`; register in `init()` with hysteresis). Held back because it mutates the live tool list and touches the Claude.ai tool-list caching fragility — to be added after the gate bakes in production.
 
 ## Configuration
 
@@ -225,6 +241,11 @@ Settings can be changed at runtime via the admin console at `/docs/admin/setting
 - **Role:** Create `MCP Access` role (SM201005). No permissions needed — it's a marker role for the canary GI gate check.
 - **Generic Inquiry:** Create `MCPAccess` GI (SM208000). Can be trivial (any single column). Assign it only to the `MCP Access` role. Enable **Expose via OData**.
 - **User assignment:** Assign the `MCP Access` role to users who should have AI assistant access.
+
+### GI Gate Registry (optional — activates the GI opt-in gate, 0.37.0):
+- **Feed GIs:** Create `MCPGIs` (one row per exposed GI) and `MCPGIFields` (one row per exposed GI's output column), both **Exposed via OData**, both parameter-free, and **neither tagged `ExposedtoMCP`**. See "GI Tool Gating & Registry".
+- **Feed access:** grant the `MCP Access` role **read access to `MCPGIs` + `MCPGIFields`** so any connected user's token can build the registry (lazy pull — no service account).
+- **Tagging:** add the `UsrExposedtoMCP` / `UsrAIDescription` extension fields (on `GIDesign`/`GIResult`) and tag the GIs you want exposed. Until ≥1 GI is tagged and the feeds are readable, the gate stays **inactive** (all OData-exposed GIs remain available, as before).
 
 ## Tech Stack
 
@@ -312,7 +333,7 @@ When the user says **"close session"**, perform all of the following:
 - **Claude.ai tool list caching:** Claude.ai may cache the tool list from a previous Durable Object session. If tools appear stale, disconnect and reconnect the MCP server in Claude.ai to force a fresh `init()` call.
 - **Claude.ai re-auth is not silent, and can get stuck:** When the server revokes a grant (dead Acumatica token → `ReauthRequiredError`), the 401 + `WWW-Authenticate` *should* let the client re-run OAuth invisibly. In practice Claude.ai surfaces a **reconnect prompt** rather than re-authing silently, and after a few failed attempts it caches the connector in a dead state and stops prompting entirely. Recovery for an **org-managed** connector is a **personal disconnect → reconnect** (the org-level "delete" is not available/needed to individual users) — this clears the stuck personal grant and starts a fresh `/authorize` flow. The `0.33.0` TokenManager DO removes the *spurious* revokes (rotation races) that were triggering this; genuine dead-token revokes still prompt.
 - **`/authorize` 500 on an invalid `client_id`:** `app.get("/authorize")` calls `parseAuthRequest()` with no try/catch, so a malformed/unfetchable CIMD `client_id` throws → uncaught → HTTP 500 (rather than a clean 400). Harmless for real clients; only bites synthetic/manual probes with a bogus `client_id`.
-- **No description metadata for Generic Inquiries.** The Acumatica GI Design form (SM208000) has no free-text "Description" field on the header — only `Inquiry Title` (a short label, often just a prettified name) and `Site Map Title` (set only for nav-pinned GIs). The OData GI service document returns `{name, url}` only; nothing richer is exposed. As a result, `acumatica_list_generic_inquiries` surfaces GIs by name alone, leaving the model to guess which GI matches a user's intent. Parametrized GIs are already excluded at list time (see `generic-inquiry-discovery.ts` — `$metadata` is scanned for `FunctionImport Name="..._WithParameters"` entries and those are filtered out), so the gap is narrowly about selection context for the surviving non-parametrized GIs. Potential cures:
+- **No description metadata for Generic Inquiries.** *(Addressed in 0.37.0 via the GI registry — see "GI Tool Gating & Registry". The curation now lives in the `MCPGIs`/`MCPGIFields` feed GIs (`UsrAIDescription` fields), surfaced through the lazy registry; this is a hybrid of cures #2 and #3 below. The note is kept for the underlying-platform context.)* The Acumatica GI Design form (SM208000) has no free-text "Description" field on the header — only `Inquiry Title` (a short label, often just a prettified name) and `Site Map Title` (set only for nav-pinned GIs). The OData GI service document returns `{name, url}` only; nothing richer is exposed. As a result, `acumatica_list_generic_inquiries` surfaces GIs by name alone, leaving the model to guess which GI matches a user's intent. Parametrized GIs are already excluded at list time (see `generic-inquiry-discovery.ts` — `$metadata` is scanned for `FunctionImport Name="..._WithParameters"` entries and those are filtered out), so the gap is narrowly about selection context for the surviving non-parametrized GIs. Potential cures:
   1. **MCP-side curation map.** KV-backed `gi_descriptions:{name} → text` edited from the admin console. Filter the list to GIs that have a description, inject the description into the response. Curation lives where it's consumed, zero Acumatica-side change. Downside: descriptions invisible inside Acumatica; admins must maintain a second list.
   2. **Acumatica-side meta-GI.** Admin publishes a `MCPGIIndex` GI whose rows are `(Name, Description)` pulled from a custom table or hand-maintained dataset. Visible inside Acumatica, but heavier setup and the descriptions live separately from the GI definitions themselves.
   3. **Extract GI definition (XML / GIQL) via API and auto-generate descriptions.** If Acumatica exposes the GI design body — tables joined, filters, output columns — through a screen-based API, OData $metadata annotations, or an export endpoint, feed each GI's structure to Claude Code (or any model) and have it produce a one-line description plus parameter/usage notes from the query itself. Cache the generated text alongside the existing GI metadata cache. Most automated of the three; requires verifying which API surface (if any) returns the design body on SaaS — historically system entities like `GenericInquiry` / `GIDesign` are not in the contract API (see the "system entities" note above), so this path likely depends on either a non-public endpoint or an admin-published export.

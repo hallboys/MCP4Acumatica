@@ -49,3 +49,10 @@ export const INDEX_KEYS = {
   dac: "dac-index.json",
   giExamples: "gi-examples-index.json",
 } as const;
+
+// The GI registry is deliberately absent from INDEX_KEYS: unlike these
+// immutable, offline-built R2 indexes it's a KV-cached artifact
+// (cache:gi_registry) rebuilt lazily on demand from the feed GIs with the
+// requesting user's token. Its cache-key constant lives in gi-registry-build.ts
+// (REGISTRY_CACHE_KEY); the pure gate logic in gi-registry.ts stays a
+// runtime-leaf module (type-only imports) so it's unit-testable under node --test.
