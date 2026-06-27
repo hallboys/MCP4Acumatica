@@ -36,13 +36,21 @@
 		"ACUMATICA_MCP_ROLE": "MCP Access"
 	},
 
-	// KV namespaces — used for per-user Acumatica tokens, OAuth state, the
-	// metadata cache, and runtime config overrides. Both bindings point at
-	// the same physical namespace; OAUTH_KV is required by
-	// @cloudflare/workers-oauth-provider internally.
+	// KV namespaces. TOKEN_STORE holds per-user Acumatica tokens, OAuth
+	// state, the metadata cache, and runtime config overrides; OAUTH_KV is
+	// used internally by @cloudflare/workers-oauth-provider. The two
+	// bindings use disjoint key prefixes and never share keys, so they work
+	// whether they point at one shared namespace or two separate ones.
 	//
-	// The Deploy-to-Cloudflare button creates the namespace automatically.
-	// setup.sh creates one and writes its id into both bindings below.
+	// The two install paths fill the ids below differently:
+	//   - setup.sh / manual: creates ONE namespace and writes its id into
+	//     both bindings (one physical namespace, two bindings — what this
+	//     repo's own production deploy uses).
+	//   - Deploy-to-Cloudflare button: the GUI auto-provisioner creates one
+	//     namespace PER empty-id binding, i.e. TWO separate namespaces. It
+	//     can't alias both to one, and both default to the Worker name, so
+	//     give them DISTINCT names (e.g. mcp4acumatica-app and
+	//     mcp4acumatica-oauth) or provisioning fails on a title collision.
 	"kv_namespaces": [
 		{
 			"binding": "TOKEN_STORE",
