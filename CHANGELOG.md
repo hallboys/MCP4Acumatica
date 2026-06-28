@@ -5,6 +5,10 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.38.2] - 2026-06-28
+### Changed
+- **Inactive gate no longer enumerates GIs (behavior change).** When no GI registry is built, `acumatica_list_generic_inquiries` previously returned *every* OData-exposed GI (fail-open) — handing the model an uncurated menu that can include GIs returning silently wrong data. The inactive state now **suppresses discovery**: `list` returns no GIs (with a note on how to enable the registry), while `run_inquiry` / `describe_inquiry` still serve a GI named **explicitly**. Net inactive semantics: *no discovery; explicit-name access only.* This restores the original spec intent (registry-absent ⇒ no uncurated enumeration) and reconciles a contradiction in `docs/gi-discovery-plan.md` (§2 "deny all" vs. §3 "inactive = allow all"). Instances that relied on the model auto-discovering GIs without a configured registry will now see an empty list until they curate (or name GIs explicitly).
+
 ## [0.38.1] - 2026-06-28
 ### Added
 - **`run_inquiry` refuses parameterized Generic Inquiries.** A GI with parameters, queried over OData without those parameters (as the agent does), returns default/unfiltered — i.e. *wrong* — rows with no error, which the model can't detect. `run_inquiry` now detects parameterized GIs (the `{Name}_WithParameters` `$metadata` check, extracted into a shared pure `parameterizedGiNames()` in `gi-registry.ts` and reused by discovery) and refuses them outright **regardless of gate state**, closing the inactive-state hole where an uncurated GI could feed the model silently-wrong data. Fails open if `$metadata` is unavailable (no false refusals).
