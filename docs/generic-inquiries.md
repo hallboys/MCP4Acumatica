@@ -45,8 +45,8 @@ them headlessly. Surfacing all of them to the model has two concrete costs:
    instead of one customer's; a date-bounded GI might return everything. The model cannot tell the
    answer is wrong. This alone is reason enough never to expose GIs without curating.
 
-> ⚠️ **Curate — don't rely on the ungated state.** `run_inquiry` **refuses** a parameterized GI
-> outright (regardless of gate state) rather than return its silently-wrong rows, and discovery
+> ⚠️ **Curate — don't rely on the ungated state.** `run_inquiry` and `describe_inquiry` **refuse**
+> a parameterized GI outright (regardless of gate state) rather than return its silently-wrong rows, and discovery
 > excludes them — so the parameterized-GI case is guarded at the tool level. But the *other* risks
 > above (context overload, wrong-shape/UI-formatted output, exposing sensitive GIs) are only
 > addressed by curating. Expose only GIs you have vetted as parameter-free and correct for
