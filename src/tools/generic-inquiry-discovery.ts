@@ -240,6 +240,19 @@ function buildSchemaResponse(
   };
 }
 
+/**
+ * Cached OData `$metadata` fetch (shared `gi_metadata` key). Used to detect
+ * parameterized GIs (mirrors the loader in generic-inquiries.ts). Returns "" on
+ * failure so callers fail open — a metadata fetch error never blocks describe.
+ */
+async function loadGiMetadata(env: AppEnv, client: AcumaticaClient): Promise<string> {
+  const cached = await getCached<string>(env.store, "gi_metadata");
+  if (cached !== null) return cached;
+  const xml = await client.getODataMetadata("acumatica_describe_inquiry").catch(() => "");
+  if (xml) await setCached(env.store, "gi_metadata", xml, GI_METADATA_TTL_SECONDS);
+  return xml;
+}
+
 export async function handleDescribeInquiry(
   env: AppEnv,
   acumaticaUsername: string,
@@ -251,6 +264,23 @@ export async function handleDescribeInquiry(
   const gate = checkGiGate(registry, args.inquiryName);
   if (!gate.allowed) return { error: gate.reason };
 
+  const client = new AcumaticaClient(env, acumaticaUsername);
+
+  // Guard (mirrors run_inquiry): a parameterized GI sampled over OData without
+  // its parameters returns default/unfiltered — i.e. wrong — rows, so a schema
+  // inferred from that sample would be misleading. Refuse rather than describe.
+  // Checked before the cache so a stale pre-guard schema isn't served; fails
+  // open if $metadata is unavailable.
+  if (parameterizedGiNames(await loadGiMetadata(env, client)).has(args.inquiryName.trim())) {
+    return {
+      error:
+        `Generic Inquiry '${args.inquiryName}' takes parameters and cannot be described correctly over OData — ` +
+        `without its parameters it returns default/unfiltered results (often wrong), so any inferred schema would be misleading. ` +
+        `Use a parameter-free Generic Inquiry, or open this inquiry in the Acumatica UI.`,
+      parameterized: true,
+    };
+  }
+
   const entry = gate.allowed ? gate.entry : undefined;
   const cacheKey = `gi_schema:${args.inquiryName}`;
 
@@ -260,8 +290,6 @@ export async function handleDescribeInquiry(
   if (cached) {
     return buildSchemaResponse(args.inquiryName, cached.fields, cached.sampleRow, entry);
   }
-
-  const client = new AcumaticaClient(env, acumaticaUsername);
 
   try {
     const response = await client.getOData<ODataQueryResponse>(
