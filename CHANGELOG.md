@@ -5,6 +5,12 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.38.1] - 2026-06-28
+### Added
+- **`run_inquiry` refuses parameterized Generic Inquiries.** A GI with parameters, queried over OData without those parameters (as the agent does), returns default/unfiltered — i.e. *wrong* — rows with no error, which the model can't detect. `run_inquiry` now detects parameterized GIs (the `{Name}_WithParameters` `$metadata` check, extracted into a shared pure `parameterizedGiNames()` in `gi-registry.ts` and reused by discovery) and refuses them outright **regardless of gate state**, closing the inactive-state hole where an uncurated GI could feed the model silently-wrong data. Fails open if `$metadata` is unavailable (no false refusals).
+### Changed
+- **The GI exposure gate is no longer documented as "optional."** It is a data-correctness control — leaving GIs uncurated can feed the model wrong data — and is now framed as strongly recommended across the README, `docs/generic-inquiries.md`, `docs/tool-reference.md`, and CLAUDE.md. Added a prominent warning that parameterized GIs return silently wrong data over OData, and corrected a bullet that incorrectly claimed parameterized GIs "can't be queried over OData."
+
 ## [0.38.0] - 2026-06-28
 ### Added
 - **Generic Inquiries documentation + rationale.** New `docs/generic-inquiries.md` (served at `/docs/generic-inquiries`, linked from the README) explains *why* the GI exposure gate exists — a mature instance accumulates hundreds of GIs built for human screens, and surfacing them all floods the model's context and degrades GI selection — plus which GIs to expose vs. leave unexposed, and the setup. The README gains a rationale-first "Generic Inquiry exposure to AI" section.

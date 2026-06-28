@@ -10,6 +10,7 @@ import assert from "node:assert";
 import {
   checkGiGate,
   EXCLUDED_GI_NAMES,
+  parameterizedGiNames,
   parseEdmxTypes,
   edmTypeToSimple,
   assembleRegistry,
@@ -183,4 +184,24 @@ test("assembleRegistry: no EDMX for a GI → fields fall back to feed rows, no d
   assert.equal(gi.fields?.[0].name, "AccountName");
   assert.equal(gi.fields?.[0].type, undefined);
   assert.equal(gi.fields?.[0].description, "the name");
+});
+
+// ── Parameterized-GI detection (run_inquiry guard + discovery exclusion) ──
+
+test("parameterizedGiNames extracts {Name}_WithParameters function imports", () => {
+  const xml = `
+    <EntityContainer Name="Default">
+      <EntitySet Name="OpenSalesByCustomer" EntityType="x"/>
+      <FunctionImport Name="OpenSalesByCustomer_WithParameters" ReturnType="y"/>
+      <FunctionImport Name="ARAgedByCustomer_WithParameters"/>
+    </EntityContainer>`;
+  const names = parameterizedGiNames(xml);
+  assert.ok(names.has("OpenSalesByCustomer"));
+  assert.ok(names.has("ARAgedByCustomer"));
+  assert.equal(names.has("SomeParameterFreeGI"), false);
+});
+
+test("parameterizedGiNames returns empty set for empty/absent metadata", () => {
+  assert.equal(parameterizedGiNames("").size, 0);
+  assert.equal(parameterizedGiNames("<edmx:Edmx/>").size, 0);
 });

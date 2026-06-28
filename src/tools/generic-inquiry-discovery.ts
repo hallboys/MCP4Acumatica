@@ -6,7 +6,7 @@ import { AcumaticaClient, AcumaticaApiError } from "../lib/acumatica-client";
 import { getCached, setCached } from "../lib/metadata-cache";
 import { getConfig, parsePositiveIntConfig, validateStringArg } from "../lib/config";
 import { cleanGiRow } from "../lib/gi-rows";
-import { checkGiGate, EXCLUDED_GI_NAMES, type GiRegistryEntry } from "../lib/gi-registry";
+import { checkGiGate, EXCLUDED_GI_NAMES, parameterizedGiNames, type GiRegistryEntry } from "../lib/gi-registry";
 import { getGiRegistry } from "../lib/gi-registry-build";
 
 const GI_LIST_TTL_SECONDS = 3600; // 1 hour
@@ -84,15 +84,9 @@ export async function handleListGenericInquiries(
       await Promise.all(cacheWrites);
     }
 
-    // Extract parameterized GI names from $metadata FunctionImport entries
-    // Pattern: <FunctionImport Name="GIName_WithParameters" ...>
-    const parameterizedNames = new Set<string>();
-    if (metadata) {
-      const matches = metadata.matchAll(/FunctionImport\s+Name="([^"]+)_WithParameters"/g);
-      for (const match of matches) {
-        parameterizedNames.add(match[1]);
-      }
-    }
+    // Exclude parameterized GIs (they return wrong data over OData) — see
+    // parameterizedGiNames in gi-registry.ts (shared with run_inquiry's guard).
+    const parameterizedNames = parameterizedGiNames(metadata);
 
     // Opt-in gate. When a registry has been built, discovery shows only the
     // GIs exposed to MCP (ExposedtoMCP). Absent registry → inactive, show all

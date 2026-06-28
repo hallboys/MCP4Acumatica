@@ -5,10 +5,12 @@ can run them on the user's behalf, but **not every GI belongs in front of an AI
 agent.** This page explains the three GI tools, *why* there is an opt-in exposure
 gate, how to decide which GIs to expose, and how to turn it on.
 
-> **TL;DR for operators:** By default every OData-exposed GI is visible to the model.
-> Once you build the registry (tag GIs with `ExposedtoMCP` via the `MCPGIs`/`MCPGIFields`
-> feed GIs), the model sees **only** the GIs you chose. The gate stays **inactive** until
-> you set it up — adopting the server requires no GI work at all.
+> **TL;DR for operators:** Until you build the registry, the gate is **inactive** and *every*
+> OData-exposed GI is reachable by the model — including GIs that return **silently wrong data**
+> (see the warning below). The server runs in this state, but **don't leave it here for
+> production.** Build the registry (tag GIs `ExposedToMCP` via the `MCPGIs`/`MCPGIFields` feeds) so
+> the model sees **only** the GIs you've vetted. Curation is a data-correctness control, not an
+> optional nicety.
 
 ## The three GI tools
 
@@ -37,6 +39,19 @@ them headlessly. Surfacing all of them to the model has two concrete costs:
    human-formatted values, space-padded fixed-width keys, or output whose meaning
    depends on the UI rendering it. That is poor structured input for an agent even
    when it *can* be fetched.
+3. **Silently wrong data — the dangerous one.** A GI with **parameters** exposed via OData
+   returns *incorrect* results when queried without those parameters, which is exactly how the
+   agent queries it: Acumatica computes the GI with empty/default parameters and returns
+   plausible-looking rows with **no error**. A parameterized sales GI might return every order
+   instead of one customer's; a date-bounded GI might return everything. The model cannot tell the
+   answer is wrong. This alone is reason enough never to expose GIs without curating.
+
+> ⚠️ **Curate — don't rely on the ungated state.** `run_inquiry` **refuses** a parameterized GI
+> outright (regardless of gate state) rather than return its silently-wrong rows, and discovery
+> excludes them — so the parameterized-GI case is guarded at the tool level. But the *other* risks
+> above (context overload, wrong-shape/UI-formatted output, exposing sensitive GIs) are only
+> addressed by curating. Expose only GIs you have vetted as parameter-free and correct for
+> headless querying.
 
 The gate flips GI visibility from **opt-out to opt-in.** Instead of "every GI is
 exposed unless something hides it," a human deliberately marks the GIs that are
@@ -47,8 +62,10 @@ this without a person in the loop.* Everything else stays invisible to the model
 
 **Good candidates** — tag these `ExposedtoMCP`:
 
-- **Parameter-free.** Parameterized GIs can't be queried directly over OData and are
-  excluded automatically regardless of tagging.
+- **Parameter-free.** A parameterized GI *can* be exposed via OData, but querying it without its
+  parameters returns wrong data (see the warning above) — so only expose GIs that need no
+  parameters. Discovery and the `MCPGIs` feed already filter parameterized GIs out, but treat that
+  as a backstop, not a license to OData-expose them.
 - **Focused, stable column set** with meaningful field names — not a 40-column screen dump.
 - **Answers a real question a user would ask the assistant** — e.g. "open sales orders
   by customer," "inventory usage by warehouse," "overdue projects."

@@ -73,6 +73,22 @@ export const EXCLUDED_GI_NAMES: ReadonlySet<string> = new Set([
   "MCPAccess",
 ]);
 
+/**
+ * Names of parameterized GIs found in an OData `$metadata` document. Acumatica
+ * exposes a parameterized GI as a `{Name}_WithParameters` FunctionImport; the
+ * base entity set, queried without those parameters (as the agent does), returns
+ * default/unfiltered — i.e. *wrong* — rows with no error. Callers use this to
+ * exclude such GIs from discovery and to refuse them in `run_inquiry`. Pure.
+ */
+export function parameterizedGiNames(metadataXml: string): ReadonlySet<string> {
+  const names = new Set<string>();
+  if (!metadataXml) return names;
+  for (const m of metadataXml.matchAll(/FunctionImport\s+Name="([^"]+)_WithParameters"/g)) {
+    names.add(m[1]);
+  }
+  return names;
+}
+
 /** Result of a gate check, so callers can give the model a precise reason. */
 export type GateDecision =
   | { allowed: true; inactive: boolean; entry?: GiRegistryEntry }
