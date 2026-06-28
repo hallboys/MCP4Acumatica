@@ -139,14 +139,14 @@ const EDMX = `
 test("assembleRegistry: $metadata wins, collisions resolve by LineNbr order, Usr-strip + decimal typing", () => {
   const reg = assembleRegistry({
     giRows: [
-      { InquiryTitle: "InventoryUsageMCP", AIDescription: "usage by item" },
-      { InquiryTitle: "MCPGIs" }, // feed GI must be dropped
+      { Name: "InventoryUsageMCP", AIDescription: "usage by item" },
+      { Name: "MCPGIs" }, // feed GI must be dropped
     ],
     fieldRows: [
-      { InquiryTitle: "InventoryUsageMCP", DataField: "inventoryID", Caption: "Inventory ID", AIDescription: "primary item", LineNbr: 1 },
-      { InquiryTitle: "InventoryUsageMCP", DataField: "qty", Caption: "Quantity", AIDescription: "qty used", LineNbr: 2 },
-      { InquiryTitle: "InventoryUsageMCP", DataField: "inventoryID", Caption: "Inventory ID", AIDescription: "component item", LineNbr: 3 },
-      { InquiryTitle: "InventoryUsageMCP", DataField: "UsrAIDescription", AIDescription: "the AI note", LineNbr: 4 },
+      { Name: "InventoryUsageMCP", SchemaField: "inventoryID", Caption: "Inventory ID", AIDescription: "primary item", LineNbr: 1 },
+      { Name: "InventoryUsageMCP", SchemaField: "qty", Caption: "Quantity", AIDescription: "qty used", LineNbr: 2 },
+      { Name: "InventoryUsageMCP", SchemaField: "inventoryID", Caption: "Inventory ID", AIDescription: "component item", LineNbr: 3 },
+      { Name: "InventoryUsageMCP", SchemaField: "UsrAIDescription", AIDescription: "the AI note", LineNbr: 4 },
     ],
     edmxTypes: parseEdmxTypes(EDMX),
     builtAt: "2026-06-20T00:00:00Z",
@@ -172,9 +172,9 @@ test("assembleRegistry: $metadata wins, collisions resolve by LineNbr order, Usr
 
 test("assembleRegistry: no EDMX for a GI → fields fall back to feed rows, no declared types", () => {
   const reg = assembleRegistry({
-    giRows: [{ InquiryTitle: "SomeGI" }],
+    giRows: [{ Name: "SomeGI" }],
     fieldRows: [
-      { InquiryTitle: "SomeGI", DataField: "acctName", Caption: "Account Name", AIDescription: "the name", LineNbr: 1 },
+      { Name: "SomeGI", SchemaField: "acctName", Caption: "Account Name", AIDescription: "the name", LineNbr: 1 },
     ],
     edmxTypes: new Map(),
     builtAt: "2026-06-20T00:00:00Z",

@@ -1,6 +1,6 @@
 # Plan: GI-Driven Dynamic Tool Discovery
 
-Status: **planning / pre-implementation.** Source spec: `mcp-gi-discovery-spec.md` (operator-supplied).
+Status: **Phases 1–2 shipped in 0.37.0** (fail-closed gate + lazy registry + curated enrichment); Phases 3–4 (usage-driven per-GI tool promotion, admin-console governance) deferred. Source spec: `mcp-gi-discovery-spec.md` (operator-supplied).
 This plan reconciles that spec against the actual codebase and records the decisions taken.
 
 > Scope: this touches **only** the Generic-Inquiry tool path. The REST/entity getter tools
@@ -103,10 +103,10 @@ per-GI tools. Hysteresis spans rebuilds.
 - `init()` reads `gi_promoted` and registers promoted per-GI tools: stable sanitized name + reverse map + collision suffixing; `$filter`/`$top`/`$select` inputs (GIs are parameter-free); call straight into `handleRunInquiry`.
 - ⚠️ Most invasive remaining piece — modifies `init()` tool registration (the live tool list for all users).
 
-### Phase 4 — Governance + docs (pending)
-- Admin console: surface registry (gated GIs, promotion list, last build time); restrict feed-field edits + log (HBH-IT-POL-001).
-- Update CLAUDE.md, tool-reference, README prerequisites (the `MCP Access`→feed-GI read grant).
-- **Add the registry to `docs/upgrading-acumatica.md`** as a version-coupled, instance-derived artifact (standing maintenance rule in CLAUDE.md).
+### Phase 4 — Governance + docs (docs ✅ / governance pending)
+- [ ] Admin console: surface registry (gated GIs, promotion list, last build time); restrict feed-field edits + log (HBH-IT-POL-001).
+- [x] Updated CLAUDE.md, tool-reference, README prerequisites (the `MCP Access`→feed-GI read grant) and added a dedicated operator/user doc **`docs/generic-inquiries.md`** (served at `/docs/generic-inquiries`) that leads with the context-overload rationale — why most screen-built GIs don't belong in front of an agent — and the GI selection guidance.
+- [x] **Added the registry to `docs/upgrading-acumatica.md`** as a version-coupled, instance-derived artifact (standing maintenance rule in CLAUDE.md).
 
 ## 5. Acceptance criteria (from spec §7)
 - Tagging a GI registers a tool after refresh; untagging removes it.

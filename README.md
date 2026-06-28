@@ -192,6 +192,14 @@ The MCP server requires users to have a specific Acumatica role before they can 
 
 > The role name is configurable via the `ACUMATICA_MCP_ROLE` variable. Edit it in the Cloudflare dashboard (`Variables and Secrets`) or in `wrangler.jsonc`.
 
+#### Generic Inquiry exposure to AI (optional)
+
+A mature Acumatica instance can have **hundreds** of Generic Inquiries, most built for human screens (wide report grids, dashboards, ad-hoc queries). Exposing all of them to the assistant floods its context and makes it pick the wrong inquiry. The optional **GI exposure gate** flips this to opt-in: you tag the GIs that are genuinely useful for an AI agent to query (`ExposedtoMCP`), and the model sees only those.
+
+This is **inactive by default** — until you configure it, every OData-exposed GI remains available, so it is *not* required to start using the server. Turning it on takes a one-time Acumatica **customization project** — bundled in [`acumatica/`](acumatica/), it adds the custom fields `UsrExposedToMCP` / `UsrAIDescription` (`GIDesign`) and `UsrResAIDescription` (`GIResult`) plus the SM208000 form changes — followed by two feed GIs (`MCPGIs`, `MCPGIFields`), read access on the feeds for the `MCP Access` role, and tagging the GIs you want exposed. See [docs/generic-inquiries.md](docs/generic-inquiries.md).
+
+> See **[Generic Inquiries](docs/generic-inquiries.md)** for the full rationale, how to decide which GIs to expose, and step-by-step setup.
+
 ### Custom domain (optional)
 
 The deploy gives you a `*.workers.dev` hostname out of the box. To attach a branded hostname:
@@ -320,6 +328,7 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 - **[Tool Reference](docs/tool-reference.md)** -- Complete specification for all 48 tools with parameters and endpoints
 - **[Example Prompts](docs/example-prompts.md)** -- Example prompts for Claude and other MCP clients organized by use case
 - **[OData Filtering Guide](docs/odata-filtering.md)** -- Guide to `$filter`, `$orderby`, `$select`, `$expand`, and `$top` query parameters
+- **[Generic Inquiries](docs/generic-inquiries.md)** -- Why GIs are gated for AI use, which GIs to expose, and how to enable the opt-in registry
 - **[Schema Knowledge](docs/schema-discovery.md)** -- Offline schema-discovery tools for building integrations/customizations, and how the schema index is built
 - **[Architecture](docs/architecture.md)** -- Detailed architecture, OAuth flow, security model, and design decisions
 - **[Self-Hosting Guide](docs/self-hosting-guide.md)** -- How to run the MCP server on Node.js or other platforms outside Cloudflare

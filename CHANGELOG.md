@@ -5,6 +5,15 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.38.0] - 2026-06-28
+### Added
+- **Generic Inquiries documentation + rationale.** New `docs/generic-inquiries.md` (served at `/docs/generic-inquiries`, linked from the README) explains *why* the GI exposure gate exists — a mature instance accumulates hundreds of GIs built for human screens, and surfacing them all floods the model's context and degrades GI selection — plus which GIs to expose vs. leave unexposed, and the setup. The README gains a rationale-first "Generic Inquiry exposure to AI" section.
+- **Bundled Acumatica setup package (`acumatica/`).** Import the gate's Acumatica-side prerequisites instead of hand-building them: `MCP4Acumatica-AIDescription.zip` (customization project — the `GIDesign.UsrExposedToMCP`, `GIDesign.UsrAIDescription`, and `GIResult.UsrResAIDescription` custom fields + SM208000 form changes), the `MCPGIs` / `MCPGIFields` / `MCPAccess` Generic Inquiry definitions, and an import-order README with the feed-column → code mapping.
+### Changed
+- **GI registry feed contract aligned to the published feed GIs.** `FeedGiRow` / `FeedFieldRow` and the `gi-registry.ts` read sites + tests now read the feeds' actual OData property names (`Name`, `ScreenID`, `DesignID`; and `Name`, `SchemaField`, `Caption`, `LineNbr`, `AIDescription`) rather than the earlier `InquiryTitle` / `EntryScreen` / `GIDesign_designID` / `DataField`, which did not match the GIs. Acumatica derives each OData property name from the result-column caption, so the captions are the contract — renaming one now requires the matching change in `gi-registry.ts` (documented in CLAUDE.md and `acumatica/README.md`). Without this alignment, an activated registry would have built empty.
+### Fixed
+- **Documented the customization prerequisite.** The gate's custom fields live on the system DACs `GIDesign`/`GIResult`, so they require a customization project — the docs previously implied they could be added from the GI form. Corrected the field names (`UsrExposedToMCP` casing, `UsrResAIDescription`) and the feed-column names across CLAUDE.md, README, `docs/tool-reference.md`, and `docs/generic-inquiries.md`.
+
 ## [0.37.0] - 2026-06-27
 ### Added
 - **Generic Inquiry opt-in gate + curated registry.** Layered onto the existing GI tools (`acumatica_run_inquiry`, `acumatica_list_generic_inquiries`, `acumatica_describe_inquiry`) — no new tools, and **not** per-GI dynamic tools (that remains a deferred workstream; see `docs/gi-discovery-plan.md`). When an Acumatica admin configures the registry, only GIs explicitly flagged `ExposedtoMCP` are reachable; until then the gate stays **inactive** and all OData-exposed GIs remain available exactly as before. The REST/entity getters are unaffected.

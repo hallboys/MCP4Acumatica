@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.37.0`
+- **Current tag:** `25R2-0.38.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -168,6 +168,11 @@ test/                              # Node built-in test runner (node --test, TS 
 ├── complex-entities.test.ts       # getFilterErrorKind / known-list / keyed-filter detection
 ├── getter-errors.test.ts          # endpointAware404Message (Default vs custom endpoint 404)
 └── gi-registry.test.ts            # checkGiGate semantics + cleanGiRow + parseEdmxTypes/assembleRegistry
+
+acumatica/                         # Acumatica-side setup package (Apache-2.0) for the GI exposure gate
+├── MCP4Acumatica-AIDescription.zip # customization project: GIDesign/GIResult custom fields + SM208000 form
+├── MCPGIs.xml, MCPGIFields.xml     # feed GIs the registry reads; MCPAccess.xml — role-gate canary GI
+└── README.md                       # import order + feed-column → gi-registry.ts mapping
 ```
 
 ## Schema Knowledge Tools (0.34.0)
@@ -183,8 +188,10 @@ Four tools help power users build *against* Acumatica (discover entities/fields/
 
 Opt-in gate + curated enrichment for Generic-Inquiry tools, layered on the existing three GI tools (`acumatica_run_inquiry`, `acumatica_list_generic_inquiries`, `acumatica_describe_inquiry`) — **not** per-GI dynamic tools (that's a deferred, separate workstream; see `docs/gi-discovery-plan.md`). The REST/entity getters are unaffected.
 
+**Why it exists:** a mature instance has hundreds of GIs, most built for human screens; surfacing them all floods the model's context (`list_generic_inquiries` is the model's menu) and degrades GI selection, and many return UI-shaped output unfit for an agent. The gate makes exposure opt-in so only GIs a human tagged `ExposedtoMCP` reach the model. **Operator/user-facing rationale + selection guidance + setup live in `docs/generic-inquiries.md`** (served at `/docs/generic-inquiries`); this section is the implementation-facing companion.
+
 - **Lazy pull, no service account, no Cron.** The registry is built **on demand with the requesting user's token** (`getGiRegistry()`, `src/lib/gi-registry-build.ts`) when the KV cache (`cache:gi_registry`) is stale, then cached for everyone. The gate list + field schemas are *global* data (identical for all users) and contain only GI/field **metadata, never business rows**, so building from whichever user's token is in hand is safe; execution still uses each user's own token with their row-level access. This was chosen over a scheduled/service-account builder after verifying `client_credentials` is disabled on the Connected App (`unauthorized_client`) — and it matches the spec's TTL pull model.
-- **Feeds.** Two GIs supply the registry: `MCPGIs` (one row per exposed GI — `InquiryTitle`, `AIDescription`, `EntryScreen`, `GIDesign_designID`; gated by `ExposedtoMCP = true AND ExposeviaOData = true AND Parameters = 0` on the Conditions tab) and `MCPGIFields` (per-column `Object`, `DataField`, `Caption`, `AIDescription`, `LineNbr`). Field **types** come from OData `$metadata` (Path A — verified the wire is not string-flattened, so declared numeric types are trustworthy; sample inference mislabels whole-number decimals as `integer`). `parseEdmxTypes`/`assembleRegistry` (`src/lib/gi-registry.ts`, a pure unit-tested leaf) resolve authoritative property names (incl. `_N` collision suffixes by `LineNbr`), attach curated descriptions (caption-strip → `Usr`-strip → field-name matcher), and **fall back to runtime inference** for any GI/field without a declared type or description. Exposure is *never* gated on description presence.
+- **Feeds.** Two GIs supply the registry (bundled in `acumatica/` as importable GI exports): `MCPGIs` (one row per exposed GI — output columns `Name`, `AIDescription`, `ScreenID`, `ScreenDescription`, `DesignID`; row-filtered to `UsrExposedToMCP = true AND ExposeViaOData = true` and parameter-free via `GIFilter.LineNbr IS NULL`) and `MCPGIFields` (per output column — `Name`, `DesignID`, `ObjectName`, `Field`, `FieldName`, `SchemaField`, `Caption`, `LineNbr`, `AIDescription`). **OData property name = the result-column caption**, so these captions are the literal keys `gi-registry.ts` reads (`FeedGiRow`/`FeedFieldRow`): `Name`→`giName`, `SchemaField`→ the no-caption prop-name fallback, `ScreenID`→`entryScreen` — renaming a caption requires the matching change in `gi-registry.ts`. Field **types** come from OData `$metadata` (Path A — verified the wire is not string-flattened, so declared numeric types are trustworthy; sample inference mislabels whole-number decimals as `integer`). `parseEdmxTypes`/`assembleRegistry` (`src/lib/gi-registry.ts`, a pure unit-tested leaf) resolve authoritative property names (incl. `_N` collision suffixes by `LineNbr`), attach curated descriptions (caption-strip → `Usr`-strip → field-name matcher), and **fall back to runtime inference** for any GI/field without a declared type or description. Exposure is *never* gated on description presence.
 - **Gate semantics (`checkGiGate`) — NOT fail-open.** No registry yet (never built — feed GIs not readable, or cold bootstrap) → gate **inactive**, GI tools behave as before (rollout state, no dead period). Registry present → **fail-closed**: only listed GIs allowed; an empty list denies all; feed/canary GIs (`MCPGIs`/`MCPGIFields`/`MCPAccess`, in `EXCLUDED_GI_NAMES`) are always denied even while inactive. A failed rebuild serves the cached last-good (gate stays enforced) rather than flapping. Enforced in `run_inquiry` + `describe_inquiry`; `list` shows only gated GIs (+ curated descriptions).
 - **Space-padded trim.** Acumatica returns fixed-width keys padded (`"GARES     "`), which break equality filters; `cleanGiRow`/`cleanGiRows` (`src/lib/gi-rows.ts`) trim string values + strip `@odata.*` everywhere a GI row reaches the model.
 - **Cache.** `cache:gi_registry` (durable last-good TTL + ~1 h `builtAt` freshness) + per-isolate memo. Cleared by `acumatica_clear_cache` (everything, or `target=gi`). Registry changes apply on the next isolate (same model as runtime config).
@@ -243,9 +250,9 @@ Settings can be changed at runtime via the admin console at `/docs/admin/setting
 - **User assignment:** Assign the `MCP Access` role to users who should have AI assistant access.
 
 ### GI Gate Registry (optional — activates the GI opt-in gate, 0.37.0):
-- **Feed GIs:** Create `MCPGIs` (one row per exposed GI) and `MCPGIFields` (one row per exposed GI's output column), both **Exposed via OData**, both parameter-free, and **neither tagged `ExposedtoMCP`**. See "GI Tool Gating & Registry".
+- **Feed GIs:** `MCPGIs` (one row per exposed GI) and `MCPGIFields` (one row per exposed GI's output column), both **Exposed via OData**, both parameter-free, and **neither tagged `ExposedtoMCP`**. Provided in `acumatica/` (`MCPGIs.xml`/`MCPGIFields.xml`) — import on SM208000 rather than hand-building. See "GI Tool Gating & Registry".
 - **Feed access:** grant the `MCP Access` role **read access to `MCPGIs` + `MCPGIFields`** so any connected user's token can build the registry (lazy pull — no service account).
-- **Tagging:** add the `UsrExposedtoMCP` / `UsrAIDescription` extension fields (on `GIDesign`/`GIResult`) and tag the GIs you want exposed. Until ≥1 GI is tagged and the feeds are readable, the gate stays **inactive** (all OData-exposed GIs remain available, as before).
+- **Tagging:** the exposure flag + descriptions are custom fields on the `GIDesign`/`GIResult` system DACs (`GIDesign.UsrExposedToMCP` bool, `GIDesign.UsrAIDescription` string(2000), `GIResult.UsrResAIDescription` string(1000)), so they require a one-time **customization project** — **bundled in `acumatica/`** (`MCP4Acumatica-AIDescription.zip`; built on 25.201, adds the fields + SM208000 form). The feed GIs + canary are bundled there too (`MCPGIs.xml`/`MCPGIFields.xml`/`MCPAccess.xml`). Import the zip via SM204505 + the GIs via SM208000, grant the `MCP Access` role read on the feeds, then tag the GIs you want exposed. Until ≥1 GI is tagged and the feeds are readable, the gate stays **inactive** (all OData-exposed GIs remain available, as before). See `acumatica/README.md` for the column→code mapping.
 
 ## Tech Stack
 

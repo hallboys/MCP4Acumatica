@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 48 tools available in the MCP4Acumatica (v0.37.0).
+Complete specification for all 48 tools available in the MCP4Acumatica (v0.38.0).
 
 > The `**Endpoint:**` paths below show the default deployment values — the `Default` endpoint
 > name and contract version `25.200.001`. The base `/entity/{name}/{version}` is governed by
@@ -77,7 +77,7 @@ Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom re
 
 > **Truncation semantics:** Same as `acumatica_list_entities` — when results hit the max, the response includes `truncated: true`, `paginationSupported: false`, and `actionRequired` text telling the model to ask the user for a narrower filter rather than calling again.
 
-> **GI opt-in gate (0.37.0):** If your Acumatica administrator has configured the GI registry (the `MCPGIs`/`MCPGIFields` feed GIs), only inquiries explicitly flagged `ExposedtoMCP` are available — `run_inquiry`, `describe_inquiry`, and `list_generic_inquiries` all enforce it, and an unexposed GI returns a "not exposed to the AI assistant" error. When the registry is **not** configured, the gate is inactive and all OData-exposed GIs remain available (current behavior). Exposed GIs may also carry curated descriptions and `$metadata`-accurate field types, surfaced by `describe_inquiry`/`list_generic_inquiries`. Fixed-width key values are trimmed in all GI output.
+> **GI opt-in gate (0.37.0):** Instances accumulate many GIs built for human screens; exposing them all floods the model's context and degrades GI selection, so an administrator can curate the subset meaningful for AI use (full rationale + setup: [Generic Inquiries](generic-inquiries.md)). If your Acumatica administrator has configured the GI registry (the `MCPGIs`/`MCPGIFields` feed GIs), only inquiries explicitly flagged `ExposedtoMCP` are available — `run_inquiry`, `describe_inquiry`, and `list_generic_inquiries` all enforce it, and an unexposed GI returns a "not exposed to the AI assistant" error. When the registry is **not** configured, the gate is inactive and all OData-exposed GIs remain available (current behavior). Exposed GIs may also carry curated descriptions and `$metadata`-accurate field types, surfaced by `describe_inquiry`/`list_generic_inquiries`. Fixed-width key values are trimmed in all GI output.
 
 ---
 

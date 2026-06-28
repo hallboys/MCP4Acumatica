@@ -33,17 +33,17 @@ export interface GiFieldMeta {
   type?: string;
   /** GI result-grid caption, when present. */
   caption?: string;
-  /** Curated per-column description (UsrAIDescription on GIResult). Optional. */
+  /** Curated per-column description (UsrResAIDescription on GIResult). Optional. */
   description?: string;
 }
 
 /** One exposed GI in the registry. */
 export interface GiRegistryEntry {
-  /** InquiryTitle = OData entity name = the path segment used by run_inquiry. */
+  /** GI name (MCPGIs "Name" column) = OData entity name = the path segment used by run_inquiry. */
   giName: string;
   /** GIDesign designID, for traceability. */
   designID?: string;
-  /** Entry screen id (EntryScreen), informational. */
+  /** Entry screen id (MCPGIs "ScreenID"), informational. */
   entryScreen?: string;
   /** Curated GI-level description (UsrAIDescription on GIDesign). Optional — exposure is never gated on it. */
   description?: string;
@@ -114,22 +114,38 @@ export function checkGiGate(registry: GiRegistry | null, giName: string): GateDe
 
 // ── Pure build/parse helpers (used by gi-registry-build.ts; unit-tested) ──────
 
-/** Raw MCPGIs feed row (registry: one row per exposed GI). */
+/**
+ * Raw MCPGIs feed row (registry: one row per exposed GI). Property names are the
+ * MCPGIs result-column captions (Acumatica derives the OData property from the
+ * caption). See acumatica/MCPGIs.xml.
+ */
 export interface FeedGiRow {
-  InquiryTitle?: string;
+  /** GI name = OData entity name (MCPGIs "Name" column). */
+  Name?: string;
+  /** Curated GI-level description (MCPGIs "AIDescription"). */
   AIDescription?: string;
-  EntryScreen?: string;
-  GIDesign_designID?: string;
+  /** Entry screen id (MCPGIs "ScreenID"), informational. */
+  ScreenID?: string;
+  /** GIDesign designID (MCPGIs "DesignID"), for traceability. */
+  DesignID?: string;
 }
 
-/** Raw MCPGIFields feed row (one row per (exposed GI, output column)). */
+/**
+ * Raw MCPGIFields feed row (one row per (exposed GI, output column)). Property
+ * names are the MCPGIFields result-column captions. See acumatica/MCPGIFields.xml.
+ */
 export interface FeedFieldRow {
-  InquiryTitle?: string;
-  GIDesign_designID?: string;
-  Object?: string;
-  DataField?: string;
+  /** Owning GI name (MCPGIFields "Name") — groups columns by GI. */
+  Name?: string;
+  /** Target column's DAC field name (MCPGIFields "SchemaField"); fallback for
+   *  predicting the OData property name when the column has no caption. */
+  SchemaField?: string;
+  /** Target column's caption (MCPGIFields "Caption"). */
   Caption?: string;
+  /** Curated per-column description (MCPGIFields "AIDescription"). */
   AIDescription?: string;
+  /** Target column's result-grid line number (MCPGIFields "LineNbr"); orders
+   *  columns for collision disambiguation. */
   LineNbr?: number | string;
 }
 
@@ -211,7 +227,7 @@ export function parseEdmxTypes(xml: string): Map<string, EdmxEntity> {
 export function predictPropertyName(row: FeedFieldRow): string {
   const caption = row.Caption?.trim();
   if (caption) return caption.replace(/[^A-Za-z0-9]/g, "");
-  const field = (row.DataField ?? "").trim();
+  const field = (row.SchemaField ?? "").trim();
   if (field.startsWith("Usr")) return field.slice(3);
   return field;
 }
@@ -247,19 +263,19 @@ export function assembleRegistry(opts: {
   // Index field rows by GI name (trimmed).
   const fieldsByGi = new Map<string, FeedFieldRow[]>();
   for (const row of fieldRows) {
-    const gi = row.InquiryTitle?.trim();
+    const gi = row.Name?.trim();
     if (!gi) continue;
     (fieldsByGi.get(gi) ?? fieldsByGi.set(gi, []).get(gi)!).push(row);
   }
 
   const gis: GiRegistryEntry[] = [];
   for (const giRow of giRows) {
-    const giName = giRow.InquiryTitle?.trim();
+    const giName = giRow.Name?.trim();
     if (!giName || EXCLUDED_GI_NAMES.has(giName)) continue;
 
     const entry: GiRegistryEntry = { giName };
-    if (giRow.GIDesign_designID) entry.designID = String(giRow.GIDesign_designID).trim();
-    if (giRow.EntryScreen) entry.entryScreen = giRow.EntryScreen.trim();
+    if (giRow.DesignID) entry.designID = String(giRow.DesignID).trim();
+    if (giRow.ScreenID) entry.entryScreen = giRow.ScreenID.trim();
     const desc = giRow.AIDescription?.trim();
     if (desc) entry.description = desc;
 
