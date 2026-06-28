@@ -26,7 +26,7 @@ Already in place that the spec asks for:
 |---|---|
 | Tool model | **Hybrid + usage-driven promotion.** Enrich the generic path (gate + curated descriptions/types, inference fallback). On a schedule, promote a small frequently-used subset (top-N by usage) to full per-GI tools. |
 | Gate scope | **Enforce everywhere.** `run_inquiry` and `describe_inquiry` reject GIs not in the registry — not just discovery. |
-| Cutover | **Hard cutover, fail closed.** No grace period. Registry absent ⇒ deny all GIs. Rationale: GI authors must opt in via `ExposedtoMCP` knowing an agent may invoke; stops the model flailing across irrelevant GIs. |
+| Cutover | **Fail closed for discovery** (refined from the original hard "deny all"). Registry absent ⇒ `list` enumerates **nothing**; an explicitly-named GI may still be run (no hard dead period for explicit use, but the model is never handed an uncurated menu). Rationale: GI authors must opt in via `ExposedtoMCP` knowing an agent may invoke; stops the model flailing across irrelevant GIs. |
 
 Fail-closed flap risk is designed out: the registry is a **static blob** built by the scheduled
 job and served from per-isolate cache, so "unreadable" effectively only means "never built"
@@ -53,7 +53,7 @@ MCP request (any user)
    ⇒ assembleRegistry() ⇒ write KV cache:gi_registry (durable last-good)
 
 run_inquiry / describe_inquiry / list → checkGiGate(registry, name)
-  registry null  → gate INACTIVE (current behavior, rollout state)
+  registry null  → gate INACTIVE: list enumerates nothing; run/describe allow an explicit name
   registry present → fail-closed: name ∈ registry, else reject
 ```
 
@@ -87,7 +87,7 @@ per-GI tools. Hysteresis spans rebuilds.
 - [x] `src/lib/gi-registry-build.ts` — lazy `getGiRegistry(env, user)`: KV cache (`cache:gi_registry`, durable last-good + `builtAt` freshness), build from `MCPGIs`/`MCPGIFields` + `$metadata`, per-isolate memo, fail-closed degradation.
 - [x] Gate enforced in `run_inquiry` + `describe_inquiry`; `list` shows only gated GIs (+ descriptions); feeds/canary always hidden.
 - [x] Kept the `_WithParameters` `$metadata` exclusion (dropped the spec's `GIFilter` anti-join).
-- [x] Unit tests: gate (inactive/active/empty/collision-name/feed) + assembly (collision order, Usr-strip, Path-A decimal, fallback). 34/34 pass.
+- [x] Unit tests: gate (inactive/active/empty/collision-name/feed) + assembly (collision order, Usr-strip, Path-A decimal, fallback) + parameterized-GI detection. 36/36 pass.
 - Operator-side (not code): grant `MCP Access` role read access to `MCPGIs`/`MCPGIFields`; tag in-use GIs `ExposedtoMCP` before relying on the gate. `ExposedtoMCP` is authoritative; the `*MCP` naming is convention only.
 
 ### Phase 2 — Enrichment overlay ✅ DONE

@@ -5,12 +5,11 @@ can run them on the user's behalf, but **not every GI belongs in front of an AI
 agent.** This page explains the three GI tools, *why* there is an opt-in exposure
 gate, how to decide which GIs to expose, and how to turn it on.
 
-> **TL;DR for operators:** Until you build the registry, the gate is **inactive** and *every*
-> OData-exposed GI is reachable by the model — including GIs that return **silently wrong data**
-> (see the warning below). The server runs in this state, but **don't leave it here for
-> production.** Build the registry (tag GIs `ExposedToMCP` via the `MCPGIs`/`MCPGIFields` feeds) so
-> the model sees **only** the GIs you've vetted. Curation is a data-correctness control, not an
-> optional nicety.
+> **TL;DR for operators:** Until you build the registry, the gate is **inactive** and the model
+> **cannot discover GIs** — `list_generic_inquiries` returns nothing (a user can still run a GI by
+> *exact name*). Build the registry (tag GIs `ExposedToMCP` via the `MCPGIs`/`MCPGIFields` feeds) so
+> the model can discover **only** the GIs you've vetted. Curation is a data-correctness control,
+> not an optional nicety.
 
 ## The three GI tools
 
@@ -113,8 +112,10 @@ Until at least one GI is tagged and the feeds are readable, the gate stays inact
 
 ## How it behaves
 
-- **Inactive until configured.** No registry built yet → `list`/`describe`/`run` behave
-  exactly as before (all OData-exposed GIs available). There is no rollout "dead period."
+- **Inactive until configured.** No registry built yet → `list_generic_inquiries` returns **no
+  GIs** (discovery is suppressed — the model isn't handed an uncurated menu). `run`/`describe` still
+  serve a GI named **explicitly** (with the parameterized-GI guard), so there's no hard dead period
+  for explicit use — but the assistant can't *discover* GIs until you curate.
 - **Fail-closed once active.** When a registry exists, **only** tagged GIs are reachable:
   `run_inquiry` and `describe_inquiry` reject anything else with a *"not exposed to the AI
   assistant"* error, and `list_generic_inquiries` shows only the tagged set. An empty

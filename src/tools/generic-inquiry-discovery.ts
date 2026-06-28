@@ -40,6 +40,29 @@ export async function handleListGenericInquiries(
   const effectiveTop = Math.min(args.topN ?? 200, MAX_TOP);
 
   try {
+    // Opt-in gate, checked FIRST. With no registry built, the gate is INACTIVE:
+    // we do NOT enumerate GIs — handing the model an uncurated menu (including GIs
+    // that return wrong data) is exactly the risk the gate exists to prevent.
+    // Discovery is suppressed; a specific GI can still be run by exact name via
+    // acumatica_run_inquiry / acumatica_describe_inquiry. Once a registry exists,
+    // list shows only the gated (ExposedtoMCP) GIs. (Feed/canary GIs are hidden
+    // either way.) Skipping the service-document fetch here is also an efficiency win.
+    const registry = await getGiRegistry(env, acumaticaUsername);
+    if (!registry) {
+      return {
+        results: [],
+        gateInactive: true,
+        note:
+          "Generic Inquiry discovery is disabled: no GIs have been exposed to the AI assistant. " +
+          "An administrator enables this by configuring the MCP GI registry (the MCPGIs/MCPGIFields feed GIs) and tagging GIs 'Exposed to MCP'. " +
+          "No GIs are listed until then — but a specific inquiry can still be run by exact name with acumatica_run_inquiry if you already know it.",
+      };
+    }
+    const gatedNames = new Set(registry.gis.map((g) => g.giName));
+    const descByName = new Map(
+      registry.gis.filter((g) => g.description).map((g) => [g.giName, g.description!])
+    );
+
     // Try KV cache for both the service document and $metadata
     const [cachedServiceDoc, cachedMetadata] = await Promise.all([
       getCached<ODataServiceDocument>(env.store, "gi_list"),
@@ -88,19 +111,10 @@ export async function handleListGenericInquiries(
     // parameterizedGiNames in gi-registry.ts (shared with run_inquiry's guard).
     const parameterizedNames = parameterizedGiNames(metadata);
 
-    // Opt-in gate. When a registry has been built, discovery shows only the
-    // GIs exposed to MCP (ExposedtoMCP). Absent registry → inactive, show all
-    // (current behavior). Feed/canary GIs are hidden in both states.
-    const registry = await getGiRegistry(env, acumaticaUsername);
-    const gatedNames = registry ? new Set(registry.gis.map((g) => g.giName)) : null;
-    const descByName = new Map(
-      (registry?.gis ?? []).filter((g) => g.description).map((g) => [g.giName, g.description!])
-    );
-
     let items = (serviceDoc.value || [])
       .filter((entry) => !parameterizedNames.has(entry.name))
       .filter((entry) => !EXCLUDED_GI_NAMES.has(entry.name))
-      .filter((entry) => (gatedNames ? gatedNames.has(entry.name) : true))
+      .filter((entry) => gatedNames.has(entry.name))
       .map((entry) => {
         const description = descByName.get(entry.name);
         return description
