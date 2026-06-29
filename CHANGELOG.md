@@ -5,6 +5,10 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.38.4] - 2026-06-29
+### Added
+- **Acumatica session & license model documented.** New "Acumatica Session & License Model" section in `docs/architecture.md` explains how the server consumes Acumatica's two independent license limits — *Max Web Services API Users* (concurrent server-side sessions; HTTP 429 at sign-in when exceeded) and *Concurrent Web Services API Requests* + requests-per-minute (throughput throttle; queues then delays) — and **when an API-user seat is released**: under the plain `api` scope each access token is a single session that Acumatica closes automatically at token expiry (~1 h), so the stateless client (no session-cookie reuse, no `/entity/auth/logout`) never leaks seats. Concurrent seats consumed ≈ distinct users active within a rolling ~1 h window, not per request. Added a load-bearing-scope warning (keep `api`, never `api:concurrent_access`) to `docs/self-hosting-guide.md` and a Key Design Decision note in CLAUDE.md. Docs-only; no code change.
+
 ## [0.38.3] - 2026-06-28
 ### Added
 - **`describe_inquiry` refuses parameterized GIs too.** Extends the 0.38.1 `run_inquiry` guard to `acumatica_describe_inquiry`, which would otherwise sample a parameterized GI via `$top=1` and infer a field schema from default/unfiltered (wrong) data. It now refuses parameterized GIs (the shared `parameterizedGiNames()` `$metadata` check), checked **before** the schema cache so a stale pre-guard schema isn't served, and failing open if `$metadata` is unavailable. Both GI query tools are now consistent.

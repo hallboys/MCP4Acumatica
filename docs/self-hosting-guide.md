@@ -357,6 +357,7 @@ const username = "admin@mycompany.com";
 Implement the Acumatica OAuth 2.0 authorization code flow using Passport.js or a custom Express middleware. The flow is:
 
 1. Redirect user to `{ACUMATICA_URL}/identity/connect/authorize` with `scope=api openid profile email offline_access` (**`offline_access` is required** — without it Acumatica issues no refresh token, so sessions die when the ~1h access token expires; scopes are sent here in the request, not configured on the Connected Application)
+   - **Keep the scope as `api`, not `api:concurrent_access`.** Under `api`, each access token is a single Acumatica session that closes automatically when the token expires (~1h), so the stateless client (no session-cookie reuse, no logout) never leaks API-user seats. Under `api:concurrent_access`, every cookie-less request counts as a *new* session and exhausts the license's API-user seats in seconds unless you also implement a cookie jar + explicit `/entity/auth/logout`. See [Acumatica Session & License Model](architecture.md#acumatica-session--license-model).
 2. Handle the callback, exchange the code for tokens at `{ACUMATICA_URL}/identity/connect/token`
 3. Store the tokens via `store.put("user_token:{username}", ...)`
 4. Attach the username to the MCP session
