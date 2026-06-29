@@ -192,6 +192,7 @@ MCP Client (Claude)                Worker                      Acumatica
 - **Single login.** Users authenticate once with Acumatica (or their configured SSO).
 - **No stored passwords.** Only OAuth tokens are stored.
 - **Token refresh.** When an access token expires, the server uses the refresh token to get a new one automatically. If the refresh token itself is dead (expired/rotated/revoked), the server revokes the MCP grant so the client transparently re-authenticates rather than failing permanently.
+- **API-user seats.** Each active user consumes one Acumatica API-user seat (via the plain `api` scope), auto-released ~1 hour after their last token issuance. See [Acumatica Session & License Model](#acumatica-session--license-model) for how this interacts with the instance's license limits.
 - **Acumatica is the sole identity provider.** No separate identity layer.
 - **Role gate before access.** After login, a canary GI check ensures the user has the required Acumatica role (see Access Control below).
 - **Consent required.** Users must acknowledge an AI data processing consent page before the MCP session activates.
@@ -339,6 +340,42 @@ Settings can be changed without redeploying via the admin console or direct KV w
 - `getConfig(store, key, envFallback)` reads KV first, falls back to env var
 - The DO reads config in `init()` and stores resolved values as instance properties
 - Changes take effect when the DO instance recycles (idle eviction, typically within minutes)
+
+---
+
+## Acumatica Session & License Model
+
+Acumatica's license enforces **two independent limits** on API usage. Both are shared across *every* API integration on the instance (eCommerce connectors, Velixo, StarShip, Celigo, etc.) — the MCP server is one more consumer of the same pool, not an isolated one.
+
+| Limit | What it caps | Exceeded → |
+|-------|--------------|-----------|
+| **Max Web Services API Users** | Concurrent server-side *sessions* (logins) | New sign-in rejected — HTTP 429 |
+| **Concurrent Web Services API Requests** + requests/minute | In-flight request *throughput* | Requests queued, then delayed; declined only if the queue exceeds 20 or a request waits > 10 min |
+
+The actual numbers are license-tier-based — check the instance's **License Monitoring Console** and the *Number of Web Services API Users* / *Number of Concurrent Web Services API Requests* boxes on the license screen.
+
+### The `api` scope is load-bearing
+
+`/authorize` requests the plain **`api`** scope (`src/auth/acumatica-auth-handler.ts`), **not** `api:concurrent_access`. This is a hard requirement, not an incidental choice:
+
+- **Under `api`:** Acumatica treats each access token as a **single** server-side session and **closes it automatically when the access token expires** (~1 hour). Explicit sign-out is not required.
+- **Under `api:concurrent_access`:** every request that doesn't replay the `ASP.NET_SessionId` cookie is counted as a *new* session, so a stateless client exhausts the API-user seats in seconds unless it maintains a cookie jar and calls `/entity/auth/logout` for each one.
+
+`AcumaticaClient.doFetch()` (`src/lib/acumatica-client.ts`) is deliberately stateless — it sends only the `Authorization: Bearer` header, never captures or replays the session cookie, and never calls logout. That is safe **only** because of the `api` scope. Switching the scope without also rewriting the client to manage cookies + logout would be a license bomb.
+
+### When a seat is released
+
+A seat is bound to the access token and freed when that token expires — **default 1 hour** (`expires_in: 3600`). The server relies on this auto-close rather than proactive logout: it can't cheaply log out a session whose cookie it never captured, and an interactive MCP session has no natural "done" boundary — per-call logout would churn sessions for no benefit.
+
+Consequences:
+
+- **Concurrent seats consumed ≈ distinct users active within any rolling ~1-hour window** — *not* per request, and *not* all-time enrolled users. An idle user's seat is reclaimed within ~1 hour of their last token issuance.
+- **Token refresh** (the access token rotates roughly hourly, serialized per user by the `TokenManager` DO) issues a *new* access token and therefore a new session; the prior token's session auto-closes at its own expiry, so a user may briefly hold two seats around the refresh boundary.
+- A separate **UI idle-session timeout** (default 60 min; configurable on the Security Preferences form in 2023 R1+, via `web.config` or a SaaS support ticket otherwise) also exists, but for `api`-scope OAuth the **access-token lifetime is the governing clock**.
+
+### Throughput vs. the per-user rate limiter
+
+The per-user rate limiter (see **Rate Limiting** above) caps **3 concurrent / 40-per-minute per user** — it is *not* aware of the instance-wide ceiling. Several simultaneously-active users aggregate past a small-tier throttle (e.g. 6 concurrent / 50-per-minute); Acumatica then queues and delays (rarely declines), which surfaces to the model as the `429` "rate limit exceeded" friendly error. If `429`s show up in `do-logs`, the gap to close is an instance-wide shared counter (mirroring the existing per-minute KV bucket) so the server backs off *before* Acumatica starts queuing — deferred until the logs show it's needed, since coordinating it across isolates adds complexity.
 
 ---
 
