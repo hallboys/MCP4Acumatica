@@ -1088,6 +1088,9 @@ export interface AppEnv {
   REDACT_PATTERNS?: string;
   // Field redaction — comma-separated field name patterns to skip (whitelist)
   REDACT_SKIP?: string;
+  // Write tools — set to "true" to enable mutating tools (off by default).
+  // Runtime-overridable via config:writes_enabled in KV (admin console).
+  ACUMATICA_WRITES_ENABLED?: string;
   // Platform-agnostic key-value store (tokens, config, cache)
   store: import("../lib/kv-store").IKeyValueStore;
   // Serializes per-user Acumatica token refresh so concurrent sessions can't
@@ -1120,6 +1123,7 @@ export interface Env {
   ACUMATICA_MCP_ROLE?: string;
   REDACT_PATTERNS?: string;
   REDACT_SKIP?: string;
+  ACUMATICA_WRITES_ENABLED?: string;
   // Raw KV binding (used by auth handler and admin handler which need direct KV access)
   TOKEN_STORE: KVNamespace;
   // OAuth provider — OAUTH_KV is required by @cloudflare/workers-oauth-provider internally

@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.38.5`
+- **Current tag:** `25R2-0.39.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -25,7 +25,7 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /token, /register (DCR+CIMD) │
 │    ├─ /docs → Documentation site │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ 48 tools (38 read-only  │
+│       ├─ 49 tools (38 read-only  │
 │       │   + 6 utility/discovery  │
 │       │   + 4 schema-knowledge)  │
 └──────────────┬──────────────────┘
