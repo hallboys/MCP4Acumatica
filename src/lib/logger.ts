@@ -70,6 +70,36 @@ export function logRedaction(
   }));
 }
 
+export interface MutationEntry {
+  timestamp: string;
+  tool: string;
+  acumaticaUsername: string;
+  entity: string;
+  /** Key of the created/updated record (e.g. CustomerID), if available. */
+  recordKey?: string;
+  /**
+   * Payload field names + (redacted) values that were sent to Acumatica.
+   * Values have already been run through name-based redaction before logging
+   * so sensitive fields (SSN, salary, etc.) do not appear in the audit trail.
+   */
+  fields: Record<string, unknown>;
+  /** True when this was a dry-run preview — no write was sent to Acumatica. */
+  dryRun: boolean;
+}
+
+/**
+ * Log an attempted mutation (write) tool call. Emitted for both dry-run
+ * previews and committed writes so every mutation attempt is in the trail.
+ * Field values are redacted by the caller before being passed here.
+ */
+export function logMutation(entry: MutationEntry): void {
+  console.log(JSON.stringify({
+    level: "info",
+    type: "write_mutation",
+    ...entry,
+  }));
+}
+
 /**
  * Write structured log entries directly to R2 as NDJSON.
  * Used by the Durable Object to persist tool logs that Logpush

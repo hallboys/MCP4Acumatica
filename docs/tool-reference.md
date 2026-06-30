@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 48 tools available in the MCP4Acumatica (v0.38.5).
+Complete specification for all 49 tools available in the MCP4Acumatica (v0.39.0).
 
 > The `**Endpoint:**` paths below show the default deployment values — the `Default` endpoint
 > name and contract version `25.200.001`. The base `/entity/{name}/{version}` is governed by
@@ -10,6 +10,7 @@ Complete specification for all 48 tools available in the MCP4Acumatica (v0.38.5)
 ## Table of Contents
 
 - [Utility / Discovery Tools](#utility--discovery-tools)
+- [Write Tools](#write-tools)
 - [Schema Knowledge Tools](#schema-knowledge-tools)
 - [Core](#core)
 - [Financial / Accounting](#financial--accounting)
@@ -128,6 +129,46 @@ Clear cached metadata (entity schemas, GI lists, GI field schemas). Use when Acu
 **Caching details:** Entity schemas are cached for 24 hours. GI lists, GI metadata, and GI field schemas are cached for 1 hour. Cache is stored in KV with `cache:` key prefix.
 
 **Returns:** `{ cleared: [...] }` listing the cache keys that were removed.
+
+---
+
+## Write Tools
+
+Write tools mutate Acumatica data. They are **disabled by default** and must be explicitly enabled by an administrator at `/docs/admin/settings` (toggle "Enable Write Tools"). All write tools use a **two-phase confirmation** pattern to prevent accidental mutations:
+
+1. Call the tool **without** `confirm` (or with any value other than `'true'`) to get a dry-run preview. The preview shows exactly what would be written in Acumatica's `{value: X}` wire format -- no data is changed.
+2. Call again with `confirm: 'true'` to commit the change.
+
+Every mutation attempt (dry-run and committed) is logged to the R2 audit trail with the redacted payload, entity, record key, and `dryRun` flag. The log appears in the admin console under `/docs/admin`.
+
+### `acumatica_create_or_update_customer`
+
+Create a new Customer or update an existing one. Uses PUT-as-upsert: if `CustomerID` is provided the existing record is updated; if omitted Acumatica assigns an auto-number ID and a new record is created.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `payload` | string | Yes | JSON object with fields to create or update. Only the allowed fields listed below are accepted -- any others are rejected before anything is sent to Acumatica. |
+| `confirm` | string | No | Pass `'true'` to commit the change. Omit (or pass any other value) to preview exactly what would be written without making any change. |
+
+**Allowed top-level fields:** `CustomerID`, `CustomerName`, `CustomerClass`, `Status`, `Email`, `Phone1`, `MainContact`
+
+`MainContact` accepts a nested object with: `Email`, `Phone1`, `Address1`, `Address2`, `City`, `State`, `PostalCode`, `Country`
+
+**Examples:**
+
+Create a new customer (Acumatica assigns the ID):
+```json
+{ "CustomerName": "Acme Corp", "CustomerClass": "DEFAULT", "Email": "accounts@acme.com" }
+```
+
+Update an existing customer's status:
+```json
+{ "CustomerID": "C000123", "Status": "Inactive" }
+```
+
+**Returns (dry-run):** `{ dryRun: true, willWrite: <wrapped-payload>, target: "PUT Customer", note: "..." }`
+
+**Returns (committed):** `{ action: "upsert", entity: "Customer", recordKey: "<CustomerID>", result: <unwrapped-response> }`
 
 ---
 

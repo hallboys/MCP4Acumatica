@@ -7,6 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Env, AppEnv, AuthProps } from "./types/acumatica";
 import { GETTER_TOOLS, paramsShape, runGetter } from "./tools/getter-registry";
+import { WRITER_TOOLS, writerParamsShape, runWriter } from "./tools/writer-registry";
 import { handleRunInquiry } from "./tools/generic-inquiries";
 import { handleListEntities } from "./tools/entity-list";
 import { handleDescribeEntity } from "./tools/entity-schema";
@@ -37,7 +38,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.38.5",
+    version: "0.39.0",
   });
 
   private redactPatterns?: string;
@@ -102,6 +103,30 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         async (args: Record<string, string | undefined>) => {
           return this.callTool(
             () => runGetter(spec, this.appEnv, this.props.acumaticaUsername, args),
+            spec.name,
+            args
+          );
+        }
+      );
+    }
+
+    // ── Write tools ───────────────────────────────────────────
+    // Registry-driven, parallel to the getter loop. Each spec defines an
+    // entity, an allowed-field list, and optional $expand. The shared
+    // `runWriter` handler validates the payload, enforces the kill-switch,
+    // performs the dry-run gate, and calls client.put(). Adding a new write
+    // entity = one entry in WRITER_TOOLS — no per-tool handler file needed.
+    for (const spec of WRITER_TOOLS) {
+      this.server.tool(
+        spec.name,
+        spec.description,
+        writerParamsShape(spec),
+        async (args: Record<string, string | undefined>) => {
+          return this.callTool(
+            () => runWriter(spec, this.appEnv, this.props.acumaticaUsername, {
+              payload: args.payload ?? "",
+              confirm: args.confirm,
+            }),
             spec.name,
             args
           );

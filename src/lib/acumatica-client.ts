@@ -5,6 +5,7 @@ import type { AppEnv } from "../types/acumatica";
 import { getAcumaticaTokenForUser } from "../auth/acumatica-oauth";
 import { withRateLimit } from "./rate-limiter";
 import { logHttpCall, logError } from "./logger";
+export { wrapFields, unwrapFields } from "./field-transforms";
 
 const ERROR_BODY_MAX_CHARS = 400;
 
@@ -192,6 +193,64 @@ export class AcumaticaClient {
     });
   }
 
+  /**
+   * Make a PUT request to the Acumatica contract-based REST API.
+   * Acumatica uses PUT as an upsert: if a key is present in the body the
+   * record is updated, otherwise a new record is created and the system
+   * assigns an auto-number key.
+   *
+   * The request body must already be wrapped in Acumatica's {value: X}
+   * field format — use wrapFields() before calling this method.
+   *
+   * The 401-retry re-sends the body, which is safe for PUT-by-key (idempotent).
+   * Do NOT use this for POST-style create-without-key operations where a
+   * retry could double-create a record.
+   */
+  async put<T>(
+    path: string,
+    toolName: string,
+    requestBody: Record<string, unknown>,
+    params: Record<string, unknown> = {},
+    query: Record<string, string> = {}
+  ): Promise<T> {
+    return withRateLimit(this.env.store, this.acumaticaUsername, async () => {
+      const start = Date.now();
+      const url = this.buildUrl(path, query);
+
+      let token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
+      let response = await this.doWrite(url, token, "PUT", requestBody);
+
+      // Retry once on 401 (token may have just expired).
+      // PUT is idempotent-by-key so retrying is safe.
+      if (response.status === 401) {
+        token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
+        response = await this.doWrite(url, token, "PUT", requestBody);
+      }
+
+      const durationMs = Date.now() - start;
+      const endpoint = `PUT ${path}`;
+
+      logHttpCall({
+        timestamp: new Date().toISOString(),
+        tool: toolName,
+        acumaticaUsername: this.acumaticaUsername,
+        params,
+        endpoint,
+        statusCode: response.status,
+        durationMs,
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        const message = this.friendlyError(response.status, errorBody, path);
+        logError(toolName, message);
+        throw new AcumaticaApiError(response.status, errorBody, message);
+      }
+
+      return (await response.json()) as T;
+    });
+  }
+
   private buildUrl(path: string, query: Record<string, string>): string {
     return buildQueryUrl(`${this.baseUrl}/${path}`, query);
   }
@@ -203,6 +262,23 @@ export class AcumaticaClient {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
       },
+    });
+  }
+
+  private async doWrite(
+    url: string,
+    token: string,
+    method: "PUT" | "POST",
+    body: unknown
+  ): Promise<Response> {
+    return fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
     });
   }
 
@@ -246,41 +322,5 @@ export class AcumaticaClient {
   }
 }
 
-/**
- * Unwrap Acumatica's {value: ...} field wrapper pattern.
- * Recursively walks an object and replaces {value: X} with X.
- */
-export function unwrapFields(obj: unknown): unknown {
-  if (obj === null || obj === undefined) return obj;
-  if (Array.isArray(obj)) return obj.map(unwrapFields);
-  if (typeof obj !== "object") return obj;
-
-  const record = obj as Record<string, unknown>;
-
-  // Check if this is a value-wrapper object: has "value" key and at most "value" + "error"
-  const keys = Object.keys(record);
-  if (
-    keys.includes("value") &&
-    keys.every((k) => k === "value" || k === "error")
-  ) {
-    return record.value;
-  }
-
-  // Recurse into all properties, dropping:
-  //   - `_links`: HATEOAS navigation URLs (not user data)
-  //   - `rowNumber`: Acumatica row identifier (not user data)
-  //   - `custom`: Acumatica user-defined extension fields. This is user
-  //     data, but the wire format is a deeply nested type-tagged map
-  //     (e.g. `{"Document": {"UsrField": {"type": "CustomStringField",
-  //     "value": "foo"}}}`) that's noisy for the model and often empty.
-  //     Surfacing them would require per-entity flattening; for now we
-  //     strip them. If a workflow needs custom fields, the direct
-  //     `acumatica_get_*` tools can be extended to fetch them via
-  //     `$expand=custom` and flatten before return.
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(record)) {
-    if (key === "_links" || key === "rowNumber" || key === "custom") continue;
-    result[key] = unwrapFields(value);
-  }
-  return result;
-}
+// wrapFields and unwrapFields are defined in ./field-transforms and re-exported
+// from the top of this file via `export { wrapFields, unwrapFields } from "./field-transforms"`.
