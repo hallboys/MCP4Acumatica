@@ -64,7 +64,34 @@ const app = new Hono<{ Bindings: AuthEnv }>();
 // Stash the MCP request, redirect straight to Acumatica login.
 // ──────────────────────────────────────────────────────────────
 app.get("/authorize", async (c) => {
-  const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+  // parseAuthRequest() fetches the CIMD client-metadata document server-side
+  // when the client_id is a URL (Claude.ai/Claude Code use CIMD). If that
+  // fetch fails — the client's metadata endpoint is down (503) or the
+  // client_id is malformed/unfetchable — parseAuthRequest throws. Without
+  // this guard the throw surfaces as an opaque HTTP 500; catch it and return
+  // a diagnosable error instead. A fetch/network failure is an upstream
+  // problem (502); anything else is a bad request (400).
+  let oauthReqInfo;
+  try {
+    oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const clientId = c.req.query("client_id") ?? "(none)";
+    console.log(
+      `authorize_parse_failed client_id=${clientId} error=${msg}`
+    );
+    const looksLikeFetch = /fetch|network|timeout|502|503|504|upstream|unhealthy/i.test(
+      msg
+    );
+    return c.text(
+      looksLikeFetch
+        ? `Could not fetch the OAuth client's metadata document (client_id=${clientId}). ` +
+            `This is usually a temporary outage of the client's metadata endpoint, not this server. ` +
+            `Details: ${msg}`
+        : `Invalid OAuth request: ${msg}`,
+      looksLikeFetch ? 502 : 400
+    );
+  }
   if (!oauthReqInfo) {
     return c.text("Invalid OAuth request", 400);
   }
