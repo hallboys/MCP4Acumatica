@@ -134,7 +134,7 @@ app.get("/authorize", async (c) => {
 
 // ──────────────────────────────────────────────────────────────
 // Step 2: /callback — Acumatica redirects here after login.
-// Exchange code for tokens, look up the user, check role,
+// Exchange code for tokens, look up the user, check access,
 // then redirect to consent page.
 // ──────────────────────────────────────────────────────────────
 app.get("/callback", async (c) => {
@@ -300,34 +300,34 @@ app.get("/callback", async (c) => {
     acumaticaUsername = `user_${state}`;
   }
 
-  // ── Role gate: check for required MCP role ──────────────────
-  // Try multiple approaches to check if the user has the required role.
-  // Acumatica instances vary in which entities/endpoints are available.
-  const requiredRole = c.env.ACUMATICA_MCP_ROLE || "MCP Access";
-  const roleResult = await checkUserRole(
+  // ── Access gate: verify the user may use MCP ────────────────
+  // We never query role membership — SaaS blocks the User/Role tables over
+  // the API. Instead we check whether the user's token can read a canary
+  // Generic Inquiry over OData. Restrict who can read that GI in Acumatica
+  // however you like; a marker role is the recommended way.
+  const canaryGi = c.env.ACUMATICA_CANARY_GI || "MCPAccess";
+  const accessResult = await checkAccess(
     c.env.ACUMATICA_URL,
     c.env.ACUMATICA_TENANT,
     acumaticaTokens.access_token,
     acumaticaUsername,
-    requiredRole
+    canaryGi
   );
 
-  if (roleResult.kind === "denied") {
+  if (accessResult.kind === "denied") {
     logAuthEvent("login_denied", acumaticaUsername, {
-      reason: "missing_role",
-      requiredRole,
+      reason: "access_denied",
     });
-    return c.html(renderAccessDeniedPage(acumaticaDisplayName, requiredRole), 403);
+    return c.html(renderAccessDeniedPage(acumaticaDisplayName), 403);
   }
 
-  if (roleResult.kind === "misconfigured") {
+  if (accessResult.kind === "misconfigured") {
     logAuthEvent("login_denied", acumaticaUsername, {
-      reason: "role_check_misconfigured",
-      requiredRole,
-      status: roleResult.status,
-      detail: roleResult.reason,
+      reason: "access_check_misconfigured",
+      status: accessResult.status,
+      detail: accessResult.reason,
     });
-    return c.html(renderRoleCheckErrorPage(requiredRole, roleResult.reason), 503);
+    return c.html(renderAccessCheckErrorPage(accessResult.reason), 503);
   }
 
   // ── Store pending consent in KV and redirect ────────────────
@@ -483,54 +483,56 @@ app.get("/", (c) => c.redirect("/docs"));
 export { app as AcumaticaAuthHandler };
 
 // ──────────────────────────────────────────────────────────────
-// Role check — tries multiple Acumatica API approaches
+// Access check — canary GI reachability over OData
 // ──────────────────────────────────────────────────────────────
 
-type RoleCheckResult =
+type AccessCheckResult =
   | { kind: "granted" }
   | { kind: "denied" }
   | { kind: "misconfigured"; reason: string; status?: number };
 
 /**
- * Check whether the authenticated user has the required MCP role by
- * querying the canary GI (`MCPAccess`) via OData. Returns a discriminated
- * result so the caller can render a meaningful error:
+ * Check whether the authenticated user may use MCP by querying a canary
+ * Generic Inquiry via OData. The server never inspects role membership —
+ * it only asks "can this user's token read the canary GI?". Restrict who
+ * can read that GI in Acumatica however you like (a marker role is the
+ * recommended way). Returns a discriminated result so the caller can
+ * render a meaningful error:
  *
- *   - 200 → `granted` (user has the role)
- *   - 403 → `denied` (user is missing the role)
+ *   - 200 → `granted` (user can read the canary GI)
+ *   - 403 → `denied` (user cannot read it — no access)
  *   - 404 → `misconfigured` (canary GI is missing or not exposed via OData)
  *   - 5xx / network errors → `misconfigured` (Acumatica or tenant misconfig)
  *
  * Previously every non-200 was collapsed into "denied", which meant a
- * tenant typo or a missing GI looked identical to "no role" and admins
+ * tenant typo or a missing GI looked identical to "no access" and admins
  * only found out via support tickets.
  */
-async function checkUserRole(
+async function checkAccess(
   acumaticaUrl: string,
   tenant: string,
   accessToken: string,
   username: string,
-  _requiredRole: string
-): Promise<RoleCheckResult> {
+  giName: string
+): Promise<AccessCheckResult> {
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     Accept: "application/json",
   };
 
-  const giName = "MCPAccess";
   const giUrl = `${acumaticaUrl}/t/${tenant}/api/odata/gi/${giName}?$top=1`;
-  console.log(`Role check (canary GI): querying ${giUrl} for user ${username}`);
+  console.log(`Access check (canary GI): querying ${giUrl} for user ${username}`);
 
   let resp: Response;
   try {
     resp = await fetch(giUrl, { headers });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`Role check (canary GI): network failure: ${msg}`);
+    console.error(`Access check (canary GI): network failure: ${msg}`);
     return { kind: "misconfigured", reason: `Unable to reach Acumatica: ${msg}` };
   }
 
-  console.log(`Role check (canary GI): HTTP ${resp.status}`);
+  console.log(`Access check (canary GI): HTTP ${resp.status}`);
 
   if (resp.ok) return { kind: "granted" };
   if (resp.status === 403) return { kind: "denied" };
@@ -538,7 +540,7 @@ async function checkUserRole(
     return {
       kind: "misconfigured",
       status: 404,
-      reason: `Canary Generic Inquiry '${giName}' is missing or not exposed via OData on tenant '${tenant}'. Create it (SM208000) and assign it to the required role.`,
+      reason: `Canary Generic Inquiry '${giName}' is missing or not exposed via OData on tenant '${tenant}'. Create it (SM208000), expose it via OData, and restrict who can read it.`,
     };
   }
   // 401 here would mean the just-minted access token is already rejected —
@@ -546,7 +548,7 @@ async function checkUserRole(
   return {
     kind: "misconfigured",
     status: resp.status,
-    reason: `Acumatica returned HTTP ${resp.status} when checking role. Verify ACUMATICA_TENANT, the '${giName}' GI is exposed via OData, and the instance is reachable.`,
+    reason: `Acumatica returned HTTP ${resp.status} during the access check. Verify ACUMATICA_TENANT, that the '${giName}' GI is exposed via OData, and that the instance is reachable.`,
   };
 }
 
@@ -591,7 +593,7 @@ function renderTokenExchangeErrorPage(info: {
 </html>`;
 }
 
-function renderRoleCheckErrorPage(roleName: string, detail: string): string {
+function renderAccessCheckErrorPage(detail: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -602,7 +604,6 @@ function renderRoleCheckErrorPage(roleName: string, detail: string): string {
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
     .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
     h1 { color: #b45309; font-size: 1.5rem; margin-top: 0; }
-    .role-name { background: #f5f5f5; padding: 2px 8px; border-radius: 4px; font-family: monospace; }
     .detail { margin-top: 20px; padding: 16px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; font-family: "SF Mono", Menlo, monospace; font-size: 0.85rem; white-space: pre-wrap; }
     .action { margin-top: 24px; padding: 16px; background: #f8f9fa; border-radius: 6px; }
     .action h3 { margin-top: 0; font-size: 0.9rem; text-transform: uppercase; color: #666; }
@@ -611,7 +612,7 @@ function renderRoleCheckErrorPage(roleName: string, detail: string): string {
 <body>
   <div class="card">
     <h1>Configuration Error</h1>
-    <p>The AI assistant cannot verify your access to the <span class="role-name">${escapeHtml(roleName)}</span> role because Acumatica did not respond as expected.</p>
+    <p>The AI assistant cannot verify your access because Acumatica did not respond as expected.</p>
     <div class="detail">${escapeHtml(detail)}</div>
     <div class="action">
       <h3>What to do</h3>
@@ -622,7 +623,7 @@ function renderRoleCheckErrorPage(roleName: string, detail: string): string {
 </html>`;
 }
 
-function renderAccessDeniedPage(displayName: string, roleName: string): string {
+function renderAccessDeniedPage(displayName: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -633,7 +634,6 @@ function renderAccessDeniedPage(displayName: string, roleName: string): string {
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
     .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
     h1 { color: #c0392b; font-size: 1.5rem; margin-top: 0; }
-    .role-name { background: #f5f5f5; padding: 2px 8px; border-radius: 4px; font-family: monospace; }
     .action { margin-top: 24px; padding: 16px; background: #f8f9fa; border-radius: 6px; }
     .action h3 { margin-top: 0; font-size: 0.9rem; text-transform: uppercase; color: #666; }
   </style>
@@ -641,10 +641,10 @@ function renderAccessDeniedPage(displayName: string, roleName: string): string {
 <body>
   <div class="card">
     <h1>Access Denied</h1>
-    <p>Hello, <strong>${escapeHtml(displayName)}</strong>. Your Acumatica account does not have the <span class="role-name">${escapeHtml(roleName)}</span> role required to use this AI assistant.</p>
+    <p>Hello, <strong>${escapeHtml(displayName)}</strong>. Your Acumatica account does not have access to this AI assistant.</p>
     <div class="action">
       <h3>What to do</h3>
-      <p>Ask your Acumatica administrator to assign the <span class="role-name">${escapeHtml(roleName)}</span> role to your user account, then try connecting again.</p>
+      <p>Ask your Acumatica administrator to grant your user account access to the AI assistant, then try connecting again.</p>
     </div>
   </div>
 </body>

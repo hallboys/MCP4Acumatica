@@ -480,7 +480,7 @@ A: Absolutely. Each tool file is independent. Import only what you need.
 **Q: What about the admin console?**
 A: The admin console (`src/admin/admin-handler.ts`) is Cloudflare-specific and optional. For self-hosted, manage config via environment variables or direct store writes.
 
-**Q: What about the role gate and consent?**
+**Q: What about the access gate and consent?**
 A: These are implemented in `src/auth/acumatica-auth-handler.ts` (CF-specific). For self-hosted, you can implement equivalent checks in your auth middleware, or skip them for trusted environments.
 
 **Q: Does `expirationTtl` matter for my store implementation?**

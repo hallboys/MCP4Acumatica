@@ -105,7 +105,8 @@ The [`acumatica/`](../acumatica/) folder bundles everything to import — see
    is for.
 
 > The [`acumatica/`](../acumatica/) bundle also includes `MCPAccess.xml`, the canary GI for the
-> login **role gate** (a separate prerequisite — import it and assign it to the `MCP Access` role).
+> login **access gate** (a separate prerequisite — import it, expose it via OData, and restrict who
+> can read it; assigning it to a marker `MCP Access` role is the recommended way).
 
 `ExposedtoMCP` is **authoritative** — the `*MCP` GI-naming convention is just convention.
 Until at least one GI is tagged and the feeds are readable, the gate stays inactive.

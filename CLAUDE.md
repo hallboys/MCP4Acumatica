@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.38.5`
+- **Current tag:** `25R2-0.39.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -47,15 +47,15 @@ This design allows future self-hosted adapters (Node.js + Redis/SQLite) to reuse
 
 ## OAuth Flow
 
-Claude → Worker `/authorize` → Acumatica login (with `openid profile email api offline_access` scopes) → Worker `/callback` → OIDC userinfo → canary GI role check → `/consent` interstitial → token stored → MCP session active.
+Claude → Worker `/authorize` → Acumatica login (with `openid profile email api offline_access` scopes) → Worker `/callback` → OIDC userinfo → canary GI access check → `/consent` interstitial → token stored → MCP session active.
 
 Acumatica is the sole identity provider. Users log in with their Acumatica credentials (or via whatever SSO their Acumatica instance is configured with). The MCP server does not manage identity separately — it delegates entirely to Acumatica.
 
 ### Access Control & Governance
 
-1. **Role gate (canary GI):** After login, the callback queries the `MCPAccess` Generic Inquiry via OData. This GI is assigned only to the `MCP Access` role in Acumatica. If the OData query returns 200, the user has the role; if 403, they don't. This avoids exposing user/role data — the GI content is irrelevant, it's purely an access gate. Users without the role see a 403 page directing them to contact their Acumatica admin. The role name is configurable via `ACUMATICA_MCP_ROLE` env var.
+1. **Access gate (canary GI):** After login, the callback queries the canary Generic Inquiry (default `MCPAccess`, configurable via `ACUMATICA_CANARY_GI`) via OData. The server **never checks role membership** — it only checks whether the user's token can *read* that GI: 200 → allowed, 403 → denied. Read access is restricted however the operator likes; assigning the GI only to a marker `MCP Access` role is the recommended way. This avoids exposing user/role data — the GI content is irrelevant, it's purely an access gate. Denied users see a 403 page directing them to contact their Acumatica admin. Implemented by `checkAccess()` in `acumatica-auth-handler.ts`; a 404/5xx is treated as misconfiguration (not denial) and logged as `login_denied` / `reason: access_check_misconfigured`.
 
-2. **Consent interstitial:** Users who pass the role check see a consent page explaining that data will be processed by AI, access is logged, and sensitive fields are redacted. They must acknowledge before the MCP session activates.
+2. **Consent interstitial:** Users who pass the access check see a consent page explaining that data will be processed by AI, access is logged, and sensitive fields are redacted. They must acknowledge before the MCP session activates.
 
 3. **Sensitive field redaction:** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) using pattern matching. Matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` (add) and `REDACT_SKIP` (whitelist) env vars. See `src/lib/redact.ts`.
 
@@ -69,7 +69,7 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 8. **Per-user token serialization (TokenManager DO).** IdentityServer rotates the refresh token on every use, so concurrent refreshes of the same user's token race: the loser POSTs an already-rotated token, gets a `4xx`, and (as of 0.32.0) had its MCP grant spuriously revoked — a "session dead" on an otherwise-healthy account, the cause of *frequent* disconnects. The original in-isolate `inflightLookups` map only de-duplicated refreshes *within one isolate*; Claude.ai runs multiple concurrent sessions, each its **own** session DO/isolate, so the race persisted across them. Fixed (0.33.0) by routing all token access through a per-user **`TokenManager` Durable Object** (`src/token-manager.ts`, bound as `TOKEN_MANAGER`, keyed by `idFromName(acumaticaUsername)`). There is exactly one instance per user *globally*, so every token request across all of a user's sessions funnels through it and an in-DO inflight promise coalesces them into a single refresh — the cross-isolate race is now structurally impossible. The DO's own (strongly-consistent) storage is the authoritative token copy; KV (`user_token:{username}`) is a write-through backup and the adoption source for users who authed before the DO existed. `/callback` seeds the DO via `setToken()` so there's no KV eventual-consistency window right after re-auth. `getAcumaticaTokenForUser()` (`src/auth/acumatica-oauth.ts`) is now a thin shim over `env.tokenProvider.getAccessToken()`, mapping the DO's discriminated `TokenResult` (`ok`/`reauth`/`transient`) back to a token / `ReauthRequiredError` / plain `Error`. Platform portability is preserved via the `ITokenProvider` abstraction on `AppEnv` (`src/lib/token-provider.ts`; CF impl `DOTokenProvider` in `src/platform/do-token-provider.ts`; a self-hosted adapter wraps the same `refreshAcumaticaToken()` helper in a distributed lock). When a refresh fails, the shared `refreshAcumaticaToken()` helper classifies by **HTTP status, not the OAuth error string**: a `5xx`/`429` is the only genuinely transient case (IdentityServer up but momentarily unhappy — the same refresh token may succeed on retry) and throws a plain `Error`; any other failure (all `4xx` — `invalid_grant`, `invalid_request`, `invalid_client`, etc.) means the refresh token will never start working again, so `getAcumaticaTokenForUser()` throws a distinct `ReauthRequiredError`. (Keying off the exact `invalid_grant` string was the original 0.32.0 bug — Acumatica returns a `400` whose body doesn't reliably parse to that code, so dead tokens fell through to the transient branch and the model looped forever on "please try again shortly" instead of re-authenticating. Fixed in 0.32.1.) A `token_refresh_failed` diagnostic line (status + error *code* only — never the body, which can echo `client_secret`) is logged for `wrangler tail`. No stored token or no refresh token also throws `ReauthRequiredError`. The DO's `callTool` catch then revokes the user's MCP grant(s) via `getOAuthApi(oauthProviderOptions, this.env)` — `env.OAUTH_PROVIDER` is injected only on the Worker request path, not on the DO's env, so the helpers are reconstructed from the shared `oauthProviderOptions`. With the grant gone, the next `/mcp` request fails bearer validation (401 + `WWW-Authenticate: ... error="invalid_token"`) and the client silently re-runs OAuth instead of the user manually disconnecting/reconnecting. Transient failures (5xx/429, network) throw a plain `Error` and do **not** revoke, so a blip can't evict the user. The grant `userId` is the Acumatica username and all of a user's grants share the one per-user Acumatica token, so revoke-all is correct — each client re-auths independently on its next call. The current tool turn still returns the error text (the streamable-http transport has already committed a 200 for the in-flight request and a tool handler can't turn that into a 401 mid-stream); the re-auth kicks in on Claude's automatic retry.
 
-9. **Role-check misconfig vs. denial.** `checkUserRole()` returns a discriminated result (`granted | denied | misconfigured`). 200 → granted, 403 → denied (user-facing access denied page), 404/5xx/network → misconfigured (separate "Configuration Error" page that points at the likely cause: missing GI, wrong tenant, OData not enabled). Misconfig events are logged as `login_denied` with `reason: role_check_misconfigured` so admins can see real outages rather than them being hidden behind "access denied" tickets.
+9. **Access-check misconfig vs. denial.** `checkAccess()` returns a discriminated result (`granted | denied | misconfigured`). 200 → granted, 403 → denied (user-facing access denied page), 404/5xx/network → misconfigured (separate "Configuration Error" page that points at the likely cause: missing GI, wrong tenant, OData not enabled). Misconfig events are logged as `login_denied` with `reason: access_check_misconfigured` so admins can see real outages rather than them being hidden behind "access denied" tickets.
 
 10. **Redaction regex concurrency.** `src/lib/redact.ts` no longer module-caches compiled regexes. The field-name regex is rebuilt per call (cheap; construction is cheaper than the walk), and the value-shape `SSN` / card regexes are per-call `new RegExp(...)` instances so the mutable `lastIndex` from the `g` flag can't race across concurrent redactions. The field regex drops the `g` flag entirely since it's only used with `.test(key)`.
 
@@ -117,7 +117,7 @@ src/
 ├── index.ts                       # Entry point — OAuthProvider + AcumaticaMcpServer (McpAgent DO); re-exports TokenManager
 ├── token-manager.ts               # TokenManager DO — per-user token-refresh serializer (TOKEN_MANAGER binding)
 ├── auth/
-│   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, /consent, role gate, OIDC discovery)
+│   ├── acumatica-auth-handler.ts  # Acumatica OAuth flow (/authorize, /callback, /consent, access gate, OIDC discovery)
 │   └── acumatica-oauth.ts         # Token getter shim (→ AppEnv.tokenProvider) + shared refreshAcumaticaToken() helper
 ├── admin/
 │   └── admin-handler.ts           # Admin console: auth, settings, log viewer (Hono sub-app)
@@ -217,7 +217,7 @@ Opt-in gate + curated enrichment for Generic-Inquiry tools, layered on the exist
 - `ACUMATICA_ENDPOINT_VERSION` — `25.200.001`
 - `ACUMATICA_ENDPOINT_NAME` — contract-API endpoint name (the `{name}` in `/entity/{name}/{version}`). Optional; defaults to `Default` (Acumatica's stock system endpoint). Override only when targeting a custom Web Service Endpoint (SM207060). A custom endpoint can rename/reshape entities, so the hardcoded names in `GETTER_TOOLS` are only guaranteed against `Default`. The getters are **endpoint-aware**: on a non-`Default` endpoint a 404 is re-messaged (via `endpointAware404Message()` in `src/tools/getter-errors.ts`) to tell the model the entity may simply not be exposed by that endpoint — distinct from a wrong key — and to confirm with `acumatica_describe_entity`/`acumatica_search_schema`. On `Default` the plain "verify the ID" message is kept.
 - `ACUMATICA_MAX_RECORDS` — max rows per query (default `1000`). Runtime-overridable via `config:acumatica_max_records` in KV (set from the admin console).
-- `ACUMATICA_MCP_ROLE` — Acumatica role name required to use MCP (default `"MCP Access"`)
+- `ACUMATICA_CANARY_GI` — name of the canary Generic Inquiry the login access gate reads over OData (default `"MCPAccess"`). The server checks GI-readability, not role membership; restrict who can read it in Acumatica however you like (a marker role is the recommended way).
 - `REDACT_PATTERNS` — comma-separated additional field name patterns to redact (e.g., `CustomSSN,EmployeeNotes`)
 - `REDACT_SKIP` — comma-separated field name patterns to whitelist from redaction (e.g., `BirthDate`)
 
@@ -244,10 +244,9 @@ Settings can be changed at runtime via the admin console at `/docs/admin/setting
 - **Redirect URI:** `https://mcp4acumatica.hallboys.com/callback` (plus `https://acumatica-mcp.hallboys.com/callback` while the legacy alias is still live, and the *.workers.dev URL if you use that too — every hostname users connect to must be listed)
 - **Scope:** Not configured on the Connected Application — SM303010 has no scope field. The server requests `api openid profile email offline_access` in the `/authorize` URL (`offline_access` is REQUIRED — without it Acumatica issues no refresh token and sessions die when the ~1h access token expires).
 
-### Acumatica Role & GI Prerequisites:
-- **Role:** Create `MCP Access` role (SM201005). No permissions needed — it's a marker role for the canary GI gate check.
-- **Generic Inquiry:** Create `MCPAccess` GI (SM208000). Can be trivial (any single column). Assign it only to the `MCP Access` role. Enable **Expose via OData**.
-- **User assignment:** Assign the `MCP Access` role to users who should have AI assistant access.
+### Acumatica Access-Gate Prerequisites:
+- **Canary GI:** Create `MCPAccess` GI (SM208000; name configurable via `ACUMATICA_CANARY_GI`). Can be trivial (any single column). Enable **Expose via OData**. The login access gate checks whether the user can *read* it — it does **not** check role membership.
+- **Restrict read access (recommended: a marker role):** Create `MCP Access` role (SM201005, no permissions), assign the `MCPAccess` GI only to that role, and assign the role to users who should have AI assistant access. Any mechanism that controls OData read access to the GI works.
 
 ### GI Gate Registry (activates the GI opt-in gate — strongly recommended for data correctness, 0.37.0):
 - **Feed GIs:** `MCPGIs` (one row per exposed GI) and `MCPGIFields` (one row per exposed GI's output column), both **Exposed via OData**, both parameter-free, and **neither tagged `ExposedtoMCP`**. Provided in `acumatica/` (`MCPGIs.xml`/`MCPGIFields.xml`) — import on SM208000 rather than hand-building. See "GI Tool Gating & Registry".
@@ -330,7 +329,7 @@ When the user says **"close session"**, perform all of the following:
 ## Known Issues / Tech Debt
 
 - **User identity retrieval:** The OIDC `/identity/connect/userinfo` endpoint (with `openid profile email` scopes) is the primary method. Falls back to `/entity/auth/25.200.001/UserSecurityInfo` which may not exist on all instances. If both fail, username defaults to a UUID-based key (breaks token reuse across sessions).
-- **Acumatica system entities not available via contract API:** `User`, `UserRole`, and screen-based API (`/entity/Default/.../screen/SM201010`) all return 404 on SaaS instances. The canary GI approach for role checking was adopted because of this limitation.
+- **Acumatica system entities not available via contract API:** `User`, `UserRole`, and screen-based API (`/entity/Default/.../screen/SM201010`) all return 404 on SaaS instances. The canary GI approach for the access gate was adopted because of this limitation (there's no API to query role membership).
 - **`$select` on some entities causes Acumatica 500:** Some entities (e.g., Payment) return internal server errors when `$select` is used with certain field names. The `acumatica_list_entities` tool auto-retries without `$select` when this occurs.
 - **`substringof(...) eq true` silently returns `[]`:** Acumatica's contract-REST `$filter` parser returns an empty set (HTTP 200, no error) for a boolean string function compared to a literal — `substringof('X', F) eq true` / `startswith(...) eq true` / `endswith(...) eq true` — but the *bare* function works. Models habitually append `eq true` (valid OData v3). `normalizeODataFilter()` (`src/lib/odata-filter.ts`) strips it server-side for both `acumatica_list_entities` and `acumatica_run_inquiry`. `eq false` is left verbatim — the only equivalent negation (`not substringof(...)`) 500s on the contract API. NOT a transport/encoding bug (an early parens-encoding hypothesis was disproven live).
 - **Complex document entities can't be server-side `$filtered` on non-key fields:** PurchaseOrder, Shipment, PhysicalInventoryCount (and any filter that reaches a child collection, e.g. `StockItem/CrossReferences/AlternateID`) fail in two ways — (A) HTTP 500 from the OData filter binder (`CannotOptimizeException`, "type conversions not supported", "not a single value", "key not present") or (B) a *silent* `[]` even when matching rows exist (e.g. `substringof` on PurchaseOrder `VendorID`). A keyed filter (`OrderNbr`/`ShipmentNbr eq '...'`, topN=1) is optimizable and works; broad search must use a Generic Inquiry. `getFilterErrorKind()` (`src/lib/complex-entities.ts`) classifies mode-A 500s into a structured `filterNotApplicable` error; mode-B empties on the known-list entities get a `possibleFalseNegative` warning so the model doesn't conclude "no such record exists." The known-list is hardcoded — see `docs/upgrading-acumatica.md` §7.
@@ -372,8 +371,8 @@ When the user says **"close session"**, perform all of the following:
 - [x] CIMD support enabled alongside DCR, OpenID Connect discovery endpoint added (0.15.0)
 
 ### Completed — Access Control & Governance (0.19.0)
-- [x] Role gate via canary GI (`MCPAccess` GI assigned to `MCP Access` role, queried via OData)
-- [x] Consent interstitial page between role check and MCP session activation
+- [x] Access gate via canary GI (readability of `MCPAccess` GI checked over OData; role membership never queried)
+- [x] Consent interstitial page between access check and MCP session activation
 - [x] Sensitive field redaction (pattern-based, configurable via REDACT_PATTERNS/REDACT_SKIP)
 - [x] Enhanced audit logging (username in all entries, auth events, redaction events)
 - [x] OIDC userinfo for identity (openid profile email scopes)

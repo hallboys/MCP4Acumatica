@@ -37,7 +37,7 @@ The MCP4Acumatica is a remote [Model Context Protocol](https://modelcontextproto
 │  │  Routes:                         │       │
 │  │  /authorize  - Acumatica redirect│       │
 │  │  /callback   - Token exchange +  │       │
-│  │               role gate          │       │
+│  │               access gate        │       │
 │  │  /consent    - AI data consent   │       │
 │  │  /health     - Health check      │       │
 │  │  /           - Landing page      │       │
@@ -87,7 +87,7 @@ This layer is transparent to the MCP tools. By the time a request reaches the Mc
 A [Hono](https://hono.dev) application that handles the Acumatica OAuth 2.0 authorization code flow:
 
 1. **`/authorize`** -- Builds the Acumatica OAuth authorization URL with `scope=api openid profile email offline_access` and redirects the user to Acumatica's login page
-2. **`/callback`** -- Receives the authorization code from Acumatica, exchanges it for access + refresh tokens, identifies the user via OIDC userinfo, performs the **role gate check** (see below), and redirects to the consent page
+2. **`/callback`** -- Receives the authorization code from Acumatica, exchanges it for access + refresh tokens, identifies the user via OIDC userinfo, performs the **access gate check** (see below), and redirects to the consent page
 3. **`/consent`** (GET) -- Displays the **consent interstitial** page explaining AI data processing, audit logging, and field redaction
 4. **`/consent`** (POST) -- User acknowledges the consent; tokens are stored in KV and the MCP OAuth flow completes
 5. **`/health`** -- Returns server status
@@ -164,10 +164,10 @@ MCP Client (Claude)                Worker                      Acumatica
        │                             │──────────────────────────>  │
        │                             │  <── username, display name │
        │                             │                             │
-       │                             │  9. Role gate: query        │
+       │                             │  9. Access gate: query      │
        │                             │     MCPAccess canary GI     │
        │                             │──────────────────────────>  │
-       │                             │  <── 200 (has role) or      │
+       │                             │  <── 200 (can read) or      │
        │                             │      403 (denied)           │
        │                             │                             │
        │                             │  10. If denied → 403 page   │
@@ -194,7 +194,7 @@ MCP Client (Claude)                Worker                      Acumatica
 - **Token refresh.** When an access token expires, the server uses the refresh token to get a new one automatically. If the refresh token itself is dead (expired/rotated/revoked), the server revokes the MCP grant so the client transparently re-authenticates rather than failing permanently.
 - **API-user seats.** Each active user consumes one Acumatica API-user seat (via the plain `api` scope), auto-released ~1 hour after their last token issuance. See [Acumatica Session & License Model](#acumatica-session--license-model) for how this interacts with the instance's license limits.
 - **Acumatica is the sole identity provider.** No separate identity layer.
-- **Role gate before access.** After login, a canary GI check ensures the user has the required Acumatica role (see Access Control below).
+- **Access gate before access.** After login, a canary GI check verifies the user may use MCP (see Access Control below).
 - **Consent required.** Users must acknowledge an AI data processing consent page before the MCP session activates.
 
 ---
@@ -211,31 +211,30 @@ MCP Client (Claude)                Worker                      Acumatica
 
 Acumatica's role-based access control governs what data each user can access -- if a user can't see a record in Acumatica's UI, they can't access it through the MCP server. On top of that, the MCP server adds its own access control layer:
 
-#### Role Gate (Canary GI)
+#### Access Gate (Canary GI)
 
-Before a user can access the MCP server, the `/callback` handler checks whether they belong to a specific Acumatica role. This is implemented using a **canary Generic Inquiry (GI)** approach:
+Before a user can access the MCP server, the `/callback` handler runs an **access gate**. It never inspects Acumatica role membership — it uses a **canary Generic Inquiry (GI)** approach, asking only "can this user's token read one designated GI?":
 
 1. A trivial GI named `MCPAccess` is created in Acumatica (SM208000). Its content is irrelevant -- it can be any single column.
-2. The `MCPAccess` GI is assigned **only** to the `MCP Access` role in Acumatica.
+2. Read access to the `MCPAccess` GI is restricted to the users who should have AI access. Assigning it only to a marker `MCP Access` role is the recommended way, but any mechanism that controls OData read access to the GI works.
 3. The GI is enabled for **OData** exposure.
 4. During login, the server queries the GI via OData: `GET /t/{tenant}/api/odata/gi/MCPAccess?$top=1`
-5. If the response is **200**, the user has the role and may proceed.
-6. If the response is **403**, the user does not have the role and sees an access denied page directing them to contact their Acumatica administrator.
+5. If the response is **200**, the user can read the GI and may proceed.
+6. If the response is **403**, the user has no access and sees an access denied page directing them to contact their Acumatica administrator.
 
-This approach avoids exposing user/role membership data -- the GI content itself is never used. It works reliably across Acumatica SaaS instances where direct user/role API endpoints are not available.
+This approach avoids exposing user/role membership data -- the GI content itself is never used, and the server issues no query against the User/Role tables (which are not available over the API on SaaS instances anyway). Because the check is purely GI-readability, you are free to gate the GI with whatever access-control mechanism your security team already uses.
 
-The required role name defaults to `MCP Access` and is configurable via the `ACUMATICA_MCP_ROLE` environment variable.
+The canary GI name defaults to `MCPAccess` and is configurable via the `ACUMATICA_CANARY_GI` environment variable.
 
-If the canary GI query returns 404 or a 5xx error (rather than 200 or 403), the server treats it as a **misconfiguration** -- not a permission denial. The user sees a "Configuration Error" page pointing at the likely cause (missing GI, wrong tenant, unreachable instance, OData not enabled on the GI). The event is logged as `login_denied` with `reason: role_check_misconfigured` so an admin sees why. Previously all non-200 responses looked identical to "user missing role", which hid real outages behind an access-denied screen.
+If the canary GI query returns 404 or a 5xx error (rather than 200 or 403), the server treats it as a **misconfiguration** -- not a permission denial. The user sees a "Configuration Error" page pointing at the likely cause (missing GI, wrong tenant, unreachable instance, OData not enabled on the GI). The event is logged as `login_denied` with `reason: access_check_misconfigured` so an admin sees why. Previously all non-200 responses looked identical to "user has no access", which hid real outages behind an access-denied screen.
 
 **Acumatica setup required:**
-- **Role:** Create `MCP Access` in Acumatica (SM201005). No screen permissions are needed -- it is purely a marker role.
-- **Generic Inquiry:** Create `MCPAccess` in Acumatica (SM208000) with any trivial query. Assign it only to the `MCP Access` role. Enable **Expose via OData**.
-- **Users:** Assign the `MCP Access` role to each user who should have AI assistant access.
+- **Generic Inquiry:** Create `MCPAccess` in Acumatica (SM208000) with any trivial query. Enable **Expose via OData**.
+- **Restrict who can read it (recommended: a marker role):** Create `MCP Access` in Acumatica (SM201005) with no screen permissions, assign the `MCPAccess` GI only to that role, and assign the role to each user who should have AI assistant access.
 
 #### Consent Interstitial
 
-Users who pass the role gate are shown a consent page before the MCP session activates. The page explains that:
+Users who pass the access gate are shown a consent page before the MCP session activates. The page explains that:
 
 - Acumatica data will be sent to an external AI model for processing
 - All data access is logged for audit purposes
