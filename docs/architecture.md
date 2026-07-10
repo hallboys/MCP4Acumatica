@@ -15,59 +15,63 @@ The MCP4Acumatica is a remote [Model Context Protocol](https://modelcontextproto
           │ MCP over streamable-http
           │ (Bearer token auth)
           ▼
-┌─────────────────────────────────────────────┐
-│  Cloudflare Worker                          │
-│                                             │
-│  ┌──────────────────────────────────┐       │
-│  │  OAuthProvider                   │       │
-│  │  (@cloudflare/workers-oauth-     │       │
-│  │   provider)                      │       │
-│  │                                  │       │
-│  │  Endpoints:                      │       │
-│  │  /register   - DCR               │       │
-│  │  /authorize  - Start OAuth flow  │       │
-│  │  /callback   - Handle redirect   │       │
-│  │  /token      - Issue tokens      │       │
-│  └──────────────────────────────────┘       │
-│                                             │
-│  ┌──────────────────────────────────┐       │
-│  │  Hono App (defaultHandler)       │       │
-│  │  AcumaticaAuthHandler            │       │
-│  │                                  │       │
-│  │  Routes:                         │       │
-│  │  /authorize  - Acumatica redirect│       │
-│  │  /callback   - Token exchange +  │       │
-│  │               access gate        │       │
-│  │  /consent    - AI data consent   │       │
-│  │  /health     - Health check      │       │
-│  │  /           - Landing page      │       │
-│  └──────────────────────────────────┘       │
-│                                             │
-│  ┌──────────────────────────────────┐       │
-│  │  McpAgent Durable Object         │       │
-│  │  AcumaticaMcpServer (apiHandler) │       │
-│  │                                  │       │
-│  │  /mcp  - MCP protocol endpoint   │       │
-│  │  /sse  - SSE transport           │       │
-│  │                                  │       │
-│  │  48 tools registered in init()   │       │
-│  └──────────────┬───────────────────┘       │
-│                 │                            │
-│  ┌──────────────┴───────────────────┐       │
-│  │  KV Namespaces                   │       │
-│  │  TOKEN_STORE - per-user tokens   │       │
-│  │               + OAuth state      │       │
-│  └──────────────────────────────────┘       │
-└─────────────────────┬───────────────────────┘
-                      │ HTTPS (Bearer token)
-                      ▼
-┌─────────────────────────────────────────────┐
-│  Acumatica 25R2 SaaS Instance              │
-│  Contract-Based REST API                    │
-│  /entity/Default/25.200.001/...            │
-│                                             │
-│  Per-user access based on Acumatica roles   │
-└─────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  Cloudflare Worker                                          │
+│                                                             │
+│  ┌────────────────────────────────┐                        │
+│  │  OAuthProvider                 │  OAuth 2.1 AS for the   │
+│  │  (@cloudflare/workers-oauth-   │  MCP client.            │
+│  │   provider)                    │  /authorize /callback   │
+│  │  CIMD (preferred) + DCR        │  /token /register       │
+│  └────────────────────────────────┘                        │
+│                                                             │
+│  ┌────────────────────────────────┐  ┌──────────────────┐  │
+│  │  Hono App (defaultHandler)     │  │  Docs / Admin     │  │
+│  │  AcumaticaAuthHandler          │  │  /docs            │  │
+│  │  /authorize → Acumatica login  │  │  /docs/admin      │  │
+│  │  /callback  → token exchange   │  │  (log viewer,     │  │
+│  │              + access gate     │  │   settings,       │  │
+│  │  /consent   → AI data consent  │  │   preflight)      │  │
+│  │  /health  /  (landing)         │  └──────────────────┘  │
+│  └────────────────────────────────┘                        │
+│                                                             │
+│  ┌────────────────────────────────┐                        │
+│  │  McpAgent Durable Object       │  apiHandler.           │
+│  │  AcumaticaMcpServer            │  One instance          │
+│  │  (binding MCP_OBJECT)          │  per MCP session.      │
+│  │  /mcp  /sse                    │  48 tools reg'd in     │
+│  │                                │  init(); alarm-based   │
+│  │                                │  log buffer → R2.      │
+│  └───┬───────────────────────┬────┘                        │
+│      │ token get/refresh      │                            │
+│      ▼                        │                            │
+│  ┌────────────────────────┐   │                            │
+│  │  TokenManager DO       │   │  One instance per USER     │
+│  │  (binding TOKEN_MANAGER)│  │  (idFromName(username)).   │
+│  │  serializes per-user   │   │  Authoritative token copy; │
+│  │  refresh-token rotation│   │  KV = write-through backup.│
+│  └───────────┬────────────┘   │                            │
+│              │                 │                           │
+│  ┌───────────┴─────────────────┴──────────────┐            │
+│  │  KV (TOKEN_STORE / OAUTH_KV — one namespace)│            │
+│  │  user tokens · OAuth state · cache · config │            │
+│  ├─────────────────────────────────────────────┤           │
+│  │  R2                                         │            │
+│  │  mcp4acumatica_logs  (audit logs / Logpush) │            │
+│  │  INDEX_STORE         (schema-knowledge idx) │            │
+│  └─────────────────────────────────────────────┘           │
+└───────────────┬─────────────────────────┬───────────────────┘
+                │ Contract REST            │ OData
+                │ (Bearer token)           │ (access gate +
+                ▼                          ▼  GI tools)
+┌─────────────────────────────────────────────────────────────┐
+│  Acumatica 25R2 SaaS Instance                                │
+│  Contract-Based REST API   /entity/{endpoint}/{version}/...  │
+│    (endpoint defaults to Default; version = 25.200.001)      │
+│  OData GI endpoint         /t/{tenant}/api/odata/gi/...       │
+│                                                              │
+│  Per-user access based on the user's Acumatica role          │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## Components
@@ -445,38 +449,50 @@ Complex types (`z.record()`, `z.unknown()`, `z.number()`) cause MCP SDK JSON Sch
 
 ```
 src/
-├── index.ts                       # Entry point, OAuthProvider + McpAgent DO
+├── index.ts                       # Entry point: OAuthProvider + McpAgent DO; re-exports TokenManager
+├── token-manager.ts               # TokenManager DO — per-user token-refresh serializer
 ├── admin/
-│   └── admin-handler.ts           # Admin console: auth, settings, log viewer
+│   └── admin-handler.ts           # Admin console: auth, settings, log viewer, preflight
 ├── auth/
-│   ├── acumatica-auth-handler.ts  # Hono app: OAuth flow, health, landing
-│   └── acumatica-oauth.ts         # Token retrieval + refresh (via AppEnv.store)
+│   ├── acumatica-auth-handler.ts  # Hono app: OAuth flow, access gate, health, landing
+│   └── acumatica-oauth.ts         # Token getter shim (→ AppEnv.tokenProvider) + refresh helper
+├── docs/
+│   └── docs-handler.ts            # Hono sub-app: renders markdown docs, mounts admin
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client, unwrapFields()
+│   ├── odata-filter.ts            # normalizeODataFilter()
+│   ├── gi-registry.ts             # GI gate + curated-schema assembly (pure leaf)
+│   ├── gi-registry-build.ts       # getGiRegistry() — lazy registry build + KV cache
+│   ├── gi-rows.ts                 # cleanGiRow/cleanGiRows
+│   ├── complex-entities.ts        # complex-entity list + getFilterErrorKind()
 │   ├── config.ts                  # KV-backed runtime config (via IKeyValueStore)
 │   ├── kv-store.ts                # IKeyValueStore interface
+│   ├── token-provider.ts          # ITokenProvider interface + TokenResult
 │   ├── metadata-cache.ts          # KV-backed cache (via IKeyValueStore)
+│   ├── blob-store.ts / index-store.ts / schema-search.ts  # schema-knowledge index access
 │   ├── rate-limiter.ts            # Concurrent + per-minute rate limits
-│   └── logger.ts                  # Structured JSON audit logging
+│   ├── preflight.ts               # Config diagnostics (admin page + /callback mapping)
+│   ├── logger.ts                  # Structured JSON audit logging
+│   └── redact.ts                  # Pattern-based sensitive-field redaction
 ├── platform/
-│   └── cloudflare-kv-store.ts     # CF adapter for IKeyValueStore
-├── tools/                         # 42 tools across 32 handler files
+│   ├── cloudflare-kv-store.ts     # CF adapter for IKeyValueStore
+│   ├── cloudflare-r2-blob-store.ts # CF adapter for IBlobStore (index bucket)
+│   └── do-token-provider.ts       # DOTokenProvider — ITokenProvider over TokenManager
+├── tools/                         # Registry-driven getters + utility + schema-knowledge handlers
+│   ├── getter-registry.ts         # 38 per-entity acumatica_get_* tools as data + runGetter
+│   ├── getter-errors.ts           # endpointAware404Message()
 │   ├── entity-list.ts             # acumatica_list_entities
 │   ├── entity-schema.ts           # acumatica_describe_entity
 │   ├── generic-inquiries.ts       # acumatica_run_inquiry
 │   ├── generic-inquiry-discovery.ts # acumatica_list_generic_inquiries, _describe_inquiry
 │   ├── clear-cache.ts             # acumatica_clear_cache
-│   ├── customers.ts               # acumatica_get_customer
-│   ├── vendors.ts                 # acumatica_get_vendor
-│   ├── ... (29 more handler files)
-│   └── warehouses.ts              # acumatica_get_warehouse
-├── types/
-│   └── acumatica.ts               # TypeScript types, AppEnv, Env, AuthProps
-docs/
-├── tool-reference.md              # Complete tool specification
-├── example-prompts.md             # Example prompts by use case
-├── odata-filtering.md             # OData query parameter guide
-└── architecture.md                # This file
+│   ├── schema-discovery.ts        # acumatica_search_schema, _get_schema_entity, _list_schema_entities
+│   └── gi-explain.ts              # acumatica_explain_gi_xml
+└── types/
+    └── acumatica.ts               # TypeScript types, AppEnv, Env, AuthProps
+docs/                              # Markdown docs served at /docs (tool-reference, example-prompts,
+                                   # odata-filtering, generic-inquiries, schema-discovery,
+                                   # self-hosting-guide, upgrading-acumatica, architecture — this file)
 ```
 
 ---
@@ -488,8 +504,8 @@ docs/
 | Component | Service |
 |-----------|---------|
 | Compute | Cloudflare Workers |
-| State | Durable Objects (per-session) |
-| Storage | Cloudflare KV (tokens, OAuth state) |
+| State | Durable Objects — `MCP_OBJECT` (per session) + `TOKEN_MANAGER` (per user) |
+| Storage | Cloudflare KV (tokens, OAuth state, cache, config) + R2 (audit logs, schema index) |
 | DNS/TLS | Cloudflare (automatic) |
 
 ### Configuration
@@ -499,7 +515,7 @@ docs/
 | Environment variables | `wrangler.jsonc` `vars` | `ACUMATICA_URL`, `ACUMATICA_ENDPOINT_VERSION` |
 | Secrets | `wrangler secret put` | `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY` |
 | KV bindings | `wrangler.jsonc` `kv_namespaces` | `TOKEN_STORE`, `OAUTH_KV` (same namespace) |
-| DO binding | `wrangler.jsonc` `durable_objects` | `MCP_OBJECT` (must be this name) |
+| DO bindings | `wrangler.jsonc` `durable_objects` | `MCP_OBJECT` (must be this name), `TOKEN_MANAGER` |
 
 ### Deploy Command
 
@@ -528,17 +544,23 @@ Defined in `src/lib/kv-store.ts`, this interface provides four operations:
 
 | Type | Purpose | Used By |
 |------|---------|---------|
-| `AppEnv` | Portable: Acumatica config strings + `store: IKeyValueStore` | All 44 tool handlers, `AcumaticaClient`, `config.ts`, `metadata-cache.ts`, `acumatica-oauth.ts` |
-| `Env` | CF-specific: extends `AppEnv` with `TOKEN_STORE`, `OAUTH_KV`, `MCP_OBJECT`, `OAUTH_PROVIDER`, `R2Bucket` | `index.ts`, `acumatica-auth-handler.ts`, `admin-handler.ts` |
+| `AppEnv` | Portable: Acumatica config strings + `store: IKeyValueStore` | All tool handlers, `AcumaticaClient`, `config.ts`, `metadata-cache.ts`, `acumatica-oauth.ts` |
+| `Env` | CF-specific: the CF bindings (`TOKEN_STORE`, `OAUTH_KV`, `MCP_OBJECT`, `TOKEN_MANAGER`, `INDEX_STORE`, `OAUTH_PROVIDER`, R2) plus the Acumatica connection strings from `wrangler.jsonc` | `index.ts`, `acumatica-auth-handler.ts`, `admin-handler.ts` |
 
-Since `Env extends AppEnv`, the Cloudflare entry point (`index.ts`) passes `this.env` (typed `Env`) to tool handlers (typed `AppEnv`) with no cast needed.
+`Env` does **not** extend `AppEnv`. In `AcumaticaMcpServer.init()` the entry point constructs a fresh `AppEnv` object from the CF bindings (see the Cloudflare Adapter below) and passes *that* to tool handlers — it never hot-patches a `store` onto `this.env`, because the CF runtime may share that env reference across requests in the same isolate.
 
 ### Cloudflare Adapter
 
-`CloudflareKVStore` (`src/platform/cloudflare-kv-store.ts`) wraps a `KVNamespace` binding as an `IKeyValueStore`. It is a thin passthrough -- every method maps 1:1 to the KV API. Initialized in `AcumaticaMcpServer.init()`:
+`CloudflareKVStore` (`src/platform/cloudflare-kv-store.ts`) wraps a `KVNamespace` binding as an `IKeyValueStore`. It is a thin passthrough -- every method maps 1:1 to the KV API. It is wired into the fresh `AppEnv` built in `AcumaticaMcpServer.init()` (alongside the `DOTokenProvider` and, when the index bucket is bound, `CloudflareR2BlobStore`):
 
 ```typescript
-this.env.store = new CloudflareKVStore(this.env.TOKEN_STORE);
+this.appEnv = {
+  ACUMATICA_URL: this.env.ACUMATICA_URL,
+  // ...other config strings...
+  store: new CloudflareKVStore(this.env.TOKEN_STORE),
+  tokenProvider: new DOTokenProvider(this.env.TOKEN_MANAGER),
+  indexStore: this.env.INDEX_STORE ? new CloudflareR2BlobStore(this.env.INDEX_STORE) : undefined,
+};
 ```
 
 ### Self-Hosting
@@ -567,11 +589,13 @@ Write operations require careful validation, conflict handling, and business rul
 
 ### Why Durable Objects?
 
-Each MCP session needs persistent state (tool registry, user context). Durable Objects provide:
+The honest answer: **remote MCP is a stateful, session-scoped protocol, and a Durable Object is Cloudflare's only stateful, consistently-addressable compute primitive — so the `agents` SDK's `McpAgent` *is* a Durable Object.** Putting the MCP server in a DO is not an à-la-carte choice; it's how `McpAgent.serve("/mcp")` is built (which is also why the binding must be named `MCP_OBJECT`). The reason the SDK is built that way:
 
-1. Per-session isolation
-2. In-memory tool registration (no re-registration per request)
-3. Consistent routing (all requests for a session go to the same DO instance)
+1. **The transport is stateful.** An MCP connection over streamable-http/SSE is a *session*: an `initialize` handshake, then a long-lived SSE stream plus follow-up POSTs that must be correlated to that same stream. Plain Workers are stateless and ephemeral — consecutive requests can land on different, short-lived isolates. A DO has a **stable address** (its ID), so every message in one logical session reaches the same instance.
+2. **There's live per-session state to hold.** `init()` registers all 48 tools once, and the instance carries the authenticated user (`this.props.acumaticaUsername`), the `McpServer` object, and the log buffer — none of which you'd want to rebuild per request.
+3. **It needs durable storage + alarms.** The audit-log buffer is persisted to `ctx.storage` and flushed on a DO **alarm** — a mechanism only Durable Objects provide.
+
+The per-session isolation, cached tool registry, and consistent routing are welcome consequences, not the primary reason. Note the contrast with the **`TokenManager`** DO, which uses the *same* primitive for a different property: it is keyed per-**user** (`idFromName(username)`), not per-session, specifically to serialize refresh-token rotation across a user's concurrent sessions.
 
 ### Why unwrapFields()?
 
@@ -581,6 +605,6 @@ Acumatica's contract-based REST API wraps every field value as `{value: X}`. Thi
 
 Rather than abstracting the entire Worker infrastructure (OAuth provider, Durable Objects, auth flow), only the storage layer is abstracted via `IKeyValueStore` + `AppEnv`. This is because:
 
-1. **Tools are the reusable part.** All 44 tool handlers and the Acumatica client only need config strings and a key-value store. They never touch OAuth, DOs, or R2.
+1. **Tools are the reusable part.** All 48 tools and the Acumatica client only need config strings and a key-value store. They never touch OAuth, DOs, or R2.
 2. **Auth varies fundamentally by platform.** A Node.js self-host would use Express + Passport or skip auth entirely. Abstracting the auth handler would create an interface that no two implementations share.
 3. **Minimal disruption.** Tool handler changes were limited to import swaps (`Env` -> `AppEnv`). No function bodies changed.
