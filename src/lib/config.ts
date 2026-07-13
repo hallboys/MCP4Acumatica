@@ -80,6 +80,17 @@ export const CONFIG_KEYS: readonly ConfigKeyDef[] = [
     description: "Maximum number of records returned per API query (default: 1000)",
     validate: validatePositiveInt(10_000),
   },
+  {
+    key: "writes_enabled",
+    envVar: "ACUMATICA_WRITES_ENABLED",
+    label: "Enable Write Tools",
+    description: "Set to 'true' to enable mutating tools (Customer create/update). Off by default. Changes take effect when the next DO instance starts.",
+    validate: (value: string) => {
+      const v = value.trim().toLowerCase();
+      if (v === "true" || v === "false") return null;
+      return "Must be 'true' or 'false'.";
+    },
+  },
 ] as const;
 
 /** Validate a config value against its key's rules. Returns null on success or an error message. */

@@ -8,7 +8,7 @@ Each user authenticates with their own Acumatica credentials. Their Acumatica ro
 
 ## Features
 
-- **48 tools** -- 38 read-only lookups + 6 utility/discovery + 4 schema-knowledge tools (see [Available Tools](#available-tools))
+- **49 tools** -- 38 read-only lookups + 6 utility/discovery + 4 schema-knowledge + 1 write tool (Customer create/update, disabled by default) (see [Available Tools](#available-tools))
 - **Per-user OAuth** -- users log in with their Acumatica credentials (or SSO)
 - **Role-based access** -- Acumatica's security model governs what each user sees
 - **Access gate** -- only users who can read a designated canary Generic Inquiry can connect (restrict it however you like; a marker role such as `MCP Access` is the recommended way)
@@ -34,7 +34,7 @@ Claude (claude.ai / Desktop / API)
 |    (access gate + OIDC userinfo) |
 |    /consent   -> AI data consent |
 |    /token, /register (DCR)       |
-|    /mcp -> McpAgent DO (48 tools)|
+|    /mcp -> McpAgent DO (49 tools)|
 +---------------+------------------+
                 |  Bearer token (per-user)
                 v
@@ -216,7 +216,7 @@ If you change hostnames, remember to add the new `https://<host>/callback` to yo
 2. Click **Add Connector** and enter the URL: `https://<your-worker-url>/mcp`
 3. On first use, you'll be redirected to your Acumatica login page
 4. If your account can read the canary GI (i.e. you've been granted access), you'll see a consent page explaining AI data processing
-5. After acknowledging consent, Claude will have access to all 48 tools
+5. After acknowledging consent, Claude will have access to all 49 tools
 
 ### Claude Code (CLI)
 
@@ -324,7 +324,7 @@ When using the Anthropic API with MCP, point the MCP client to `https://<your-wo
 
 Detailed documentation is available in the [`docs/`](docs/) folder:
 
-- **[Tool Reference](docs/tool-reference.md)** -- Complete specification for all 48 tools with parameters and endpoints
+- **[Tool Reference](docs/tool-reference.md)** -- Complete specification for all 49 tools with parameters and endpoints
 - **[Example Prompts](docs/example-prompts.md)** -- Example prompts for Claude and other MCP clients organized by use case
 - **[OData Filtering Guide](docs/odata-filtering.md)** -- Guide to `$filter`, `$orderby`, `$select`, `$expand`, and `$top` query parameters
 - **[Generic Inquiries](docs/generic-inquiries.md)** -- Why GIs are gated for AI use, which GIs to expose, and how to enable the opt-in registry

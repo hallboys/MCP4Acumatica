@@ -550,6 +550,7 @@ adminApp.get("/settings", async (c) => {
     REDACT_PATTERNS: c.env.REDACT_PATTERNS,
     REDACT_SKIP: c.env.REDACT_SKIP,
     ACUMATICA_MAX_RECORDS: c.env.ACUMATICA_MAX_RECORDS,
+    ACUMATICA_WRITES_ENABLED: c.env.ACUMATICA_WRITES_ENABLED,
   };
 
   let rows = "";
@@ -631,6 +632,7 @@ adminApp.get("/settings/api", async (c) => {
     REDACT_PATTERNS: c.env.REDACT_PATTERNS,
     REDACT_SKIP: c.env.REDACT_SKIP,
     ACUMATICA_MAX_RECORDS: c.env.ACUMATICA_MAX_RECORDS,
+    ACUMATICA_WRITES_ENABLED: c.env.ACUMATICA_WRITES_ENABLED,
   };
 
   const result: Record<string, { value: string; source: string }> = {};

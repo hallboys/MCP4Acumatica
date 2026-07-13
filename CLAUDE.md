@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.39.1`
+- **Current tag:** `25R2-0.40.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -25,9 +25,10 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /token, /register (DCR+CIMD) │
 │    ├─ /docs → Documentation site │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ 48 tools (38 read-only  │
+│       ├─ 49 tools (38 read-only  │
 │       │   + 6 utility/discovery  │
-│       │   + 4 schema-knowledge)  │
+│       │   + 4 schema-knowledge   │
+│       │   + 1 write)             │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
                ▼
@@ -125,7 +126,8 @@ src/
 │   ├── docs-handler.ts            # Hono sub-app: renders markdown docs to HTML, mounts admin
 │   └── markdown.d.ts              # TypeScript declaration for .md text module imports
 ├── lib/
-│   ├── acumatica-client.ts        # HTTP client for Acumatica REST API
+│   ├── acumatica-client.ts        # HTTP client for Acumatica REST API (GET + PUT-as-upsert); re-exports field-transforms
+│   ├── field-transforms.ts        # wrapFields/unwrapFields — {value:X} wire-format round-trip (import-free leaf, unit-tested)
 │   ├── odata-filter.ts            # normalizeODataFilter() — strips `eq true` off substringof/startswith/endswith
 │   ├── gi-registry.ts             # GI opt-in gate + curated-schema assembly (pure leaf: checkGiGate, parseEdmxTypes, assembleRegistry)
 │   ├── gi-registry-build.ts       # getGiRegistry() — lazy registry build (caller's token) + KV cache (impure)
@@ -149,6 +151,8 @@ src/
 ├── tools/                         # Registry-driven getters + utility + schema-knowledge handlers
 │   ├── getter-registry.ts         # 38 per-entity `acumatica_get_*` tools as data (GETTER_TOOLS) + runGetter
 │   ├── getter-errors.ts           # endpointAware404Message() — endpoint-aware 404 re-messaging (import-free leaf, unit-tested)
+│   ├── writer-registry.ts         # write tools as data (WRITER_TOOLS) + runWriter (kill-switch, dry-run gate, allowlist, PUT, audit sink)
+│   ├── writer-validation.ts       # validateWriterPayload() — size/JSON/type + top-level & nested allowlist (import-free leaf, unit-tested)
 │   ├── entity-list.ts             # acumatica_list_entities (Utility)
 │   ├── entity-schema.ts           # acumatica_describe_entity (Utility)
 │   ├── generic-inquiries.ts       # acumatica_run_inquiry (Utility)
@@ -167,7 +171,9 @@ test/                              # Node built-in test runner (node --test, TS 
 ├── odata-filter.test.ts           # normalizeODataFilter regression (substringof eq true)
 ├── complex-entities.test.ts       # getFilterErrorKind / known-list / keyed-filter detection
 ├── getter-errors.test.ts          # endpointAware404Message (Default vs custom endpoint 404)
-└── gi-registry.test.ts            # checkGiGate semantics + cleanGiRow + parseEdmxTypes/assembleRegistry
+├── gi-registry.test.ts            # checkGiGate semantics + cleanGiRow + parseEdmxTypes/assembleRegistry
+├── field-transforms.test.ts       # wrapFields/unwrapFields round-trips (nested/array/idempotent/null)
+└── writer-validation.test.ts      # validateWriterPayload (size cap / JSON / type / top-level + nested allowlist)
 
 acumatica/                         # Acumatica-side setup package (Apache-2.0) for the GI exposure gate
 ├── MCP4Acumatica-AIDescription.zip # customization project: GIDesign/GIResult custom fields + SM208000 form
@@ -303,7 +309,7 @@ Before every commit, push, or tag:
 3. **Update version strings in documentation** — if the tag is changing, update the version in:
    - `CLAUDE.md` → `Current tag` field in Project Overview
    - `docs/tool-reference.md` → version in the opening paragraph
-   - `src/docs/docs-handler.ts` → `<span>v... &middot; 48 tools</span>` in the nav brand
+   - `src/docs/docs-handler.ts` → `<span>v... &middot; 49 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
    - `package.json` → `version` field
 4. **Update the upgrade guide if relevant** — if the change adds/alters anything version-coupled (a new instance-derived index, a hardcoded endpoint/entity, a cached artifact, the targeted-release prefix), update `docs/upgrading-acumatica.md` accordingly.
@@ -317,7 +323,7 @@ When the user says **"close session"**, perform all of the following:
 3. **Update version strings** in:
    - `CLAUDE.md` → `Current tag` field in Project Overview
    - `docs/tool-reference.md` → version in the opening paragraph
-   - `src/docs/docs-handler.ts` → `<span>v... &middot; 48 tools</span>` in the nav brand
+   - `src/docs/docs-handler.ts` → `<span>v... &middot; 49 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
    - `package.json` → `version` field
 4. **Update `CHANGELOG.md`** — prepend an entry for the new version (newest first; shown at `/docs/changelog`)
@@ -390,7 +396,7 @@ When the user says **"close session"**, perform all of the following:
 - [x] `runGetter` empty-string guard for required path-segment params
 
 ### High Priority — Features
-- [ ] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2)
+- [~] Add write tools: Create/update Sales Orders, Customers, Vendors (per project brief Phase 2) — write-tool infrastructure (`WRITER_TOOLS` registry + `runWriter`, kill-switch, dry-run gate, top-level & nested allowlist, R2-persisted mutation audit) + first tool `acumatica_create_or_update_customer` landed 0.40.0; Vendor / SalesOrder are one registry entry each
 - [ ] Add action tools: Release Invoice, Confirm Shipment (per project brief Phase 3)
 - [x] Transparent re-auth when refresh token expires — `ReauthRequiredError` revokes the MCP grant so the client silently re-runs OAuth instead of a manual disconnect/reconnect (0.32.0)
 

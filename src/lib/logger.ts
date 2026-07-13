@@ -70,6 +70,43 @@ export function logRedaction(
   }));
 }
 
+export interface MutationEntry {
+  timestamp: string;
+  tool: string;
+  acumaticaUsername: string;
+  entity: string;
+  /** Key of the created/updated record (e.g. CustomerID), if available. */
+  recordKey?: string;
+  /**
+   * Payload field names + (redacted) values that were sent to Acumatica.
+   * Values have already been run through name-based redaction before logging
+   * so sensitive fields (SSN, salary, etc.) do not appear in the audit trail.
+   */
+  fields: Record<string, unknown>;
+  /** True when this was a dry-run preview — no write was sent to Acumatica. */
+  dryRun: boolean;
+}
+
+/**
+ * Log an attempted mutation (write) tool call. Emitted for both dry-run
+ * previews and committed writes so every mutation attempt is in the trail.
+ * Field values are redacted by the caller before being passed here.
+ *
+ * `console.log` only reaches `wrangler tail`; Logpush does not capture DO
+ * traces (that's why `writeLogsToR2` exists). So this returns the log record
+ * it emitted, letting the DO also buffer it to R2 for the durable audit trail
+ * / admin console — the same split used for `tool_invocation` in index.ts.
+ */
+export function logMutation(entry: MutationEntry): Record<string, unknown> {
+  const record = {
+    level: "info",
+    type: "write_mutation",
+    ...entry,
+  };
+  console.log(JSON.stringify(record));
+  return record;
+}
+
 /**
  * Write structured log entries directly to R2 as NDJSON.
  * Used by the Durable Object to persist tool logs that Logpush
