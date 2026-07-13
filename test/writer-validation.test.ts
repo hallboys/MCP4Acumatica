@@ -12,6 +12,9 @@ import assert from "node:assert";
 import { validateWriterPayload } from "../src/tools/writer-validation.ts";
 
 const ALLOWED: readonly string[] = ["CustomerName", "CustomerClass", "Status", "Email", "Phone1", "MainContact"];
+const NESTED: Readonly<Record<string, readonly string[]>> = {
+  MainContact: ["Email", "Phone1", "Address1", "City", "State", "PostalCode", "Country"],
+};
 const MAX = 8_000;
 
 // ── Happy path ────────────────────────────────────────────────────────────────
@@ -150,4 +153,71 @@ test("mixed allowed + disallowed fields: disallowed fields are rejected", () => 
   );
   assert.ok(!result.ok);
   if (!result.ok) assert.match(result.error, /disallowed/);
+});
+
+// ── Nested allowlist ────────────────────────────────────────────────────────────
+
+test("nested object with only allowed inner fields returns ok", () => {
+  const result = validateWriterPayload(
+    JSON.stringify({ CustomerName: "Acme", MainContact: { Email: "a@b.com", City: "Austin" } }),
+    ALLOWED,
+    MAX,
+    NESTED
+  );
+  assert.ok(result.ok);
+});
+
+test("nested object with a disallowed inner field is rejected", () => {
+  const result = validateWriterPayload(
+    JSON.stringify({ MainContact: { Email: "a@b.com", SSN: "123-45-6789" } }),
+    ALLOWED,
+    MAX,
+    NESTED
+  );
+  assert.ok(!result.ok);
+  if (!result.ok) {
+    assert.match(result.error, /MainContact/);
+    assert.match(result.error, /SSN/);
+  }
+});
+
+test("nested key present but not an object is rejected", () => {
+  const result = validateWriterPayload(
+    JSON.stringify({ MainContact: "not-an-object" }),
+    ALLOWED,
+    MAX,
+    NESTED
+  );
+  assert.ok(!result.ok);
+  if (!result.ok) assert.match(result.error, /must be a JSON object/);
+});
+
+test("nested key as an array is rejected", () => {
+  const result = validateWriterPayload(
+    JSON.stringify({ MainContact: [{ Email: "a@b.com" }] }),
+    ALLOWED,
+    MAX,
+    NESTED
+  );
+  assert.ok(!result.ok);
+  if (!result.ok) assert.match(result.error, /must be a JSON object/);
+});
+
+test("nested allowlist is only checked when the sub-entity is supplied", () => {
+  const result = validateWriterPayload(
+    JSON.stringify({ CustomerName: "Acme" }),
+    ALLOWED,
+    MAX,
+    NESTED
+  );
+  assert.ok(result.ok);
+});
+
+test("without a nested allowlist, inner fields are not validated (back-compat)", () => {
+  const result = validateWriterPayload(
+    JSON.stringify({ MainContact: { anything: "goes" } }),
+    ALLOWED,
+    MAX
+  );
+  assert.ok(result.ok);
 });

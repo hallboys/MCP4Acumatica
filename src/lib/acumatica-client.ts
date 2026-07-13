@@ -202,9 +202,11 @@ export class AcumaticaClient {
    * The request body must already be wrapped in Acumatica's {value: X}
    * field format — use wrapFields() before calling this method.
    *
-   * The 401-retry re-sends the body, which is safe for PUT-by-key (idempotent).
-   * Do NOT use this for POST-style create-without-key operations where a
-   * retry could double-create a record.
+   * The 401-retry re-sends the body. This is safe even for keyless create
+   * (auto-number) because a 401 means the request was rejected at auth before
+   * any write occurred — so the retry cannot double-create a record. (A retry
+   * would only be unsafe after a request that Acumatica had already processed,
+   * which a 401 is not.)
    */
   async put<T>(
     path: string,
@@ -220,8 +222,8 @@ export class AcumaticaClient {
       let token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
       let response = await this.doWrite(url, token, "PUT", requestBody);
 
-      // Retry once on 401 (token may have just expired).
-      // PUT is idempotent-by-key so retrying is safe.
+      // Retry once on 401 (token may have just expired). Safe even for keyless
+      // create: a 401 is an auth rejection before any write, so no double-create.
       if (response.status === 401) {
         token = await getAcumaticaTokenForUser(this.env, this.acumaticaUsername);
         response = await this.doWrite(url, token, "PUT", requestBody);

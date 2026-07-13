@@ -20,6 +20,13 @@ export interface WriterToolSpec {
   description: string;
   /** Acumatica entity name used as the first URL path segment. */
   entity: string;
+  /**
+   * Field name holding the record key in the PUT response (e.g. "CustomerID",
+   * "OrderNbr", "ReferenceNbr"). Used only to surface `recordKey` in the result
+   * + audit log. Defaults to `${entity}ID` when omitted — correct for Customer
+   * but wrong for entities keyed differently, so set it explicitly per entity.
+   */
+  keyField?: string;
   /** Optional $expand value (comma-separated sub-entity names to include in the response). */
   expand?: string;
   /**
@@ -27,11 +34,18 @@ export interface WriterToolSpec {
    * list is rejected before the payload ever reaches Acumatica. This is the
    * primary safety gate: write tools should be conservative in what they accept
    * rather than passing arbitrary model-generated JSON to a live ERP.
-   *
-   * Nested sub-entity keys (e.g. "MainContact") must also be listed here; their
-   * own inner fields are not separately validated at this layer.
    */
   allowedFields: readonly string[];
+  /**
+   * Allowed inner field names for nested sub-entity objects, keyed by the
+   * top-level field name (which must also appear in `allowedFields`). A nested
+   * object whose key is listed here is validated against its inner allowlist;
+   * an inner field not in the list is rejected before reaching Acumatica. A
+   * top-level key that is present in `allowedFields` but absent here may not be
+   * an object. This closes the allowlist to the sub-entity level rather than
+   * accepting arbitrary inner fields.
+   */
+  nestedAllowedFields?: Readonly<Record<string, readonly string[]>>;
 }
 
 // ── Registry ──────────────────────────────────────────────────────────────────
@@ -52,6 +66,7 @@ export const WRITER_TOOLS: readonly WriterToolSpec[] = [
       "Call without `confirm` first to preview what would be written (dry-run). Pass `confirm: 'true'` to commit. " +
       "Allowed top-level fields: CustomerID, CustomerName, CustomerClass, Status, Email, Phone1, MainContact (nested: Email, Phone1, Address1, Address2, City, State, PostalCode, Country).",
     entity: "Customer",
+    keyField: "CustomerID",
     expand: "MainContact",
     allowedFields: [
       "CustomerID",
@@ -62,6 +77,18 @@ export const WRITER_TOOLS: readonly WriterToolSpec[] = [
       "Phone1",
       "MainContact",
     ],
+    nestedAllowedFields: {
+      MainContact: [
+        "Email",
+        "Phone1",
+        "Address1",
+        "Address2",
+        "City",
+        "State",
+        "PostalCode",
+        "Country",
+      ],
+    },
   },
 ] as const;
 
@@ -95,16 +122,19 @@ export function writerParamsShape(_spec: WriterToolSpec): Record<string, z.ZodTy
  * 1. Writes-enabled kill-switch — returns an error if disabled.
  * 2. Payload size cap — rejects oversized JSON strings.
  * 3. JSON parse — rejects malformed JSON or non-object payloads.
- * 4. Field allowlist — rejects any key not in spec.allowedFields.
+ * 4. Field allowlist (top-level + nested) — rejects any key not allowed.
  * 5. Dry-run gate — returns a preview if confirm !== "true".
  * 6. wrapFields() — converts plain values to {value: X} before PUT.
- * 7. Mutation audit log — logMutation() emitted for BOTH dry-run and committed.
+ * 7. Mutation audit log — emitted for BOTH dry-run and committed, and forwarded
+ *    to `auditSink` (when provided) so the DO can persist it to R2. Values are
+ *    redacted using the same configured REDACT_PATTERNS/REDACT_SKIP as reads.
  */
 export async function runWriter(
   spec: WriterToolSpec,
   env: AppEnv,
   acumaticaUsername: string,
-  args: { payload: string; confirm?: string }
+  args: { payload: string; confirm?: string },
+  auditSink?: (entry: Record<string, unknown>) => void
 ): Promise<unknown> {
   // 1. Kill-switch
   const writesEnabled = await getConfig(env.store, "writes_enabled", env.ACUMATICA_WRITES_ENABLED);
@@ -115,26 +145,38 @@ export async function runWriter(
     };
   }
 
-  // 2-4. Payload size cap + JSON parse + field allowlist (pure validation)
-  const validation = validateWriterPayload(args.payload, spec.allowedFields, PAYLOAD_MAX_CHARS);
+  // 2-4. Payload size cap + JSON parse + top-level & nested field allowlist
+  const validation = validateWriterPayload(
+    args.payload,
+    spec.allowedFields,
+    PAYLOAD_MAX_CHARS,
+    spec.nestedAllowedFields
+  );
   if (!validation.ok) return { error: validation.error };
   const payloadObj = validation.data;
 
   const isDryRun = args.confirm !== "true";
 
-  // Redact field values for the audit log (name-based, so Salary/SSN/etc. are masked).
-  const { data: redactedForLog } = redactFields(payloadObj);
+  // Redact field values for logging using the same admin-configured patterns
+  // as read responses (KV override with env-var fallback), so REDACT_PATTERNS /
+  // REDACT_SKIP apply to the audit trail too. Used for BOTH the mutation log
+  // and the http-call `params` (so PII never lands unredacted in tail logs).
+  const redactPatterns = await getConfig(env.store, "redact_patterns", env.REDACT_PATTERNS);
+  const redactSkip = await getConfig(env.store, "redact_skip", env.REDACT_SKIP);
+  const { data: redactedForLog } = redactFields(payloadObj, redactPatterns, redactSkip);
 
   // 5. Dry-run gate
   if (isDryRun) {
-    logMutation({
-      timestamp: new Date().toISOString(),
-      tool: spec.name,
-      acumaticaUsername,
-      entity: spec.entity,
-      fields: redactedForLog as Record<string, unknown>,
-      dryRun: true,
-    });
+    auditSink?.(
+      logMutation({
+        timestamp: new Date().toISOString(),
+        tool: spec.name,
+        acumaticaUsername,
+        entity: spec.entity,
+        fields: redactedForLog as Record<string, unknown>,
+        dryRun: true,
+      })
+    );
     return {
       dryRun: true,
       willWrite: wrapFields(payloadObj),
@@ -143,7 +185,8 @@ export async function runWriter(
     };
   }
 
-  // 6. Commit
+  // 6. Commit. The http-call log gets the REDACTED payload as `params` — the
+  // real (unredacted) data goes in the request body only.
   const client = new AcumaticaClient(env, acumaticaUsername);
   const query: Record<string, string> = {};
   if (spec.expand) query.$expand = spec.expand;
@@ -152,24 +195,27 @@ export async function runWriter(
     spec.entity,
     spec.name,
     wrapFields(payloadObj) as Record<string, unknown>,
-    payloadObj,
+    redactedForLog as Record<string, unknown>,
     query
   );
 
   const result = unwrapFields(response);
   const resultObj = result as Record<string, unknown>;
-  const recordKey = (resultObj?.[`${spec.entity}ID`] as string) ?? undefined;
+  const keyField = spec.keyField ?? `${spec.entity}ID`;
+  const recordKey = (resultObj?.[keyField] as string) ?? undefined;
 
   // 7. Mutation audit log
-  logMutation({
-    timestamp: new Date().toISOString(),
-    tool: spec.name,
-    acumaticaUsername,
-    entity: spec.entity,
-    recordKey,
-    fields: redactedForLog as Record<string, unknown>,
-    dryRun: false,
-  });
+  auditSink?.(
+    logMutation({
+      timestamp: new Date().toISOString(),
+      tool: spec.name,
+      acumaticaUsername,
+      entity: spec.entity,
+      recordKey,
+      fields: redactedForLog as Record<string, unknown>,
+      dryRun: false,
+    })
+  );
 
   return {
     action: "upsert",

@@ -152,7 +152,7 @@ Create a new Customer or update an existing one. Uses PUT-as-upsert: if `Custome
 
 **Allowed top-level fields:** `CustomerID`, `CustomerName`, `CustomerClass`, `Status`, `Email`, `Phone1`, `MainContact`
 
-`MainContact` accepts a nested object with: `Email`, `Phone1`, `Address1`, `Address2`, `City`, `State`, `PostalCode`, `Country`
+`MainContact` accepts a nested object whose inner fields are themselves allowlisted: `Email`, `Phone1`, `Address1`, `Address2`, `City`, `State`, `PostalCode`, `Country`. Any other nested field is rejected before anything is sent to Acumatica.
 
 **Examples:**
 
