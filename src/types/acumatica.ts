@@ -1082,8 +1082,6 @@ export interface AppEnv {
   ACUMATICA_CLIENT_ID: string;
   ACUMATICA_CLIENT_SECRET: string;
   COOKIE_ENCRYPTION_KEY: string;
-  // Access control — Acumatica role required to use MCP (default: "MCP Access")
-  ACUMATICA_MCP_ROLE?: string;
   // Field redaction — comma-separated additional field name patterns to redact
   REDACT_PATTERNS?: string;
   // Field redaction — comma-separated field name patterns to skip (whitelist)
@@ -1120,7 +1118,10 @@ export interface Env {
   ACUMATICA_CLIENT_ID: string;
   ACUMATICA_CLIENT_SECRET: string;
   COOKIE_ENCRYPTION_KEY: string;
-  ACUMATICA_MCP_ROLE?: string;
+  // Access gate — name of the canary Generic Inquiry queried over OData to
+  // verify a user may use MCP (default: "MCPAccess"). Restrict who can read
+  // this GI in Acumatica however you like; a marker role is the recommended way.
+  ACUMATICA_CANARY_GI?: string;
   REDACT_PATTERNS?: string;
   REDACT_SKIP?: string;
   ACUMATICA_WRITES_ENABLED?: string;

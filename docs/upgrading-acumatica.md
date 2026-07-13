@@ -89,9 +89,10 @@ It confirms, against the new version:
 
 A version upgrade does not normally touch these, but confirm:
 
-- The **`MCP Access` role** and the **`MCPAccess` canary GI** still exist and the GI is still
-  **Exposed via OData** (the role gate calls it). A 403 on the canary = users locked out;
-  a 404/5xx = "Configuration Error" page.
+- The **`MCPAccess` canary GI** (name configurable via `ACUMATICA_CANARY_GI`) still exists and is
+  still **Exposed via OData** (the login access gate reads it), and read access is still restricted
+  to permitted users (a marker `MCP Access` role is the recommended way). A 403 on the canary =
+  users locked out; a 404/5xx = "Configuration Error" page.
 - The **Connected Application** (SM303010) redirect URIs are intact. (Scopes aren't
   configured on the app — the server sends `api openid profile email offline_access` in the
   authorization request. `offline_access` is required for refresh tokens — without it sessions

@@ -8,10 +8,10 @@ Each user authenticates with their own Acumatica credentials. Their Acumatica ro
 
 ## Features
 
-- **48 tools** -- 38 read-only lookups + 6 utility/discovery + 4 schema-knowledge tools (see [Available Tools](#available-tools))
+- **49 tools** -- 38 read-only lookups + 6 utility/discovery + 4 schema-knowledge + 1 write tool (Customer create/update, disabled by default) (see [Available Tools](#available-tools))
 - **Per-user OAuth** -- users log in with their Acumatica credentials (or SSO)
 - **Role-based access** -- Acumatica's security model governs what each user sees
-- **Role gate** -- only users with a designated Acumatica role (e.g., `MCP Access`) can connect
+- **Access gate** -- only users who can read a designated canary Generic Inquiry can connect (restrict it however you like; a marker role such as `MCP Access` is the recommended way)
 - **Consent interstitial** -- users must acknowledge AI data processing before accessing tools
 - **Sensitive field redaction** -- SSN, bank accounts, salary, and other PII fields are automatically redacted before data leaves the server
 - **Rate limiting** -- 3 concurrent requests, 40 requests/minute per user
@@ -31,10 +31,10 @@ Claude (claude.ai / Desktop / API)
 |  OAuth 2.1 Provider              |
 |    /authorize -> Acumatica login |
 |    /callback  <- Acumatica       |
-|      (role gate + OIDC userinfo) |
+|    (access gate + OIDC userinfo) |
 |    /consent   -> AI data consent |
 |    /token, /register (DCR)       |
-|    /mcp -> McpAgent DO (48 tools)|
+|    /mcp -> McpAgent DO (49 tools)|
 +---------------+------------------+
                 |  Bearer token (per-user)
                 v
@@ -50,8 +50,8 @@ Claude (claude.ai / Desktop / API)
 - An Acumatica 2025 R2 instance with:
   - A **Connected Application** configured in SM303010 with the **Authorization Code** OAuth 2.0 flow (scopes are sent by the server in the request, not configured on the app)
   - A redirect URI pointing to your worker's `/callback` endpoint
-  - An **`MCP Access` role** (SM201005) -- a marker role with no permissions required
-  - An **`MCPAccess` Generic Inquiry** (SM208000) -- a trivial GI assigned only to the `MCP Access` role, with **Expose via OData** enabled (see [Architecture docs](docs/architecture.md) for details)
+  - An **`MCPAccess` Generic Inquiry** (SM208000) -- a trivial canary GI with **Expose via OData** enabled; the login access gate checks whether the user can read it (see [Architecture docs](docs/architecture.md) for details). The GI name is configurable via `ACUMATICA_CANARY_GI`.
+  - A way to restrict who can read that GI -- a marker **`MCP Access` role** (SM201005) assigned only to permitted users is the recommended approach
 
 ## Setup
 
@@ -88,7 +88,7 @@ The button forks this repo to your GitHub account, reads `wrangler.jsonc`, auto-
 5. **Update the Acumatica vars.** After the deploy completes, open `Workers & Pages → mcp4acumatica → Settings → Variables and Secrets` in the Cloudflare dashboard and edit:
    - `ACUMATICA_URL` (e.g. `https://yourcompany.acumatica.com`)
    - `ACUMATICA_TENANT` (your login company)
-   - Optionally `ACUMATICA_MAX_RECORDS`, `ACUMATICA_MCP_ROLE`, `REDACT_PATTERNS`, `REDACT_SKIP`
+   - Optionally `ACUMATICA_MAX_RECORDS`, `ACUMATICA_CANARY_GI`, `REDACT_PATTERNS`, `REDACT_SKIP`
    Click **Save and Deploy** — Cloudflare redeploys with the new values.
 6. **Add a redirect URI to your Connected Application.** Your worker is now reachable at `https://mcp4acumatica.<your-account>.workers.dev`. Add `https://<that-host>/callback` to the redirect URIs in Acumatica's SM303010 screen. (To use a custom domain instead, see "[Custom domain](#custom-domain-optional)" below.)
 7. **Test the deploy.** Visit `https://<your-host>/docs/admin/preflight`, log in with your `ADMIN_SECRET`, and run the preflight diagnostic. It probes Acumatica connectivity, the OIDC discovery endpoint, the Connected App credentials, the tenant path, and the contract API version — any misconfiguration is called out by name.
@@ -182,15 +182,14 @@ These steps are required regardless of which install path you pick. They can't b
 
 > There is no scope field to configure here. OAuth scopes (`api openid profile email offline_access`, including the `offline_access` that makes Acumatica issue refresh tokens) are sent by the MCP server in the authorization request — they aren't set on the Connected Application.
 
-#### Role and Generic Inquiry (SM201005, SM208000)
+#### Access gate: canary Generic Inquiry (SM208000, SM201005)
 
-The MCP server requires users to have a specific Acumatica role before they can access AI tools. This is enforced via a canary Generic Inquiry (GI) that is assigned only to that role.
+Before a user can access the AI tools, the login flow runs an **access gate**: it queries a trivial canary Generic Inquiry over OData and checks whether the user's token can read it (200 → allowed, 403 → denied). The server never inspects Acumatica role membership — it only asks "can you see this one GI?". You restrict who can read the canary GI however your security model prefers; a marker role is the recommended, tidiest way.
 
-1. **Create role:** **System > Access Rights > User Roles (SM201005)** → create a role named `MCP Access`. No screen permissions are needed — it's purely a marker role.
-2. **Create Generic Inquiry:** **System > Customization > Generic Inquiry (SM208000)** → create a GI named `MCPAccess` with any trivial query (a single column from any table is fine). Assign it only to the `MCP Access` role. Enable **Expose via OData**.
-3. **Assign role to users:** Assign the `MCP Access` role to each Acumatica user who should have AI assistant access.
+1. **Create the canary GI:** **System > Customization > Generic Inquiry (SM208000)** → create a GI named `MCPAccess` with any trivial query (a single column from any table is fine). Enable **Expose via OData**.
+2. **Restrict who can read it (recommended: a marker role):** **System > Access Rights > User Roles (SM201005)** → create a role named `MCP Access` with no screen permissions, assign the `MCPAccess` GI only to that role, then assign the role to each user who should have AI assistant access. Any other mechanism that controls OData read access to the GI works too.
 
-> The role name is configurable via the `ACUMATICA_MCP_ROLE` variable. Edit it in the Cloudflare dashboard (`Variables and Secrets`) or in `wrangler.jsonc`.
+> The canary GI name is configurable via the `ACUMATICA_CANARY_GI` variable (default `MCPAccess`). Edit it in the Cloudflare dashboard (`Variables and Secrets`) or in `wrangler.jsonc`.
 
 #### Generic Inquiry exposure to AI (strongly recommended)
 
@@ -216,8 +215,8 @@ If you change hostnames, remember to add the new `https://<host>/callback` to yo
 1. Go to **Settings > Connectors**
 2. Click **Add Connector** and enter the URL: `https://<your-worker-url>/mcp`
 3. On first use, you'll be redirected to your Acumatica login page
-4. If your account has the `MCP Access` role, you'll see a consent page explaining AI data processing
-5. After acknowledging consent, Claude will have access to all 48 tools
+4. If your account can read the canary GI (i.e. you've been granted access), you'll see a consent page explaining AI data processing
+5. After acknowledging consent, Claude will have access to all 49 tools
 
 ### Claude Code (CLI)
 
@@ -325,7 +324,7 @@ When using the Anthropic API with MCP, point the MCP client to `https://<your-wo
 
 Detailed documentation is available in the [`docs/`](docs/) folder:
 
-- **[Tool Reference](docs/tool-reference.md)** -- Complete specification for all 48 tools with parameters and endpoints
+- **[Tool Reference](docs/tool-reference.md)** -- Complete specification for all 49 tools with parameters and endpoints
 - **[Example Prompts](docs/example-prompts.md)** -- Example prompts for Claude and other MCP clients organized by use case
 - **[OData Filtering Guide](docs/odata-filtering.md)** -- Guide to `$filter`, `$orderby`, `$select`, `$expand`, and `$top` query parameters
 - **[Generic Inquiries](docs/generic-inquiries.md)** -- Why GIs are gated for AI use, which GIs to expose, and how to enable the opt-in registry
@@ -338,8 +337,8 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 
 - **No stored credentials.** The MCP server does not store Acumatica passwords. It uses OAuth 2.0 authorization code flow -- users authenticate directly with Acumatica.
 - **Per-user tokens.** Each user's Acumatica access token is stored in the platform key-value store (Cloudflare KV on the default deployment), scoped to their username. Tokens are automatically refreshed when expired. If a refresh token expires, the connection re-authenticates automatically instead of requiring a manual reconnect.
-- **Role gate.** Only users with the `MCP Access` role (configurable) can connect. This is enforced via a canary Generic Inquiry check during login -- users without the role see an access denied page.
-- **Consent interstitial.** After passing the role check, users must acknowledge that their data will be processed by an external AI model before the MCP session activates.
+- **Access gate.** Only users who can read a designated canary Generic Inquiry can connect. The server checks GI-readability over OData during login (not role membership); users without access see an access denied page. Restrict the GI however you like — a marker `MCP Access` role is the recommended way. The GI name is configurable via `ACUMATICA_CANARY_GI`.
+- **Consent interstitial.** After passing the access check, users must acknowledge that their data will be processed by an external AI model before the MCP session activates.
 - **Sensitive field redaction.** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) and matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` and `REDACT_SKIP` environment variables.
 - **Role-based access.** The user's Acumatica role determines which records they can read. If a user doesn't have access to a record in Acumatica, they won't be able to access it through the MCP server either.
 - **Read-only.** All current tools are read-only lookups. No data is created, modified, or deleted.
