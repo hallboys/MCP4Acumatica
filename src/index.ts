@@ -79,6 +79,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       ACUMATICA_CLIENT_SECRET: this.env.ACUMATICA_CLIENT_SECRET,
       COOKIE_ENCRYPTION_KEY: this.env.COOKIE_ENCRYPTION_KEY,
       ACUMATICA_MCP_ROLE: this.env.ACUMATICA_MCP_ROLE,
+      ACUMATICA_WRITES_ENABLED: this.env.ACUMATICA_WRITES_ENABLED,
       REDACT_PATTERNS: this.env.REDACT_PATTERNS,
       REDACT_SKIP: this.env.REDACT_SKIP,
       store: new CloudflareKVStore(this.env.TOKEN_STORE),
@@ -122,13 +123,21 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         spec.description,
         writerParamsShape(spec),
         async (args: Record<string, string | undefined>) => {
+          // Collect the write_mutation audit entry so callTool persists it to
+          // R2 alongside tool_invocation — logMutation()'s console.log alone
+          // only reaches `wrangler tail`, not the durable trail / admin console.
+          const mutationEntries: Record<string, unknown>[] = [];
           return this.callTool(
-            () => runWriter(spec, this.appEnv, this.props.acumaticaUsername, {
-              payload: args.payload ?? "",
-              confirm: args.confirm,
-            }),
+            () => runWriter(
+              spec,
+              this.appEnv,
+              this.props.acumaticaUsername,
+              { payload: args.payload ?? "", confirm: args.confirm },
+              (entry) => mutationEntries.push(entry),
+            ),
             spec.name,
-            args
+            args,
+            mutationEntries,
           );
         }
       );
@@ -522,7 +531,8 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
   private async callTool(
     fn: () => Promise<unknown>,
     toolName?: string,
-    params?: Record<string, unknown>
+    params?: Record<string, unknown>,
+    extraR2Entries?: Record<string, unknown>[]
   ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
     const start = Date.now();
     const r2Entries: Record<string, unknown>[] = [];
@@ -576,6 +586,10 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       console.log(JSON.stringify(invocationEntry));
       r2Entries.push(invocationEntry);
 
+      // Include any handler-supplied entries (e.g. write_mutation from runWriter)
+      // so they land in the durable R2 trail, not just `wrangler tail`.
+      if (extraR2Entries?.length) r2Entries.push(...extraR2Entries);
+
       // Buffer log entries (flushed to R2 on threshold or delayed alarm)
       await this.bufferLogs(r2Entries);
 
@@ -616,6 +630,10 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       };
       logError(toolName || "unknown", error);
       r2Entries.push(errorEntry);
+
+      // A dry-run mutation entry may already have been collected before a later
+      // failure — persist it too so the attempt is in the durable trail.
+      if (extraR2Entries?.length) r2Entries.push(...extraR2Entries);
 
       // Buffer log entries (flushed to R2 on threshold or delayed alarm)
       await this.bufferLogs(r2Entries);
