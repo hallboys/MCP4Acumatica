@@ -26,7 +26,7 @@ on:
         required: false
         default: main
       notes:
-        description: "Release notes (optional; defaults to the tag name)"
+        description: "Release notes (optional; defaults to this version's CHANGELOG.md section)"
         required: false
 
 permissions:
@@ -86,9 +86,40 @@ jobs:
             echo "::notice::Created tag $TAG at $(git rev-parse --short "$TAG")."
           fi
 
+          # Release notes: explicit `notes` input wins; otherwise pull this
+          # version's section out of CHANGELOG.md, which the release checklist
+          # requires be written anyway (CLAUDE.md → Commit / Push / Tag
+          # Checklist). Read via --notes-file, not --notes: the section is
+          # multi-line Markdown and must not go through shell interpolation.
+          #
+          # Extraction matches the `## [X.Y.Z] - DATE` heading by literal prefix
+          # (index(), not regex, so the brackets and dots need no escaping) and
+          # stops at the next `## [` — i.e. the previous release.
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          if [ -n "${NOTES:-}" ]; then
+            printf '%s\n' "$NOTES" > "$NOTES_FILE"
+            echo "::notice::Using the notes supplied to the workflow."
+          else
+            awk -v p="## [${TAG#*-}]" '
+              index($0, p) == 1 { inside = 1; next }
+              inside && /^## \[/ { exit }
+              inside { print }
+            ' CHANGELOG.md \
+              | awk 'NF { blanks = 0; found = 1 } !NF { blanks++ } found { if (NF) { while (blanks-- > 0) print ""; print } }' \
+              > "$NOTES_FILE"
+
+            if [ -s "$NOTES_FILE" ]; then
+              echo "::notice::Release notes taken from the CHANGELOG.md section for ${TAG#*-} ($(wc -l < "$NOTES_FILE") lines)."
+            else
+              # Don't block the release on a missing entry — say so loudly instead.
+              echo "::warning::No '## [${TAG#*-}]' section found in CHANGELOG.md; falling back to a bare title."
+              printf 'Release %s\n' "$TAG" > "$NOTES_FILE"
+            fi
+          fi
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "::notice::GitHub Release $TAG already exists — nothing to do."
           else
-            gh release create "$TAG" --title "$TAG" --notes "${NOTES:-Release $TAG}"
+            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
             echo "::notice::Created GitHub Release $TAG."
           fi
