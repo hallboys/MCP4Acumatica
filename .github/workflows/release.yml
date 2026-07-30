@@ -1,18 +1,25 @@
 # Cut a tagged release without leaving the browser / a Claude Code web session.
 #
 # Web sessions push through a git proxy that only allows BRANCH writes, so a
-# `git push origin vX.Y.Z` from a session is refused (HTTP 403). This workflow
-# runs INSIDE GitHub Actions, whose GITHUB_TOKEN can write tags directly — no
-# proxy involved. Run it from the repo's Actions tab (or have Claude trigger it
-# via the GitHub API), give it a version, and it creates the annotated tag on
-# the chosen commit plus a matching GitHub Release.
+# `git push origin 25R2-X.Y.Z` from a session is refused (HTTP 403). This
+# workflow runs INSIDE GitHub Actions, whose GITHUB_TOKEN can write tags
+# directly — no proxy involved. Run it from the repo's Actions tab (or have
+# Claude trigger it via the GitHub API), give it a version, and it creates the
+# annotated tag on the chosen commit plus a matching GitHub Release.
+#
+# TAG SCHEME: this repo tags `<release>-<semver>` — e.g. `25R2-0.41.0` — where
+# the prefix is the targeted Acumatica release (`25R2` = 2025 R2) and the semver
+# is the MCP server's own version. The two move independently: the semver bumps
+# every release, the prefix only when the server is re-pointed at a new
+# Acumatica release. See CLAUDE.md → "Acumatica Version Upgrades". All 64 tags
+# predating this workflow use that form; there has never been a `vX.Y.Z` tag.
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Version tag to create (e.g. v1.2.3)"
+        description: "Version tag to create (e.g. 25R2-0.41.0)"
         required: true
       ref:
         description: "Commit SHA or branch to tag"
@@ -32,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 0 # full history + tags so the existence check + git describe work
+          fetch-depth: 0 # full history + tags so the existence check works
 
       # Inputs are passed via env (never interpolated into the shell) to avoid
       # script injection from the free-text notes field.
@@ -45,9 +52,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Validate format: vMAJOR.MINOR.PATCH (git describe --tags reads this scheme).
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Tag '$TAG' must look like vX.Y.Z (e.g. v1.2.3)."
+          # Validate format: <NN>R<N>-MAJOR.MINOR.PATCH, this repo's tag scheme
+          # (see the header comment). Rejecting anything else keeps `git tag
+          # --sort=-v:refname` ordering the release history correctly.
+          if [[ ! "$TAG" =~ ^[0-9]{2}R[0-9]-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG' must look like <release>-X.Y.Z (e.g. 25R2-0.41.0) — the Acumatica release prefix followed by the MCP server version."
+            exit 1
+          fi
+
+          # Guard against a tag that disagrees with the version in the tree.
+          # The workflow deliberately never moves a published tag, so a wrong
+          # one is expensive to walk back; catching it here costs nothing.
+          # CLAUDE.md's release checklist keeps package.json, CLAUDE.md,
+          # src/index.ts, src/docs/docs-handler.ts and docs/tool-reference.md in
+          # sync, and package.json is the machine-readable one.
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "${TAG#*-}" != "$PKG_VERSION" ]; then
+            echo "::error::Tag '$TAG' implies version ${TAG#*-}, but package.json on '$REF' says $PKG_VERSION. Bump the version strings (CLAUDE.md → Commit / Push / Tag Checklist) and push before tagging."
             exit 1
           fi
 
