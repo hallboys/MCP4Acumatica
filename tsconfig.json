@@ -12,6 +12,12 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    // Lets a module under test import a sibling with an explicit `.ts`
+    // specifier. `node --test` runs TypeScript in strip-only mode and cannot
+    // resolve the extensionless specifiers used across src/, so without this
+    // only dependency-free leaf modules were unit-testable. Safe with noEmit
+    // (tsc never rewrites the specifier); wrangler/esbuild resolves `.ts` too.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx"
   },
   "include": ["src/**/*.ts"],
