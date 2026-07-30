@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { IKeyValueStore } from "./kv-store";
+import {
+  DEFAULT_MAX_CONCURRENT,
+  DEFAULT_MAX_PER_MINUTE,
+  DEFAULT_QUEUE_WAIT_MS,
+  type RateLimitConfig,
+  type RateLimitEnv,
+  // Explicit `.ts` so this module stays loadable by `node --test` (strip-only
+  // mode can't resolve extensionless specifiers). See tsconfig.json.
+} from "./rate-limiter.ts";
 
 /**
  * KV-backed runtime config with env var fallback.
@@ -54,6 +63,13 @@ export interface ConfigKeyDef {
   envVar: string;
   label: string;
   description: string;
+  /**
+   * The built-in default that applies when neither KV nor the env var is set.
+   * Rendered as the input's placeholder so the admin console shows what is
+   * actually in effect instead of an empty box. Display only — the value the
+   * code falls back to lives at the point of use.
+   */
+  defaultValue?: string;
   /** Validate a proposed value. Return null to accept, or an error message. */
   validate?: (value: string) => string | null;
 }
@@ -69,6 +85,18 @@ function validatePositiveInt(max: number) {
   };
 }
 
+/** Like validatePositiveInt but accepts 0 (used for "disabled" semantics). */
+function validateNonNegativeInt(max: number) {
+  return (value: string): string | null => {
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) return "Must be a whole number (no sign, no decimals).";
+    const n = parseInt(trimmed, 10);
+    if (!Number.isFinite(n) || n < 0) return "Must be 0 or a positive integer.";
+    if (n > max) return `Must be ${max} or less.`;
+    return null;
+  };
+}
+
 /** All configurable settings with their KV keys and env var names. */
 export const CONFIG_KEYS: readonly ConfigKeyDef[] = [
   { key: "redact_patterns", envVar: "REDACT_PATTERNS", label: "Redact Patterns", description: "Comma-separated additional field name patterns to redact" },
@@ -78,13 +106,42 @@ export const CONFIG_KEYS: readonly ConfigKeyDef[] = [
     envVar: "ACUMATICA_MAX_RECORDS",
     label: "Max Records Per Query",
     description: "Maximum number of records returned per API query (default: 1000)",
+    defaultValue: "1000",
     validate: validatePositiveInt(10_000),
+  },
+  {
+    key: "rate_limit_max_concurrent",
+    envVar: "ACUMATICA_MAX_CONCURRENT",
+    label: "Max Concurrent Requests Per User",
+    description:
+      "Simultaneous in-flight Acumatica calls allowed per user (default: 3). Counted per Worker isolate, so a user with sessions on several isolates can exceed this in aggregate. Raising it increases parallel load on the Acumatica instance.",
+    defaultValue: "3",
+    validate: validatePositiveInt(20),
+  },
+  {
+    key: "rate_limit_max_per_minute",
+    envVar: "ACUMATICA_MAX_PER_MINUTE",
+    label: "Max Requests Per Minute Per User",
+    description:
+      "Acumatica calls allowed per user per calendar minute (default: 40). Counted in KV, so it survives reconnects. Note this counts HTTP calls to Acumatica, not tool invocations — one tool call can make several.",
+    defaultValue: "40",
+    validate: validatePositiveInt(1_000),
+  },
+  {
+    key: "rate_limit_queue_wait_ms",
+    envVar: "ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS",
+    label: "Concurrency Queue Wait (ms)",
+    description:
+      "How long a request waits for a busy concurrency slot before being rejected (default: 2000). A model firing several tool calls at once is normal, and most Acumatica round-trips finish well under a second, so a short wait turns most concurrency rejections into a brief delay. Set 0 to reject immediately.",
+    defaultValue: "2000",
+    validate: validateNonNegativeInt(10_000),
   },
   {
     key: "writes_enabled",
     envVar: "ACUMATICA_WRITES_ENABLED",
     label: "Enable Write Tools",
     description: "Set to 'true' to enable mutating tools (Customer create/update). Off by default. Changes take effect when the next DO instance starts.",
+    defaultValue: "false",
     validate: (value: string) => {
       const v = value.trim().toLowerCase();
       if (v === "true" || v === "false") return null;
@@ -133,5 +190,49 @@ export function parsePositiveIntConfig(value: string | undefined, fallback: numb
   if (!/^\d+$/.test(trimmed)) return fallback;
   const n = parseInt(trimmed, 10);
   if (!Number.isFinite(n) || n <= 0) return fallback;
+  return n;
+}
+
+/**
+ * Like `parsePositiveIntConfig` but treats "0" as a real value rather than
+ * "use the default" — for settings where zero means "disabled" (e.g. the
+ * concurrency queue wait). Anything non-numeric or negative still falls back.
+ */
+/**
+ * Resolve the per-user rate limits for a session: KV override → env var →
+ * built-in default, per setting. Called once when the MCP session starts (the
+ * DO's `init()`); the result is stashed on `AppEnv.rateLimits` so the
+ * per-request path needs no KV read. Consequence — same as every other runtime
+ * setting — a change applies to the next DO instance, not to live sessions.
+ *
+ * Lives here rather than in rate-limiter.ts so that module stays free of
+ * runtime imports and therefore unit-testable under `node --test`.
+ */
+export async function resolveRateLimits(
+  store: IKeyValueStore,
+  env: RateLimitEnv
+): Promise<RateLimitConfig> {
+  const [concurrent, perMinute, queueWait] = await Promise.all([
+    getConfig(store, "rate_limit_max_concurrent", env.ACUMATICA_MAX_CONCURRENT),
+    getConfig(store, "rate_limit_max_per_minute", env.ACUMATICA_MAX_PER_MINUTE),
+    getConfig(store, "rate_limit_queue_wait_ms", env.ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS),
+  ]);
+
+  return {
+    // A zero/garbage cap must not lock every user out, so both caps fall back
+    // to the built-in default rather than being taken literally.
+    maxConcurrent: parsePositiveIntConfig(concurrent, DEFAULT_MAX_CONCURRENT),
+    maxPerMinute: parsePositiveIntConfig(perMinute, DEFAULT_MAX_PER_MINUTE),
+    // Non-negative: 0 is a meaningful value here (reject immediately).
+    queueWaitMs: parseNonNegativeIntConfig(queueWait, DEFAULT_QUEUE_WAIT_MS),
+  };
+}
+
+export function parseNonNegativeIntConfig(value: string | undefined, fallback: number): number {
+  if (value === undefined || value === null || value.trim() === "") return fallback;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return fallback;
+  const n = parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n < 0) return fallback;
   return n;
 }

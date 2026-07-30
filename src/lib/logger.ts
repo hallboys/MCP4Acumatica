@@ -70,6 +70,37 @@ export function logRedaction(
   }));
 }
 
+export interface RateLimitEntry {
+  timestamp: string;
+  tool: string;
+  acumaticaUsername: string;
+  /** Which cap was hit. */
+  limit: "concurrent" | "per_minute";
+  /** The configured value of that cap at the time of the hit. */
+  limitValue: number;
+  retryAfterSeconds: number;
+  /** ms spent queued for a concurrency slot before giving up (concurrent only). */
+  waitedMs?: number;
+}
+
+/**
+ * Log a rate-limit rejection. Emitted as its own event type (rather than being
+ * folded into `tool_error`) so an operator can see throttling separately from
+ * genuine Acumatica failures and tune the configurable caps against real data.
+ *
+ * Like `logMutation`, returns the record so the DO can also buffer it to R2 —
+ * `console.log` alone only reaches `wrangler tail`, not the admin console.
+ */
+export function logRateLimit(entry: RateLimitEntry): Record<string, unknown> {
+  const record = {
+    level: "warn",
+    type: "rate_limit_hit",
+    ...entry,
+  };
+  console.log(JSON.stringify(record));
+  return record;
+}
+
 export interface MutationEntry {
   timestamp: string;
   tool: string;

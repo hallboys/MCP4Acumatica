@@ -14,7 +14,7 @@ Each user authenticates with their own Acumatica credentials. Their Acumatica ro
 - **Access gate** -- only users who can read a designated canary Generic Inquiry can connect (restrict it however you like; a marker role such as `MCP Access` is the recommended way)
 - **Consent interstitial** -- users must acknowledge AI data processing before accessing tools
 - **Sensitive field redaction** -- SSN, bank accounts, salary, and other PII fields are automatically redacted before data leaves the server
-- **Rate limiting** -- 3 concurrent requests, 40 requests/minute per user
+- **Rate limiting** -- 3 concurrent requests and 40 requests/minute per user by default, both adjustable from the admin console. A request that finds all slots busy waits briefly for one instead of failing outright, and a rejection returns a structured `{ error: "rate_limited", retryAfterSeconds, actionRequired }` envelope telling the AI exactly how long to wait rather than to retry in a loop
 - **Pagination refusal** -- list/query tools return a structured `{ truncated, paginationSupported: false, actionRequired }` envelope when results hit the record cap, instructing the AI to ask the user for a narrower filter rather than calling the tool again
 - **Structured audit logging** -- all tool invocations, auth events, and field redactions are logged
 - **Admin console** -- web-based admin interface at `/docs/admin` for viewing logs and managing runtime settings without redeploying
@@ -342,7 +342,7 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 - **Sensitive field redaction.** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) and matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` and `REDACT_SKIP` environment variables.
 - **Role-based access.** The user's Acumatica role determines which records they can read. If a user doesn't have access to a record in Acumatica, they won't be able to access it through the MCP server either.
 - **Read-only.** All current tools are read-only lookups. No data is created, modified, or deleted.
-- **Rate limiting.** 3 concurrent requests, 40 requests per minute, and a configurable record cap per query to protect your Acumatica instance.
+- **Rate limiting.** 3 concurrent requests, 40 requests per minute, and a 1000-record cap per query by default -- all configurable from the admin console at `/docs/admin/settings` without redeploying. Limits are per user and count HTTP calls to Acumatica (not tool invocations). Rejections return a structured envelope with an exact `retryAfterSeconds` and are logged as `rate_limit_hit` events so you can tell whether the caps are too tight.
 - **Pagination refusal.** The list/query tools (`acumatica_list_entities`, `acumatica_run_inquiry`, `acumatica_list_generic_inquiries`) do not support pagination. When a response hits `ACUMATICA_MAX_RECORDS`, the tool returns a structured envelope (`truncated: true`, `paginationSupported: false`, `actionRequired: "..."`) instructing the AI to stop and ask the user for a narrower filter rather than retrieving more records.
 - **Audit logging.** All tool invocations, auth events (login success/denied, consent accepted), and field redaction events are logged as structured JSON. View with `npx wrangler tail`.
 

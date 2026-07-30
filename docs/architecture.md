@@ -115,7 +115,7 @@ HTTP client for the Acumatica contract-based REST API. Features:
 
 - **Per-user tokens** -- Fetches the user's token from the platform store (`AppEnv.store`) on each request
 - **Automatic retry on 401** -- If a token expires mid-request, fetches a fresh token and retries once
-- **Rate limiting** -- Enforced via `withRateLimit()` wrapper (3 concurrent, 40/min)
+- **Rate limiting** -- Enforced via `withRateLimit()` wrapper (default 3 concurrent, 40/min per user; both configurable from the admin console)
 - **Audit logging** -- Every API call is logged with tool name, endpoint, status code, and duration
 - **Friendly error messages** -- HTTP errors are translated to human-readable messages
 
@@ -281,25 +281,54 @@ One consequence operators should be aware of: a filter can be used as a blind-en
 
 ### Audit Logging
 
-All tool invocations and security events are logged as structured JSON via `console.log` (viewable with `npx wrangler tail`). Three log types are emitted:
+All tool invocations and security events are logged as structured JSON via `console.log` (viewable with `npx wrangler tail`). The log types emitted:
 
 | Log Type | Events | Key Fields |
 |----------|--------|------------|
 | `tool_invocation` | Every MCP tool call | tool, username, endpoint, status, duration |
+| `acumatica_http_call` | Every HTTP roundtrip to Acumatica (one tool call may emit several) | tool, username, endpoint, statusCode, duration |
 | `auth_event` | `login_success`, `login_denied`, `consent_accepted` | eventType, username, reason (if denied) |
 | `field_redaction` | When sensitive fields are redacted from a response | tool, username, redactedFields, redactedCount |
+| `rate_limit_hit` | When a per-user rate limit rejects a request | tool, username, limit, limitValue, retryAfterSeconds, waitedMs |
+| `write_mutation` | Every write attempt, including dry-run previews | tool, username, entity, recordKey, fields, dryRun |
 
 ### Rate Limiting
 
-Multiple safeguards protect the Acumatica instance:
+Multiple safeguards protect the Acumatica instance. All are runtime-configurable from the admin console (`/docs/admin/settings`) — no redeploy needed; changes apply when the next Durable Object instance starts.
 
-| Limit | Value | Scope |
-|-------|-------|-------|
-| Concurrent requests | 3 | Per user |
-| Requests per minute | 40 | Per user |
-| Max records per query (`$top`) | 1000 (configurable) | Per request |
+| Limit | Default | Scope | Setting |
+|-------|---------|-------|---------|
+| Concurrent requests | 3 | Per user, per isolate | Max Concurrent Requests Per User |
+| Requests per minute | 40 | Per user (KV-backed) | Max Requests Per Minute Per User |
+| Concurrency queue wait | 2000 ms | Per request | Concurrency Queue Wait (ms) |
+| Max records per query (`$top`) | 1000 | Per request | Max Records Per Query |
 
-When a rate limit is exceeded, the tool returns a friendly error message asking the user to wait.
+The unit counted is an **HTTP call to Acumatica**, not a tool invocation — one tool call can make several (e.g. a retry after a 401, or a `$metadata` fetch).
+
+**Concurrency is per-isolate.** The slot map lives in isolate memory, so a user with sessions on several isolates can exceed the cap in aggregate. The per-minute bucket is in KV and therefore survives isolate/DO recycling — a client can't reset it by reconnecting.
+
+**Bounded wait instead of instant rejection.** A model firing several tool calls at once is the normal case, not abuse, and a typical Acumatica round-trip finishes well under a second. So a request that finds every slot busy waits up to `queueWaitMs` (default 2 s, polled every 50 ms) for one to free before being rejected. Set the wait to `0` to restore the pre-0.41.0 reject-immediately behavior.
+
+**Ordering guarantee.** A slot is claimed *before* the per-minute bucket is read, so a request turned away on concurrency never spends a per-minute token. A call that reaches Acumatica and then fails (a 500, a network error) *does* spend its token — throttling retry storms is exactly what the cap is for.
+
+#### What the model sees when a limit is hit
+
+Rather than a bare error string — which a model tends to answer by retrying instantly, rewording the request, or trying a different tool — the tool returns a structured envelope, the same pattern as the truncation envelope above:
+
+```json
+{
+  "error": "rate_limited",
+  "limit": "per_minute",
+  "limitValue": 40,
+  "retryAfterSeconds": 23,
+  "cause": "This MCP server caps each user at 40 Acumatica requests per minute to protect the Acumatica instance. This is a guardrail in the MCP server — Acumatica was not contacted, nothing was queried, and there is no problem with the ERP, the network, or your request.",
+  "actionRequired": "Wait 23 second(s), then retry the SAME request unchanged. Do not retry immediately. Do not reword the request, narrow the filter, or substitute a different tool — the cap is on request volume per user, not on this request. If this interrupted a multi-step task, tell the user you hit the per-minute cap and ask whether to continue after the pause rather than silently retrying in a loop."
+}
+```
+
+`retryAfterSeconds` is exact for the per-minute limit: bucket keys are per calendar minute, so the wait is the time to the next minute boundary and never exceeds 60 s.
+
+Every rejection is also logged as its own `rate_limit_hit` event (username, tool, which cap, its configured value, `retryAfterSeconds`, and `waitedMs` for concurrency) and persisted to R2, so throttling is visible in the admin log viewer separately from genuine Acumatica failures — which is the data you need to tell "the caps are too tight" from "one client is looping."
 
 ### Pagination Refusal Semantics
 
@@ -378,7 +407,7 @@ Consequences:
 
 ### Throughput vs. the per-user rate limiter
 
-The per-user rate limiter (see **Rate Limiting** above) caps **3 concurrent / 40-per-minute per user** — it is *not* aware of the instance-wide ceiling. Several simultaneously-active users aggregate past a small-tier throttle (e.g. 6 concurrent / 50-per-minute); Acumatica then queues and delays (rarely declines), which surfaces to the model as the `429` "rate limit exceeded" friendly error. If `429`s show up in `do-logs`, the gap to close is an instance-wide shared counter (mirroring the existing per-minute KV bucket) so the server backs off *before* Acumatica starts queuing — deferred until the logs show it's needed, since coordinating it across isolates adds complexity.
+The per-user rate limiter (see **Rate Limiting** above) caps each user at **3 concurrent / 40-per-minute by default** — it is *not* aware of the instance-wide ceiling, and raising the caps from the admin console raises the aggregate load correspondingly. Several simultaneously-active users aggregate past a small-tier throttle (e.g. 6 concurrent / 50-per-minute); Acumatica then queues and delays (rarely declines), which surfaces to the model as the `429` "rate limit exceeded" friendly error. If `429`s show up in `do-logs`, the gap to close is an instance-wide shared counter (mirroring the existing per-minute KV bucket) so the server backs off *before* Acumatica starts queuing — deferred until the logs show it's needed, since coordinating it across isolates adds complexity.
 
 ---
 
@@ -470,7 +499,7 @@ src/
 │   ├── token-provider.ts          # ITokenProvider interface + TokenResult
 │   ├── metadata-cache.ts          # KV-backed cache (via IKeyValueStore)
 │   ├── blob-store.ts / index-store.ts / schema-search.ts  # schema-knowledge index access
-│   ├── rate-limiter.ts            # Concurrent + per-minute rate limits
+│   ├── rate-limiter.ts            # Concurrent + per-minute rate limits (configurable)
 │   ├── preflight.ts               # Config diagnostics (admin page + /callback mapping)
 │   ├── logger.ts                  # Structured JSON audit logging
 │   └── redact.ts                  # Pattern-based sensitive-field redaction

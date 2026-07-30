@@ -21,10 +21,10 @@ import {
 import { handleExplainGiXml } from "./tools/gi-explain";
 import { indexExists, INDEX_KEYS } from "./lib/index-store";
 import { AcumaticaApiError } from "./lib/acumatica-client";
-import { RateLimitError } from "./lib/rate-limiter";
+import { RateLimitError, rateLimitEnvelope } from "./lib/rate-limiter";
 import { redactFields, redactParamsForLog } from "./lib/redact";
-import { logRedaction, logError, writeLogsToR2 } from "./lib/logger";
-import { getConfig } from "./lib/config";
+import { logRedaction, logError, logRateLimit, writeLogsToR2 } from "./lib/logger";
+import { getConfig, resolveRateLimits } from "./lib/config";
 import { CloudflareKVStore } from "./platform/cloudflare-kv-store";
 import { CloudflareR2BlobStore } from "./platform/cloudflare-r2-blob-store";
 import { DOTokenProvider } from "./platform/do-token-provider";
@@ -38,7 +38,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.40.0",
+    version: "0.41.0",
   });
 
   private redactPatterns?: string;
@@ -81,6 +81,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       ACUMATICA_WRITES_ENABLED: this.env.ACUMATICA_WRITES_ENABLED,
       REDACT_PATTERNS: this.env.REDACT_PATTERNS,
       REDACT_SKIP: this.env.REDACT_SKIP,
+      ACUMATICA_MAX_CONCURRENT: this.env.ACUMATICA_MAX_CONCURRENT,
+      ACUMATICA_MAX_PER_MINUTE: this.env.ACUMATICA_MAX_PER_MINUTE,
+      ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS: this.env.ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS,
       store: new CloudflareKVStore(this.env.TOKEN_STORE),
       tokenProvider: new DOTokenProvider(this.env.TOKEN_MANAGER),
       indexStore: this.env.INDEX_STORE ? new CloudflareR2BlobStore(this.env.INDEX_STORE) : undefined,
@@ -89,6 +92,11 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
     // Read runtime config from KV with env var fallback
     this.redactPatterns = await getConfig(this.appEnv.store, "redact_patterns", this.appEnv.REDACT_PATTERNS);
     this.redactSkip = await getConfig(this.appEnv.store, "redact_skip", this.appEnv.REDACT_SKIP);
+
+    // Resolve rate limits once here rather than per Acumatica call — the
+    // alternative is three KV reads on every outbound request. Same
+    // "applies on the next DO instance" semantics as the other settings.
+    this.appEnv.rateLimits = await resolveRateLimits(this.appEnv.store, this.appEnv);
 
     // Register the 38 per-entity getter tools from the registry.
     // Each entry describes a path shape + optional $expand; the shared
@@ -630,6 +638,24 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       logError(toolName || "unknown", error);
       r2Entries.push(errorEntry);
 
+      // Rate-limit rejections get their own durable entry so the admin console
+      // can answer "are the limits too tight?" — without this they're
+      // indistinguishable from Acumatica failures in the tool_error stream,
+      // and there'd be no data to tune the (now configurable) caps against.
+      if (error instanceof RateLimitError) {
+        r2Entries.push(
+          logRateLimit({
+            timestamp: new Date().toISOString(),
+            tool: toolName || "unknown",
+            acumaticaUsername: this.props.acumaticaUsername,
+            limit: error.limit,
+            limitValue: error.limitValue,
+            retryAfterSeconds: error.retryAfterSeconds,
+            waitedMs: error.waitedMs,
+          })
+        );
+      }
+
       // A dry-run mutation entry may already have been collected before a later
       // failure — persist it too so the attempt is in the durable trail.
       if (extraR2Entries?.length) r2Entries.push(...extraR2Entries);
@@ -643,6 +669,19 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       // Claude typically retries, at which point the re-auth kicks in.
       if (error instanceof ReauthRequiredError) {
         await this.revokeUserGrantsForReauth();
+      }
+
+      // A rate-limit rejection is a server-side guardrail, not a failed query.
+      // Return a structured envelope (retryAfterSeconds + explicit "don't
+      // reword, don't switch tools, don't loop" guidance) rather than a bare
+      // error string, which the model tends to answer by retrying instantly or
+      // by trying a different tool. Same pattern as the truncation envelope.
+      if (error instanceof RateLimitError) {
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(rateLimitEnvelope(error), null, 2) },
+          ],
+        };
       }
 
       return {

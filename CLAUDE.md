@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.40.0`
+- **Current tag:** `25R2-0.41.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -64,7 +64,17 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 5. **Pagination refusal semantics:** The list/query tools (`acumatica_list_entities`, `acumatica_run_inquiry`, `acumatica_list_generic_inquiries`) hard-cap results at `ACUMATICA_MAX_RECORDS` (default 1000, runtime-overridable via the admin console → KV `config:acumatica_max_records`). When a response hits the cap, the tool returns a structured envelope `{ results, truncated: true, mayBeComplete: true, paginationSupported: false, actionRequired: "..." }` instructing the model to stop calling and ask the user to refine `filterExpression`/`titleFilter`. The envelope explicitly states that the result *may* be complete — Acumatica's contract API and OData GI endpoints don't report a total count, so a response exactly at the cap is indistinguishable from a larger underlying result set. No server-side cooldown — the semantic response is the mechanism. The numeric cap is validated at write time by the admin console (positive integer, ≤ 10 000) via `validateConfigValue()` in `src/lib/config.ts`; downstream readers additionally use `parsePositiveIntConfig()` to defend against bad env-var values.
 
-6. **Rate limiting.** `withRateLimit()` (`src/lib/rate-limiter.ts`) enforces two caps keyed by Acumatica username: in-isolate concurrency (max 3 active) and a per-minute KV-backed bucket (`ratelimit:{username}:{minute}`, TTL 120 s, max 40). Keying per-user prevents users on the same isolate from contaminating each other's limits; the KV bucket survives DO/isolate recycling so a client cannot bypass the per-minute cap by reconnecting. Active slots are tracked as `{id → startedAt}` rather than a bare counter; any slot older than 60 s is pruned as leaked, so an uncaught rejection or frozen isolate can't permanently eat a user's concurrency quota.
+6. **Rate limiting.** `withRateLimit()` (`src/lib/rate-limiter.ts`) enforces two caps keyed by Acumatica username: in-isolate concurrency and a per-minute KV-backed bucket (`ratelimit:{username}:{minute}`, TTL 120 s). Keying per-user prevents users on the same isolate from contaminating each other's limits; the KV bucket survives DO/isolate recycling so a client cannot bypass the per-minute cap by reconnecting. Active slots are tracked as `{id → startedAt}` rather than a bare counter; any slot older than 60 s is pruned as leaked, so an uncaught rejection or frozen isolate can't permanently eat a user's concurrency quota. The unit counted is an **HTTP call to Acumatica**, not a tool invocation — one tool call can make several.
+
+   **Configurable (0.41.0).** Both caps plus the queue wait are runtime settings (`config:rate_limit_max_concurrent` / `_max_per_minute` / `_queue_wait_ms`, env fallbacks `ACUMATICA_MAX_CONCURRENT` / `ACUMATICA_MAX_PER_MINUTE` / `ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS`, defaults 3 / 40 / 2000). `resolveRateLimits()` lives in `src/lib/config.ts` (not rate-limiter.ts — see the testability note below) and is called **once in the DO's `init()`**, stashing the resolved numbers on `AppEnv.rateLimits`; `withRateLimit()` takes them as a parameter and falls back to `DEFAULT_RATE_LIMITS` when absent (self-host adapters). Resolving per-session rather than per-call avoids three KV reads on every outbound request, at the cost of the usual "applies on the next DO instance" semantics. A zero or garbage cap falls back to the built-in default rather than being taken literally — otherwise one bad admin entry locks every user out.
+
+   **Bounded wait, not instant rejection.** A model firing several tool calls at once is the normal case, not abuse, and a typical Acumatica round-trip is well under a second — so a request that finds all slots busy waits up to `queueWaitMs` (polling every 50 ms) before being rejected. `queueWaitMs = 0` restores the pre-0.41.0 reject-immediately behavior. The check-then-set in `acquireSlot()` is deliberately synchronous (no `await` between reading `slots.size` and inserting) so waking waiters can't both claim the same free slot.
+
+   **Ordering guarantee:** the slot is acquired *before* the per-minute bucket is read, so a concurrency rejection never spends a per-minute token. A call that reaches Acumatica and then fails *does* spend its token — throttling retry storms is the point of the cap.
+
+   **Limit-reached behavior.** A bare "limit reached, retry shortly" string invites the model to retry instantly, reword the request, or switch tools. So `RateLimitError` carries structured fields (`limit`, `limitValue`, `retryAfterSeconds`, `waitedMs`) and `callTool` renders them via `rateLimitEnvelope()` as `{ error: "rate_limited", limit, limitValue, retryAfterSeconds, cause, actionRequired }` — same pattern as the pagination-refusal envelope. `cause` states explicitly that Acumatica was never contacted (so a throttle isn't reported to the user as an ERP outage); `actionRequired` says to retry the *same* request after the stated wait and not to reword/substitute/loop. `retryAfterSeconds` is exact for the per-minute cap (bucket keys are per calendar minute, so it's the time to the next boundary, ≤ 60 s). Each rejection also emits a `rate_limit_hit` log event (`logRateLimit()`), pushed to the R2 trail from `callTool` so throttling is filterable in the admin log viewer separately from real Acumatica failures — without it there'd be no data to tune the now-configurable caps against.
+
+   **Testability constraint:** `src/lib/rate-limiter.ts` must stay free of *runtime* imports (type-only is fine). `npm test` runs TypeScript in strip-only mode, which cannot resolve the extensionless specifiers used across `src/`. `tsconfig.json` sets `allowImportingTsExtensions` so a module under test can import a sibling with an explicit `.ts` specifier (config.ts → `./rate-limiter.ts` does this); that's the escape hatch for non-leaf modules. Strip-only mode also rejects **constructor parameter properties**, which is why `RateLimitError` declares its fields explicitly (`AcumaticaApiError` still uses parameter properties and is therefore not directly unit-testable).
 
 7. **Admin login throttling.** The admin console at `/docs/admin/login` is throttled per client IP via `admin_login_fail:{ip}` counters (KV, 15-minute window, 5 attempts). Further attempts 429 until the window expires; successful login clears the counter. All failures are padded to ≥ 1 s so the throttle path is indistinguishable from a slow mismatch. Client IP is sourced from `CF-Connecting-IP` with `X-Forwarded-For` fallback.
 
@@ -140,7 +150,7 @@ src/
 │   ├── blob-store.ts              # IBlobStore interface (platform-agnostic read of large index blobs)
 │   ├── index-store.ts             # loadIndex()/indexExists() — per-isolate-cached read of schema-knowledge indexes
 │   ├── schema-search.ts           # ISchemaSearch + KeywordSchemaSearch (seam for future Vectorize impl)
-│   ├── rate-limiter.ts            # 3 concurrent, 40/min limits
+│   ├── rate-limiter.ts            # per-user concurrency + per-minute limits (configurable; runtime-import-free)
 │   ├── logger.ts                  # Structured JSON audit logging (tool, auth, redaction events)
 │   ├── preflight.ts               # Config diagnostics — admin page + /callback error mapping
 │   └── redact.ts                  # Pattern-based sensitive field redaction
@@ -173,7 +183,8 @@ test/                              # Node built-in test runner (node --test, TS 
 ├── getter-errors.test.ts          # endpointAware404Message (Default vs custom endpoint 404)
 ├── gi-registry.test.ts            # checkGiGate semantics + cleanGiRow + parseEdmxTypes/assembleRegistry
 ├── field-transforms.test.ts       # wrapFields/unwrapFields round-trips (nested/array/idempotent/null)
-└── writer-validation.test.ts      # validateWriterPayload (size cap / JSON / type / top-level + nested allowlist)
+├── writer-validation.test.ts      # validateWriterPayload (size cap / JSON / type / top-level + nested allowlist)
+└── rate-limiter.test.ts           # config precedence, bounded slot wait, per-minute bucket, token-accounting order, envelope
 
 acumatica/                         # Acumatica-side setup package (Apache-2.0) for the GI exposure gate
 ├── MCP4Acumatica-AIDescription.zip # customization project: GIDesign/GIResult custom fields + SM208000 form
@@ -223,6 +234,9 @@ Opt-in gate + curated enrichment for Generic-Inquiry tools, layered on the exist
 - `ACUMATICA_ENDPOINT_VERSION` — `25.200.001`
 - `ACUMATICA_ENDPOINT_NAME` — contract-API endpoint name (the `{name}` in `/entity/{name}/{version}`). Optional; defaults to `Default` (Acumatica's stock system endpoint). Override only when targeting a custom Web Service Endpoint (SM207060). A custom endpoint can rename/reshape entities, so the hardcoded names in `GETTER_TOOLS` are only guaranteed against `Default`. The getters are **endpoint-aware**: on a non-`Default` endpoint a 404 is re-messaged (via `endpointAware404Message()` in `src/tools/getter-errors.ts`) to tell the model the entity may simply not be exposed by that endpoint — distinct from a wrong key — and to confirm with `acumatica_describe_entity`/`acumatica_search_schema`. On `Default` the plain "verify the ID" message is kept.
 - `ACUMATICA_MAX_RECORDS` — max rows per query (default `1000`). Runtime-overridable via `config:acumatica_max_records` in KV (set from the admin console).
+- `ACUMATICA_MAX_CONCURRENT` — max simultaneous Acumatica calls per user (default `3`). Runtime-overridable via `config:rate_limit_max_concurrent`.
+- `ACUMATICA_MAX_PER_MINUTE` — max Acumatica calls per user per calendar minute (default `40`). Runtime-overridable via `config:rate_limit_max_per_minute`.
+- `ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS` — how long a request waits for a busy concurrency slot before being rejected (default `2000`; `0` = reject immediately). Runtime-overridable via `config:rate_limit_queue_wait_ms`.
 - `ACUMATICA_CANARY_GI` — name of the canary Generic Inquiry the login access gate reads over OData (default `"MCPAccess"`). The server checks GI-readability, not role membership; restrict who can read it in Acumatica however you like (a marker role is the recommended way).
 - `REDACT_PATTERNS` — comma-separated additional field name patterns to redact (e.g., `CustomSSN,EmployeeNotes`)
 - `REDACT_SKIP` — comma-separated field name patterns to whitelist from redaction (e.g., `BirthDate`)
@@ -245,6 +259,10 @@ Opt-in gate + curated enrichment for Generic-Inquiry tools, layered on the exist
 Settings can be changed at runtime via the admin console at `/docs/admin/settings` without redeploying. KV overrides take precedence over env vars. Changes take effect when the next DO instance starts (DOs recycle within minutes on idle). Config keys stored in KV with `config:` prefix:
 - `config:redact_patterns`, `config:redact_skip`
 - `config:acumatica_max_records`
+- `config:rate_limit_max_concurrent`, `config:rate_limit_max_per_minute`, `config:rate_limit_queue_wait_ms`
+- `config:writes_enabled`
+
+Each entry in `CONFIG_KEYS` (`src/lib/config.ts`) may carry a `defaultValue`, which the settings page renders as the input's placeholder — so a setting with no KV override and no env var still shows the built-in value in effect rather than an empty box.
 
 ### Acumatica Connected Application (SM303010):
 - **Redirect URI:** `https://mcp4acumatica.hallboys.com/callback` (plus `https://acumatica-mcp.hallboys.com/callback` while the legacy alias is still live, and the *.workers.dev URL if you use that too — every hostname users connect to must be listed)

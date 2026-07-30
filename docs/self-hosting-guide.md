@@ -28,7 +28,7 @@ These files use `AppEnv` and `IKeyValueStore` -- no Cloudflare dependencies:
 | `src/auth/acumatica-oauth.ts` | Per-user token storage and refresh |
 | `src/lib/config.ts` | Runtime config with env var fallback |
 | `src/lib/metadata-cache.ts` | Schema and GI metadata caching |
-| `src/lib/rate-limiter.ts` | In-memory rate limiting |
+| `src/lib/rate-limiter.ts` | Per-user rate limiting (concurrency slots in memory, per-minute bucket in `IKeyValueStore`) |
 | `src/lib/redact.ts` | Sensitive field redaction |
 | `src/lib/logger.ts` | Structured JSON audit logging |
 | `src/lib/kv-store.ts` | `IKeyValueStore` interface |
@@ -230,10 +230,17 @@ const appEnv: AppEnv = {
   ACUMATICA_CLIENT_ID: process.env.ACUMATICA_CLIENT_ID!,
   ACUMATICA_CLIENT_SECRET: process.env.ACUMATICA_CLIENT_SECRET!,
   COOKIE_ENCRYPTION_KEY: process.env.COOKIE_ENCRYPTION_KEY!,
+  // Per-user rate limits, resolved once at startup: store override → env var →
+  // built-in default (3 concurrent / 40 per minute / 2000 ms queue wait). Omit
+  // the field entirely and `withRateLimit()` applies those same built-ins — but
+  // then the limits are not configurable at runtime, so resolve them here.
+  rateLimits: await resolveRateLimits(store, process.env),
   store,
   tokenProvider,  // see step 2b
 };
 ```
+
+`resolveRateLimits()` (`src/lib/config.ts`) reads `config:rate_limit_max_concurrent`, `config:rate_limit_max_per_minute`, and `config:rate_limit_queue_wait_ms` from your `IKeyValueStore`, falling back to the `ACUMATICA_MAX_CONCURRENT` / `ACUMATICA_MAX_PER_MINUTE` / `ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS` env vars. A zero or non-numeric value falls back to the built-in default rather than being taken literally, so one bad config entry can't lock every user out. Because the values are read once, a change applies to newly-constructed sessions — call it again per session (as the Cloudflare DO does in `init()`) if you want mid-flight reconfiguration.
 
 ### 2b. Implement `ITokenProvider` (token-refresh serialization)
 
@@ -407,7 +414,7 @@ The Cloudflare deployment wraps tool calls in `callTool()` which catches `Acumat
 
 ```typescript
 import { AcumaticaApiError } from "./lib/acumatica-client";
-import { RateLimitError } from "./lib/rate-limiter";
+import { RateLimitError, rateLimitEnvelope } from "./lib/rate-limiter";
 import { redactFields } from "./lib/redact";
 
 async function callTool(fn: () => Promise<unknown>) {
@@ -416,14 +423,26 @@ async function callTool(fn: () => Promise<unknown>) {
     const { data, redactedFields } = redactFields(result);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   } catch (error) {
+    // Rate-limit rejections get a structured envelope rather than a bare error
+    // string. Given only "limit reached, retry shortly", a model typically
+    // retries instantly, rewords the request, or substitutes another tool --
+    // and may report the throttle to the user as an Acumatica outage. The
+    // envelope carries an exact `retryAfterSeconds`, states that Acumatica was
+    // never contacted, and says to retry the same request unchanged.
+    if (error instanceof RateLimitError) {
+      return {
+        content: [{ type: "text", text: JSON.stringify(rateLimitEnvelope(error), null, 2) }],
+      };
+    }
     const message = error instanceof AcumaticaApiError ? error.message
-      : error instanceof RateLimitError ? error.message
       : error instanceof Error ? error.message
       : "An unexpected error occurred.";
     return { content: [{ type: "text", text: `Error: ${message}` }] };
   }
 }
 ```
+
+Consider also emitting a `rate_limit_hit` audit entry here (`logRateLimit()` in `src/lib/logger.ts`) as the Cloudflare deployment does. Without it, throttling is indistinguishable from genuine Acumatica failures in your logs, which is the data you need to tell "the caps are too tight" from "one client is looping."
 
 ---
 

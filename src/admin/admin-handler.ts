@@ -334,6 +334,8 @@ function renderAdminPage(title: string, activeTab: string, bodyHtml: string): st
     .log-type-tool_error { background: #fecaca; color: #991b1b; }
     .log-type-auth_event { background: #dcfce7; color: #166534; }
     .log-type-field_redaction { background: #fef3c7; color: #92400e; }
+    .log-type-rate_limit_hit { background: #ffedd5; color: #9a3412; }
+    .log-type-write_mutation { background: #f3e8ff; color: #6b21a8; }
     .log-details { font-family: "SF Mono", Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; background: var(--code-bg); padding: 8px; border-radius: 4px; }
     .filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; align-items: end; }
     .filters .form-group { margin-bottom: 0; }
@@ -544,6 +546,15 @@ adminApp.get("/", (c) => c.redirect("/docs/admin/logs"));
 
 // ── Settings page ────────────────────────────────────────────────
 
+/** Escape a string for interpolation into a double-quoted HTML attribute. */
+function attrEscape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 adminApp.get("/settings", async (c) => {
   const kv = c.env.TOKEN_STORE;
   const envLookup: Record<string, string | undefined> = {
@@ -551,6 +562,9 @@ adminApp.get("/settings", async (c) => {
     REDACT_SKIP: c.env.REDACT_SKIP,
     ACUMATICA_MAX_RECORDS: c.env.ACUMATICA_MAX_RECORDS,
     ACUMATICA_WRITES_ENABLED: c.env.ACUMATICA_WRITES_ENABLED,
+    ACUMATICA_MAX_CONCURRENT: c.env.ACUMATICA_MAX_CONCURRENT,
+    ACUMATICA_MAX_PER_MINUTE: c.env.ACUMATICA_MAX_PER_MINUTE,
+    ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS: c.env.ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS,
   };
 
   let rows = "";
@@ -560,13 +574,20 @@ adminApp.get("/settings", async (c) => {
     const effectiveValue = kvValue ?? envValue ?? "";
     const source = kvValue !== null ? "kv" : envValue ? "env" : "default";
     const badge = `<span class="source-badge source-${source}">${source.toUpperCase()}</span>`;
+    // With no KV override and no env var the box is empty, which reads as
+    // "unset/zero" rather than "the built-in default applies" — show the
+    // built-in as a placeholder so the effective value is always visible.
+    const placeholder =
+      cfg.defaultValue && effectiveValue === ""
+        ? ` placeholder="${attrEscape(cfg.defaultValue)} (built-in default)"`
+        : "";
 
     rows += `
       <div class="form-group" id="cfg-${cfg.key}">
         <label>${cfg.label} ${badge}</label>
         <div class="description">${cfg.description}</div>
         <div style="display:flex;gap:8px;align-items:start">
-          <textarea name="${cfg.key}" id="input-${cfg.key}">${effectiveValue}</textarea>
+          <textarea name="${cfg.key}" id="input-${cfg.key}"${placeholder}>${effectiveValue}</textarea>
           <button class="btn btn-primary btn-sm" onclick="saveSetting('${cfg.key}')">Save</button>
           ${kvValue !== null ? `<button class="btn btn-secondary btn-sm" onclick="resetSetting('${cfg.key}')">Reset</button>` : ""}
         </div>
@@ -633,6 +654,9 @@ adminApp.get("/settings/api", async (c) => {
     REDACT_SKIP: c.env.REDACT_SKIP,
     ACUMATICA_MAX_RECORDS: c.env.ACUMATICA_MAX_RECORDS,
     ACUMATICA_WRITES_ENABLED: c.env.ACUMATICA_WRITES_ENABLED,
+    ACUMATICA_MAX_CONCURRENT: c.env.ACUMATICA_MAX_CONCURRENT,
+    ACUMATICA_MAX_PER_MINUTE: c.env.ACUMATICA_MAX_PER_MINUTE,
+    ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS: c.env.ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS,
   };
 
   const result: Record<string, { value: string; source: string }> = {};
@@ -823,6 +847,8 @@ adminApp.get("/logs", (c) => {
           <option value="tool_error">Tool Error</option>
           <option value="auth_event">Auth Event</option>
           <option value="field_redaction">Field Redaction</option>
+          <option value="rate_limit_hit">Rate Limit Hit</option>
+          <option value="write_mutation">Write Mutation</option>
         </select>
       </div>
       <div class="form-group">

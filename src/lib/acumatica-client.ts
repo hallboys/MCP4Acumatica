@@ -58,6 +58,16 @@ export class AcumaticaClient {
   }
 
   /**
+   * Run an outbound Acumatica call under this user's rate limits. Limits come
+   * from `AppEnv.rateLimits` (resolved once when the session starts); when a
+   * platform adapter doesn't supply them, withRateLimit applies its built-in
+   * defaults.
+   */
+  private limited<T>(fn: () => Promise<T>): Promise<T> {
+    return withRateLimit(this.env.store, this.acumaticaUsername, fn, this.env.rateLimits);
+  }
+
+  /**
    * Make a GET request to the Acumatica contract-based REST API.
    * Uses the per-user token for the authenticated MCP user.
    * Handles token acquisition, rate limiting, retry on 401, and audit logging.
@@ -68,7 +78,7 @@ export class AcumaticaClient {
     params: Record<string, unknown> = {},
     query: Record<string, string> = {}
   ): Promise<T> {
-    return withRateLimit(this.env.store, this.acumaticaUsername, async () => {
+    return this.limited(async () => {
       const start = Date.now();
       const url = this.buildUrl(path, query);
 
@@ -117,7 +127,7 @@ export class AcumaticaClient {
     params: Record<string, unknown> = {},
     query: Record<string, string> = {}
   ): Promise<T> {
-    return withRateLimit(this.env.store, this.acumaticaUsername, async () => {
+    return this.limited(async () => {
       const start = Date.now();
       const odataBase = `${this.env.ACUMATICA_URL}/t/${this.env.ACUMATICA_TENANT}/api/odata/gi`;
       const separator = path ? "/" : "";
@@ -159,7 +169,7 @@ export class AcumaticaClient {
    * Fetch the OData GI $metadata document as raw XML text.
    */
   async getODataMetadata(toolName: string): Promise<string> {
-    return withRateLimit(this.env.store, this.acumaticaUsername, async () => {
+    return this.limited(async () => {
       const start = Date.now();
       const url = `${this.env.ACUMATICA_URL}/t/${this.env.ACUMATICA_TENANT}/api/odata/gi/$metadata`;
 
@@ -215,7 +225,7 @@ export class AcumaticaClient {
     params: Record<string, unknown> = {},
     query: Record<string, string> = {}
   ): Promise<T> {
-    return withRateLimit(this.env.store, this.acumaticaUsername, async () => {
+    return this.limited(async () => {
       const start = Date.now();
       const url = this.buildUrl(path, query);
 

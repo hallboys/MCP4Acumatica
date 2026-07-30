@@ -1089,6 +1089,15 @@ export interface AppEnv {
   // Write tools — set to "true" to enable mutating tools (off by default).
   // Runtime-overridable via config:writes_enabled in KV (admin console).
   ACUMATICA_WRITES_ENABLED?: string;
+  // Per-user rate limits (concurrency / per-minute / queue wait). Raw env
+  // fallbacks; the resolved numeric form is `rateLimits` below.
+  ACUMATICA_MAX_CONCURRENT?: string;
+  ACUMATICA_MAX_PER_MINUTE?: string;
+  ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS?: string;
+  // Resolved rate limits (KV override → env var → built-in default), computed
+  // once when the session starts so the hot path needs no extra KV read.
+  // Optional: when absent, withRateLimit() falls back to DEFAULT_RATE_LIMITS.
+  rateLimits?: import("../lib/rate-limiter").RateLimitConfig;
   // Platform-agnostic key-value store (tokens, config, cache)
   store: import("../lib/kv-store").IKeyValueStore;
   // Serializes per-user Acumatica token refresh so concurrent sessions can't
@@ -1125,6 +1134,10 @@ export interface Env {
   REDACT_PATTERNS?: string;
   REDACT_SKIP?: string;
   ACUMATICA_WRITES_ENABLED?: string;
+  // Per-user rate limits — runtime-overridable via config:rate_limit_* in KV
+  ACUMATICA_MAX_CONCURRENT?: string;
+  ACUMATICA_MAX_PER_MINUTE?: string;
+  ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS?: string;
   // Raw KV binding (used by auth handler and admin handler which need direct KV access)
   TOKEN_STORE: KVNamespace;
   // OAuth provider — OAUTH_KV is required by @cloudflare/workers-oauth-provider internally
