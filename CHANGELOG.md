@@ -5,6 +5,18 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.42.0] - 2026-07-30
+### Added
+- **Preflight row for the DAC-based OData endpoint.** Acumatica **2025 R1+** exposes data access classes directly over OData 4.0 at `/t/{tenant}/api/odata/dac` — entities named by class (`PX.Objects.SO.SOOrder`), navigation properties (`SOLineCollection`, `BAccountByCustomerID`), no Generic Inquiry required. This server does not use it (reads are contract REST; GI OData serves search and the login gate), but it is the strongest candidate fix for the contract-API `$filter` failure family, so `/docs/admin/preflight` now surfaces it. Per Acumatica's docs it honors each user's existing rights ("users have access to the same data that is visible to them in the UI based on their access rights"), so it does not bypass row- or field-level security.
+- **`docs/odata-filtering.md` now states which of its gotchas are not OData's fault.** No `$skip`, no child-collection filtering, and the silent-`[]` / `CannotOptimizeException` family are artifacts of the *contract-based REST API's filter binder*, not of OData. The doc names the two things that must be resolved before the DAC endpoint could replace the search path: whether a normal user role suffices, and re-validating `redact.ts` field-name patterns against physical DAC field names.
+
+### Fixed
+- Nothing user-visible; see the note below for a pre-existing defect this work uncovered.
+
+### Notes
+- **Acumatica SaaS authenticates before routing, so no anonymous probe can confirm a path exists.** Verified live on 25R2: `/api/odata/dac/`, `/api/odata/gi/`, `/api/odata/nonsense/`, `/t/NotARealTenant/api/odata/gi/`, and `/entity/Default/99.999.999` **all return 401**. The DAC row was therefore built as a no-request `skip` carrying the authenticated `curl` an operator needs, rather than inferring availability from a 401 — which would have manufactured a green row out of noise.
+- ⚠️ **Pre-existing defect, not yet fixed:** the same behavior means `checkTenantPath` and `checkEndpointVersion` — which assume "404 = wrong tenant / wrong version" — cannot detect a wrong value. A typo'd `ACUMATICA_TENANT` or `ACUMATICA_ENDPOINT_VERSION` returns 401 and is reported as **pass**, and `docs/upgrading-acumatica.md`'s claim that preflight "flags a wrong value" for the endpoint version does not hold. Real verification comes from a successful login or tool call. Left unfixed here because the honest correction downgrades two long-green rows for every operator, which deserves a deliberate decision rather than being folded into an unrelated change.
+
 ## [0.41.0] - 2026-07-30
 ### Added
 - **Rate limits are now runtime-configurable from the admin console.** The per-user concurrency cap and per-minute cap were hardcoded module constants requiring a code edit and redeploy to change. Both are now `CONFIG_KEYS` entries at `/docs/admin/settings` — "Max Concurrent Requests Per User" (`config:rate_limit_max_concurrent`, env `ACUMATICA_MAX_CONCURRENT`, default 3) and "Max Requests Per Minute Per User" (`config:rate_limit_max_per_minute`, env `ACUMATICA_MAX_PER_MINUTE`, default 40). Validated at write time (positive integer, ≤ 20 and ≤ 1000 respectively); a zero or non-numeric value falls back to the built-in default rather than locking every user out. Resolved once per session in the DO's `init()` via `resolveRateLimits()` and stashed on `AppEnv.rateLimits`, so the hot path takes no extra KV read — changes apply when the next DO instance starts, the same as every other runtime setting.

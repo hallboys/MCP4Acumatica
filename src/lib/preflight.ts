@@ -243,6 +243,60 @@ export async function checkTenantPath(
 }
 
 /**
+ * Capability probe (NOT a requirement) for the DAC-based OData endpoint,
+ * `/t/{tenant}/api/odata/dac/` — Acumatica 2025 R1+ exposes data access classes
+ * directly over OData 4.0, no Generic Inquiry needed. This server does not use
+ * it today (reads are contract REST; GI OData serves search + the login gate),
+ * but it is the strongest candidate fix for the contract-API `$filter` failure
+ * family (see docs/odata-filtering.md) — those failures come from the contract
+ * API's filter binder, not from OData.
+ *
+ * WHY THIS DOESN'T PROBE. Acumatica SaaS applies authentication *before* routing:
+ * an unauthenticated request returns 401 for every path under the instance,
+ * including a nonexistent tenant, a bogus endpoint version, and outright
+ * nonsense segments. Verified live against a 25R2 SaaS instance:
+ *
+ *   /t/{tenant}/api/odata/dac/       -> 401
+ *   /t/{tenant}/api/odata/gi/        -> 401
+ *   /t/{tenant}/api/odata/nonsense/  -> 401
+ *   /t/NotARealTenant/api/odata/gi/  -> 401
+ *   /entity/Default/99.999.999       -> 401
+ *
+ * So an anonymous 401 carries **no information** about whether this endpoint
+ * exists, and a check that reported "401 = available" would be manufacturing a
+ * green row out of noise. Determining availability requires a real bearer
+ * token, and preflight has none: it deliberately runs without a user, and this
+ * deployment's Connected App has `client_credentials` disabled (see
+ * checkClientCredentials), so no service token exists either.
+ *
+ * This row is therefore an honest `skip` — same shape as checkCallbackUrl,
+ * which also reports something that cannot be verified server-side. It carries
+ * the authenticated command that answers both open questions at once:
+ * does the endpoint exist, and does a normal user's role suffice (community
+ * reports claim an elevated "OData v4 User" role is needed; the official docs
+ * neither confirm nor deny, and if true it is unusable under this server's
+ * per-user access model).
+ */
+export async function checkDacODataEndpoint(
+  url: string | undefined,
+  tenant: string | undefined
+): Promise<PreflightCheck> {
+  const name = "DAC-based OData endpoint (informational)";
+  if (!url || !tenant) {
+    return { name, status: "skip", detail: "ACUMATICA_URL or ACUMATICA_TENANT not set." };
+  }
+  const probeUrl = `${url}/t/${encodeURIComponent(tenant)}/api/odata/dac`;
+  return {
+    name,
+    status: "skip",
+    detail:
+      "Not verifiable server-side. Acumatica returns 401 for every path when unauthenticated — including nonexistent ones — so an anonymous probe cannot tell whether this endpoint exists. Acumatica 2025 R1+ exposes DACs directly over OData 4.0 here; this server does not use it (reads are contract REST, search rides Generic Inquiries), so nothing depends on the answer today.",
+    remediation:
+      `Run this with a real user's bearer token to answer both open questions:  curl -i -H "Authorization: Bearer <user-token>" "${probeUrl}/PX.Objects.AR.Customer?$top=1"  — 200 means the endpoint exists AND a normal user role suffices (it would then be a candidate for fixing the contract-API $filter limitations). 404 means the instance predates 2025 R1 or has it disabled. 401/403 with a valid token means an elevated "OData v4 User" role is required, which would make it unusable under this server's per-user access model.`,
+  };
+}
+
+/**
  * Contract API versioning. `/entity/{name}/{version}` exists per version.
  * 401 = version path exists (auth required); 404 = wrong version or name.
  */
@@ -302,7 +356,10 @@ export async function runPreflight(input: PreflightInput): Promise<PreflightChec
     creds,
     tenant,
     endpoint,
+    // Trailing rows report things that cannot be verified server-side, so they
+    // make no request and are grouped after the real probes.
     checkCallbackUrl(input.expectedCallbackUrl),
+    await checkDacODataEndpoint(input.acumaticaUrl, input.acumaticaTenant),
   ];
 }
 
