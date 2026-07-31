@@ -5,6 +5,22 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.44.0] - 2026-07-31
+### Fixed
+- **`Unexpected end of JSON input` no longer reaches the model.** `await response.json()` on an empty Acumatica response body threw the raw V8 parser message, which was surfaced as the entire explanation — no indication of what happened or what to do. Log analysis over 95 days (4734 R2 objects, 13 292 tool invocations) counted **279 occurrences**, roughly **14% of all current tool errors**, almost entirely from `acumatica_run_inquiry` (259) with the remainder from `acumatica_describe_inquiry` (20). All three 2xx-body parse sites in `acumatica-client.ts` now go through `parseAcumaticaJson()`.
+- **An empty body is never reported as "no matching records."** Standard OData returns `{"value": []}` for an empty result set, so a body-less 200 is anomalous. Translating it into zero rows would be the same silent-wrong-data failure the `possibleFalseNegative` warnings exist to prevent, so the error states explicitly that this is *not* the same as nothing matching and that the user must not be told no records exist.
+- **An empty body on a write now forbids retrying.** A successful write normally echoes the saved record, so an empty body means the outcome is genuinely unknown. Retrying could duplicate an auto-numbered record, since PUT-as-upsert is only idempotent when the key is supplied. The `put()` path passes `kind: "write"` and the message says do not retry and to verify the record directly in Acumatica — the opposite of the read path's "retry once".
+- **Non-JSON bodies are now diagnosable.** Instead of a parser message, the error names the likely cause (an HTML error or sign-in page returned instead of data) and includes a whitespace-collapsed 200-character snippet.
+
+### Added
+- `src/lib/response-parse.ts` — `parseAcumaticaJson()`, an import-free leaf so it is loadable under `node --test` strip-only mode.
+- `test/response-parse.test.ts` — 13 tests, including that a legitimate `{"value":[]}` still parses (not conflated with an empty body), that the write path never inherits the read path's retry advice, that `kind` defaults to `read` so an un-annotated call can't get write advice, and that the raw `Unexpected end of JSON input` string never appears in any message.
+
+### Notes
+- The same log analysis found **1120 token-refresh errors before 2026-06-08 and zero after** — the `TokenManager` Durable Object (0.33.0, deployed 06-07) eliminated that failure class completely, confirmed across 7+ weeks of production traffic.
+- It also showed the largest current error category is the model emitting invalid OData: unknown functions (44), unknown property names (43), and operator type mismatches (10) — 97 of 242 July errors. That is a schema-discovery problem, not an API defect, and is not addressed here.
+- `acumatica_http_call` entries (which carry per-HTTP-call `durationMs`) are **not** persisted to R2: `logHttpCall()` only calls `console.log`, and Logpush does not capture Durable Object traces. Only `tool_invocation` durations are queryable from the log store. Documented here because the admin log viewer offers an `acumatica_http_call` filter that will always return nothing.
+
 ## [0.43.0] - 2026-07-31
 ### Added
 - **Authenticated DAC-OData probe in the admin console.** The 0.42.0 preflight row could only tell you the question was unanswerable, since Acumatica 401s every unauthenticated path and preflight has no token of its own. `/docs/admin/preflight` now has a **"DAC-based OData probe (authenticated)"** form: enter a connected user's Acumatica username and it borrows their stored token via the same `TokenManager` DO the MCP tools use, then reports a real verdict — is the endpoint present, and does an ordinary user's role suffice? Removes the need to extract a bearer token by hand.

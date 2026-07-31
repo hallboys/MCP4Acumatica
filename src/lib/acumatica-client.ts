@@ -5,6 +5,7 @@ import type { AppEnv } from "../types/acumatica";
 import { getAcumaticaTokenForUser } from "../auth/acumatica-oauth";
 import { withRateLimit } from "./rate-limiter";
 import { logHttpCall, logError } from "./logger";
+import { parseAcumaticaJson } from "./response-parse";
 export { wrapFields, unwrapFields } from "./field-transforms";
 
 const ERROR_BODY_MAX_CHARS = 400;
@@ -111,7 +112,16 @@ export class AcumaticaClient {
         throw new AcumaticaApiError(response.status, body, message);
       }
 
-      return (await response.json()) as T;
+      const parsed = parseAcumaticaJson<T>(
+        response.status,
+        await response.text(),
+        endpoint
+      );
+      if (!parsed.ok) {
+        logError(toolName, parsed.message);
+        throw new AcumaticaApiError(response.status, "", parsed.message);
+      }
+      return parsed.data;
     });
   }
 
@@ -161,7 +171,16 @@ export class AcumaticaClient {
         throw new AcumaticaApiError(response.status, body, message);
       }
 
-      return (await response.json()) as T;
+      const parsed = parseAcumaticaJson<T>(
+        response.status,
+        await response.text(),
+        endpoint
+      );
+      if (!parsed.ok) {
+        logError(toolName, parsed.message);
+        throw new AcumaticaApiError(response.status, "", parsed.message);
+      }
+      return parsed.data;
     });
   }
 
@@ -259,7 +278,17 @@ export class AcumaticaClient {
         throw new AcumaticaApiError(response.status, errorBody, message);
       }
 
-      return (await response.json()) as T;
+      const parsed = parseAcumaticaJson<T>(
+        response.status,
+        await response.text(),
+        endpoint,
+        "write"
+      );
+      if (!parsed.ok) {
+        logError(toolName, parsed.message);
+        throw new AcumaticaApiError(response.status, "", parsed.message);
+      }
+      return parsed.data;
     });
   }
 
