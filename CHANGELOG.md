@@ -5,6 +5,18 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.47.0] - 2026-07-31
+### Removed
+- **The DAC-based OData probe.** Evaluated against this deployment and declined, so the code came out rather than sitting as dead surface every operator sees. Deleted `checkDacODataEndpoint` (an informational row on every preflight run), `probeDacAuthenticated`, `interpretDacProbe`, `parseODataServiceDocument`, `pickProbeEntitySets`, the entity-set sample UI, and the 12 DAC-specific tests. Net −250 lines.
+- Rationale, recorded in `docs/odata-filtering.md` and CLAUDE.md so the evaluation is not repeated: the endpoint **works** (service root + `SOOrder` read → 200 with an ordinary user's token; per-DAC rights enforced — `Users`, `UsersInRoles`, `CustomerPaymentMethodDetail` → 403), and entity sets are addressed by **bare class name** (4766 sets, up to three aliases each). But no speed case at our scale (production medians within 5%: 891 ms contract-REST vs 941 ms GI-OData; the 2–10x claim concerns bulk reads, while these tools default to 100 rows, cap at 1000, and refuse pagination), no rate-limit case (**zero** Acumatica 429s in 95 days — the only binding limiter is our own), and the tempting win didn't materialize (`UsersInRoles` → 403, so the login gate still needs the canary GI). Redaction turned out *not* to be a blocker: physical DAC field names match contract-entity names for PII, so existing patterns fire unchanged. **A bulk workload would flip this decision.**
+
+### Changed
+- **The authenticated-checks form is kept and is now named for what it does.** Its justification no longer rests on the DAC probe but on tenant + contract-endpoint-version verification — the only thing that can catch a typo'd `ACUMATICA_TENANT` or `ACUMATICA_ENDPOINT_VERSION`, since Acumatica 401s every unauthenticated path. Route renamed `/docs/admin/preflight/dac-probe` → `/docs/admin/preflight/authed-checks`; `DacProbeResult` → `AuthedVerdict`; page copy no longer mentions DAC.
+- `test/preflight-dac.test.ts` → `test/preflight-authed.test.ts`, retaining the 6 tenant/endpoint verdict tests.
+
+### Notes
+- Untouched by this cleanup: the 0.45.0 false-pass fix, the 0.46.0 OData v3/v4 dialect split, and the v4 filter-error corrections. The v3/v4 comparison table and the "Generic Inquiries use OData v4" section in `docs/odata-filtering.md` remain in full — that dialect distinction is live behavior, not part of the declined evaluation.
+
 ## [0.46.0] - 2026-07-31
 ### Fixed
 - **The Generic Inquiry tool was documented with the wrong OData dialect — the single largest source of tool errors.** `acumatica_run_inquiry` queries `/api/odata/gi`, which is **OData v4**, while `acumatica_list_entities` queries the contract API, which is **v3**. Both tools carried *byte-identical v3 filter guidance*, so every partial-match GI query was told to use `substringof()` — which does not exist in v4 — and explicitly forbidden from using `contains()`, the function it should have used. Verified live against a 25R2 instance: `substringof('BAD', Description)` fails with *"An unknown function with name 'substringof' was found"*, `contains(Description,'BAD')` works, `startswith`/`endswith` work in both dialects, `tolower()`/`toupper()` work on v4 despite 500ing on contract REST, and `CreatedOn gt datetimeoffset'2024-01-01'` is rejected where bare `2024-01-01T00:00:00Z` succeeds. July 2026 logs attribute **97 of 242 tool errors (~41%)** to this class: 44 unknown-function, 43 unknown-property, 10 operator type-mismatch.

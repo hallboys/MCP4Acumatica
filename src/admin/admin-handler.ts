@@ -758,18 +758,18 @@ adminApp.get("/preflight", (c) => {
 
     <hr style="margin:32px 0;border:0;border-top:1px solid var(--border, #e2e8f0)">
     <h2>Authenticated checks</h2>
-    <p>Acumatica returns 401 for <em>every</em> path when unauthenticated &mdash; including tenants and endpoint versions that do not exist &mdash; so several checks above cannot confirm their values on their own. These run with a connected user's stored token, where a 404 finally means what it should: <strong>tenant</strong>, <strong>contract endpoint version</strong>, and the <code>/api/odata/dac</code> capability probe (Acumatica 2025 R1+).</p>
+    <p>Acumatica returns 401 for <em>every</em> path when unauthenticated &mdash; including tenants and endpoint versions that do not exist &mdash; so the <strong>tenant</strong> and <strong>contract endpoint version</strong> checks above cannot confirm their values on their own. These re-run them with a connected user's stored token, where a 404 finally means what it should. Run this after any change to <code>ACUMATICA_TENANT</code> or <code>ACUMATICA_ENDPOINT_VERSION</code>.</p>
     <p><strong>Note:</strong> the request is made <em>as that user</em>, so it appears in Acumatica's audit trail under their name. Every run is logged here as an <code>admin_action</code>. Only HTTP status codes are read &mdash; no record data is returned or stored.</p>
     <div class="filters">
       <div class="form-group">
         <label>Acumatica username</label>
-        <input type="text" id="dacUsername" placeholder="the Acumatica login, case-sensitive">
+        <input type="text" id="authedUsername" placeholder="the Acumatica login, case-sensitive">
       </div>
       <div class="form-group">
-        <button class="btn btn-primary" onclick="runDacProbe()">Run authenticated checks</button>
+        <button class="btn btn-primary" onclick="runAuthedChecks()">Run authenticated checks</button>
       </div>
     </div>
-    <div id="dac-results"></div>
+    <div id="authed-results"></div>
     <script>
       async function runPreflight() {
         document.getElementById('preflight-results').innerHTML = '<div class="empty-state">Running checks… this can take up to 30 seconds.</div>';
@@ -818,22 +818,22 @@ adminApp.get("/preflight", (c) => {
         html += '</tbody></table>';
         document.getElementById('preflight-results').innerHTML = html;
       }
-      function dacCsrf() {
+      function authedCsrf() {
         const m = document.cookie.match(/(?:^|; )mcp_admin_csrf=([^;]+)/);
         return m ? m[1] : '';
       }
-      async function runDacProbe() {
-        const username = document.getElementById('dacUsername').value.trim();
-        const out = document.getElementById('dac-results');
+      async function runAuthedChecks() {
+        const username = document.getElementById('authedUsername').value.trim();
+        const out = document.getElementById('authed-results');
         if (!username) {
           out.innerHTML = '<div class="alert alert-error">Enter an Acumatica username first.</div>';
           return;
         }
         out.innerHTML = '<div class="empty-state">Probing as ' + esc(username) + '…</div>';
         try {
-          const res = await fetch('/docs/admin/preflight/dac-probe', {
+          const res = await fetch('/docs/admin/preflight/authed-checks', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': dacCsrf() },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': authedCsrf() },
             body: JSON.stringify({ username: username })
           });
           const data = await res.json();
@@ -848,19 +848,6 @@ adminApp.get("/preflight", (c) => {
             h += '<div class="alert alert-' + color + '"><strong>' + esc(r.name) + ':</strong> ' + esc(r.headline) + '</div>';
             h += '<div style="padding:12px;background:var(--code-bg);border-radius:4px;font-size:13px;line-height:1.6">' +
                  esc(r.detail) + '</div>';
-            if (r.probedEntitySet) {
-              h += '<p style="font-size:13px">Read succeeded against entity set <code>' + esc(r.probedEntitySet) + '</code>.</p>';
-            }
-            if (typeof r.entitySetCount === 'number') {
-              h += '<p style="font-size:13px"><strong>' + r.entitySetCount +
-                   '</strong> entity set(s) advertised by the service document' +
-                   (r.sampleEntitySets && r.sampleEntitySets.length
-                     ? ' — first ' + r.sampleEntitySets.length + ', so you can see the real naming convention:'
-                     : '.') + '</p>';
-              if (r.sampleEntitySets && r.sampleEntitySets.length) {
-                h += '<div class="log-details">' + esc(r.sampleEntitySets.join('\\n')) + '</div>';
-              }
-            }
             h += '</div>';
           }
           out.innerHTML = h || '<div class="alert alert-info">No results returned.</div>';
@@ -889,12 +876,14 @@ adminApp.get("/preflight/api", async (c) => {
 });
 
 /**
- * Authenticated DAC-OData probe.
+ * Authenticated preflight checks.
  *
- * The unauthenticated preflight row can't determine anything (Acumatica 401s
- * every path, existent or not), and preflight has no token of its own — no user,
- * and client_credentials is disabled on the Connected App. So this route borrows
- * a *user's* stored token via the same TokenManager DO the MCP tools use.
+ * The unauthenticated tenant / endpoint-version rows cannot confirm their values:
+ * Acumatica authenticates before routing, so every path returns 401 whether or
+ * not it exists — a typo'd tenant or version looked identical to a correct one
+ * and was reported as `pass`. Preflight has no token of its own (no user by
+ * design, and client_credentials is disabled on the Connected App), so this route
+ * borrows a *user's* stored token via the same TokenManager DO the MCP tools use.
  *
  * That is a real capability, so it is deliberately constrained: POST + CSRF (not
  * a GET that could be triggered by a link), admin session required by the
@@ -904,7 +893,7 @@ adminApp.get("/preflight/api", async (c) => {
  *
  * Only status codes cross this boundary; no Acumatica record data is returned.
  */
-adminApp.post("/preflight/dac-probe", async (c) => {
+adminApp.post("/preflight/authed-checks", async (c) => {
   try {
     const session = c.get("session");
     const csrfOk = await requireCsrf(

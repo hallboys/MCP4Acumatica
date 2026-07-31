@@ -334,65 +334,31 @@ filter must never be reported to the user as "no records matched".
 
 Gotchas 5, 7, and 8 -- no `$skip`, no child-collection filtering, and the silent-`[]` /
 `CannotOptimizeException` family on complex document entities -- are **not OData limitations**.
-They are artifacts of the *contract-based REST API's* filter binder. A genuine OData 4.0
-implementation handles all three.
+They are artifacts of the *contract-based REST API's* filter binder.
 
-Acumatica **2025 R1** added exactly that: a **DAC-based OData endpoint** at
-`/t/{tenant}/api/odata/dac`, exposing data access classes directly (entities named by class,
-e.g. `PX.Objects.SO.SOOrder`, with navigation properties such as `SOLineCollection`) with no
-Generic Inquiry required. Per Acumatica's documentation it honors each user's existing access
-rights -- *"users have access to the same data that is visible to them in the UI based on their
-access rights"* -- so it does not bypass row- or field-level security.
+### DAC-based OData: evaluated 2026-07-31, not adopted
 
-**This server does not use it today.** Reads go through contract REST (keyed lookups, and the
-one surface that also supports writes), and search rides Generic Inquiries over
-`/t/{tenant}/api/odata/gi`. Two things need resolving before it could replace the search path:
+Acumatica **2025 R1+** exposes data access classes directly over OData 4.0 at
+`/t/{tenant}/api/odata/dac`, which would sidestep that whole family. It was evaluated against this
+deployment and **declined**. Recording the findings so the evaluation is not repeated:
 
-1. **Does a normal user role suffice?** There are community reports that the DAC endpoint
-   requires an elevated *OData v4 User* role, which the official documentation neither confirms
-   nor denies. If true it is unusable here, since this server's entire access model is each
-   user's own Acumatica role. **The preflight page (`/docs/admin/preflight`) can now answer this
-   directly** -- the "DAC-based OData probe (authenticated)" form takes a connected user's
-   Acumatica username, borrows their stored token, and reports whether the endpoint exists and
-   whether an ordinary role can read it. Each run is audit-logged, and the request reaches
-   Acumatica as that user.
-2. **Field redaction is matched on field names.** `src/lib/redact.ts` patterns are tuned to
-   contract-entity field names; DAC field names are physical and would need re-validating, or
-   sensitive fields would silently stop being redacted.
+- **It works.** The service root and a read of `SOOrder` both returned 200 with an ordinary user's
+  token. Per-DAC access rights are enforced -- `Users`, `UsersInRoles`, and
+  `CustomerPaymentMethodDetail` returned 403.
+- **Entity sets are addressed by bare class name.** `SOOrder` works; `PX.Objects.SO.SOOrder`
+  404s (the qualified form is the OData *type* name). Up to three aliases per DAC are advertised:
+  underscored namespace path, bare class name, and a de-prefixed variant. 4766 sets in total.
+- **No speed case at our scale.** Production latency over 95 days showed contract-REST and
+  GI-OData medians within 5% (891 ms vs 941 ms). The claimed 2--10x advantage applies to bulk
+  reads; these tools default to 100 rows, cap at 1000, and refuse pagination.
+- **No rate-limit case.** Zero Acumatica 429s in 95 days -- the only limiter that binds is this
+  server's own, which is self-imposed and configurable.
+- **Redaction was not the obstacle it looked like.** Physical DAC field names match contract-entity
+  names for PII (`DateOfBirth`, `TaxRegistrationID`), so the existing patterns fire unchanged.
+- **The tempting win did not materialize.** `Users`/`UsersInRoles` are 403, so the login access gate
+  still needs the canary GI rather than a direct role-membership query.
 
-Until both are closed, prefer a Generic Inquiry for any read that gotchas 7 and 8 block.
+**What would change the decision:** a bulk workload -- export, reconciliation, a nightly sync.
+There OData is the right surface and this evaluation does not apply.
 
-### Verified on this deployment (25R2, 2026-07-31)
-
-The authenticated probe confirms the endpoint **works**: the service root and a read of `SOOrder`
-both succeeded. What it does *not* establish is whether a non-administrator can read it -- the
-test ran as an Administrator, which may carry the **OData v4** role implicitly. Acumatica has an
-explicit OData v4 role, so users may need it granted. That is a setup prerequisite of the same
-kind as the `MCP Access` role, not an obstacle.
-
-**Entity sets are addressed by bare class name.** `PX.Objects.SO.SOOrder` returns 404;
-`SOOrder` returns 200. Acumatica's documentation shows the namespace-qualified form, but that is
-the OData *type* name, not the entity set. The service document advertises up to three aliases
-per DAC -- the namespace path with underscores (`AA_Objects_Labels_ALAutoPrint`), the bare class
-name (`ALAutoPrint`), and a de-prefixed variant (`AutoPrint`). Use the bare class name.
-
-The instance advertises **4766 entity sets**, but that count is not itself an obstacle: tools
-address entities *by name* -- the same way the 38 `acumatica_get_*` getters and
-`acumatica_list_entities` already do -- so the catalogue is never handed to the model. (Unlike
-Generic Inquiries, where `acumatica_list_generic_inquiries` puts the menu directly into context,
-which is what the GI opt-in gate exists to control.) The count matters only in that `$metadata`
-should never be fetched from a tool at that scale, and that a curated set of exposed entities is
-still worth having for discoverability.
-
-**What genuinely remains before a DAC read path could ship:**
-
-1. **Redaction.** `src/lib/redact.ts` matches on field *names*, and physical DAC field names
-   differ from contract-entity names. The patterns must be re-validated against real DAC output
-   or sensitive fields silently stop being redacted. This is the actual blocker.
-2. **Row-level security.** Acumatica's docs say access mirrors UI visibility, but a 200 for an
-   Administrator proves only that the request was allowed, not that rows are filtered for a
-   restricted user. Verify with a deliberately limited account.
-3. **A field-name source.** The offline schema index (`scripts/build-schema-index.mjs`) is built
-   from the contract API's `swagger.json` and so does not describe DAC fields. A DAC read path
-   needs its own field metadata, which the same ingestion pattern could provide from `$metadata`
-   offline.
+Until then, prefer a Generic Inquiry for any read that gotchas 7 and 8 block.
