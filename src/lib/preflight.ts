@@ -431,9 +431,9 @@ export function interpretDacProbe(
   if (rootStatus === 403) {
     return {
       status: "warn",
-      headline: "Exists, but this user's role is not permitted.",
+      headline: "Exists, but this user has not been granted access to it.",
       detail:
-        "The endpoint responded 403 to an authenticated request, which confirms the reported requirement for an elevated role (\"OData v4 User\"). That makes it unusable here: this server's access model is each user's own Acumatica role, and granting every AI user an elevated role would defeat it. Keep search on Generic Inquiries.",
+        "The endpoint responded 403 to an authenticated request, so it is present but this user's roles do not permit it. Acumatica has an explicit OData v4 role — grant it to the user (or to the MCP Access role) and re-run. This is a setup prerequisite of the same kind as the MCP Access role itself, not a disqualifier: row- and field-level rights still come from the user's own roles, so the per-user access model is preserved.",
     };
   }
   if (rootStatus === 401) {
@@ -464,9 +464,9 @@ export function interpretDacProbe(
   if (entityStatus === 200) {
     return {
       status: "pass",
-      headline: "Available, and a normal user role suffices.",
+      headline: "Available and readable by the user you tested.",
       detail:
-        `Both the service root and a read of "${entityName}" succeeded with an ordinary user's token. The DAC endpoint is a viable read surface on this instance, which makes it a real candidate for fixing the contract-API $filter limitations (child-collection filters, the silent-[] family). Before using it: re-validate src/lib/redact.ts field-name patterns against physical DAC field names, since redaction matches on names and DAC names differ from contract-entity names.`,
+        `The service root and a read of "${entityName}" both succeeded, so the DAC endpoint works on this instance — a real candidate for fixing the contract-API $filter limitations (child-collection filters, the silent-[] family). TWO CAVEATS this probe cannot settle. (1) It does not show whether a NON-ADMINISTRATOR can read it: an Administrator may carry the OData v4 role implicitly, so re-run as an ordinary user to learn whether that role must be granted explicitly. Needing the grant is a setup prerequisite like the MCP Access role, not a blocker. (2) A 200 does not prove row-level security filters rows for a restricted user — it only proves the request was allowed. Verify with a deliberately restricted account. Separately, before any DAC read path ships, re-validate src/lib/redact.ts field-name patterns against physical DAC field names: redaction matches on names, and DAC names differ from contract-entity names.`,
     };
   }
   if (entityStatus === 403) {
