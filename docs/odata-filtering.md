@@ -303,3 +303,22 @@ one surface that also supports writes), and search rides Generic Inquiries over
    sensitive fields would silently stop being redacted.
 
 Until both are closed, prefer a Generic Inquiry for any read that gotchas 7 and 8 block.
+
+### Verified on this deployment (25R2, 2026-07-31)
+
+The authenticated probe confirms the endpoint is **available and readable with an ordinary user's
+role** -- no elevated *OData v4 User* role was needed. Two findings shape any future use:
+
+**Entity sets are addressed by bare class name.** `PX.Objects.SO.SOOrder` returns 404;
+`SOOrder` returns 200. Acumatica's documentation shows the namespace-qualified form, but that is
+the OData *type* name, not the entity set. The service document advertises up to three aliases
+per DAC -- the namespace path with underscores (`AA_Objects_Labels_ALAutoPrint`), the bare class
+name (`ALAutoPrint`), and a de-prefixed variant (`AutoPrint`). Use the bare class name.
+
+**The surface is enormous: 4766 entity sets.** That is the same problem the GI opt-in gate exists
+to solve, one order of magnitude larger. Handing an AI assistant a 4766-entry menu would flood
+its context and degrade selection far worse than an uncurated GI list does, and three aliases per
+DAC means the same table can be named three ways. So a DAC-backed read tool cannot simply expose
+the endpoint -- it needs a curated allowlist of entity sets, exactly as
+[Generic Inquiries](generic-inquiries.md) do. Relatedly, never fetch `$metadata` from a tool:
+for 4766 sets it is enormous.
