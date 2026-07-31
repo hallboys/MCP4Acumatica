@@ -5,6 +5,18 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.45.0] - 2026-07-31
+### Fixed
+- **Preflight no longer reports a wrong tenant or endpoint version as `pass`.** `checkTenantPath` and `checkEndpointVersion` treated a 401 as "the path exists" and reserved `fail` for a 404 — but Acumatica SaaS authenticates *before* routing, so an unauthenticated request returns **401 for every path**, including ones that do not exist. Verified live on 25R2: `/t/NotARealTenant/api/odata/gi/` → 401 and `/entity/Default/99.999.999` → 401, both previously reported as passing. A typo'd `ACUMATICA_TENANT` or `ACUMATICA_ENDPOINT_VERSION` therefore sailed through the diagnostic that exists to catch exactly that. Both rows now return **`warn`** on a 401, stating plainly that the value cannot be confirmed without a token, and reserve `pass` for a genuine 200.
+- **`docs/upgrading-acumatica.md` §5 corrected.** It claimed preflight "catches a wrong `ACUMATICA_ENDPOINT_VERSION` from step 2", which was false for the same reason. The step now explains why the unauthenticated checks cannot confirm the tenant or version, and directs operators to the authenticated form — which is no longer optional after a version change.
+
+### Added
+- **Tenant and contract-endpoint verification moved into the authenticated checks.** The admin console's form (renamed from "DAC-based OData probe" to **Authenticated checks**) now runs three checks with a borrowed user token, where a 404 finally means what it should: **tenant**, **contract API endpoint version**, and the existing DAC capability probe. `interpretTenantAuthed()` and `interpretEndpointAuthed()` are pure and unit-tested — `pass` only on 200, `fail` on 404 (with the specific env var and SM207060 named), 403 distinguished from 401 so "the tenant is real but this user lacks rights" is never confused with "expired token, re-run".
+- 6 tests covering the new verdicts, including that neither check can ever turn a 404 into a `pass`.
+
+### Changed
+- The admin probe route now returns an array of results and logs `admin_action` as `authenticated_checks` with a per-check outcome summary.
+
 ## [0.44.0] - 2026-07-31
 ### Fixed
 - **`Unexpected end of JSON input` no longer reaches the model.** `await response.json()` on an empty Acumatica response body threw the raw V8 parser message, which was surfaced as the entire explanation — no indication of what happened or what to do. Log analysis over 95 days (4734 R2 objects, 13 292 tool invocations) counted **279 occurrences**, roughly **14% of all current tool errors**, almost entirely from `acumatica_run_inquiry` (259) with the remainder from `acumatica_describe_inquiry` (20). All three 2xx-body parse sites in `acumatica-client.ts` now go through `parseAcumaticaJson()`.

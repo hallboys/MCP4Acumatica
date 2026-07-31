@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import type { Env } from "../types/acumatica";
 import { getConfig, setConfig, deleteConfig, CONFIG_KEYS, validateConfigValue } from "../lib/config";
 import { hmacSign, hmacVerify, constantTimeEqual, parseCookies } from "../lib/crypto";
-import { runPreflight, probeDacAuthenticated, type PreflightCheck } from "../lib/preflight";
+import { runPreflight, runAuthenticatedChecks, type PreflightCheck } from "../lib/preflight";
 import { DOTokenProvider } from "../platform/do-token-provider";
 import { logAdminAction } from "../lib/logger";
 
@@ -757,8 +757,8 @@ adminApp.get("/preflight", (c) => {
     </div>
 
     <hr style="margin:32px 0;border:0;border-top:1px solid var(--border, #e2e8f0)">
-    <h2>DAC-based OData probe (authenticated)</h2>
-    <p>The checks above run without a user, and Acumatica returns 401 for every path when unauthenticated &mdash; so they cannot tell whether the <code>/api/odata/dac</code> endpoint (Acumatica 2025 R1+) exists here. This probe answers it using a connected user's stored token.</p>
+    <h2>Authenticated checks</h2>
+    <p>Acumatica returns 401 for <em>every</em> path when unauthenticated &mdash; including tenants and endpoint versions that do not exist &mdash; so several checks above cannot confirm their values on their own. These run with a connected user's stored token, where a 404 finally means what it should: <strong>tenant</strong>, <strong>contract endpoint version</strong>, and the <code>/api/odata/dac</code> capability probe (Acumatica 2025 R1+).</p>
     <p><strong>Note:</strong> the request is made <em>as that user</em>, so it appears in Acumatica's audit trail under their name. Every run is logged here as an <code>admin_action</code>. Only HTTP status codes are read &mdash; no record data is returned or stored.</p>
     <div class="filters">
       <div class="form-group">
@@ -766,7 +766,7 @@ adminApp.get("/preflight", (c) => {
         <input type="text" id="dacUsername" placeholder="the Acumatica login, case-sensitive">
       </div>
       <div class="form-group">
-        <button class="btn btn-primary" onclick="runDacProbe()">Run probe</button>
+        <button class="btn btn-primary" onclick="runDacProbe()">Run authenticated checks</button>
       </div>
     </div>
     <div id="dac-results"></div>
@@ -841,26 +841,29 @@ adminApp.get("/preflight", (c) => {
             out.innerHTML = '<div class="alert alert-error">' + esc(data.error) + '</div>';
             return;
           }
-          const r = data.result;
-          const color = r.status === 'pass' ? 'success' : r.status === 'fail' ? 'error' : 'info';
-          let h =
-            '<div class="alert alert-' + color + '"><strong>' + esc(r.headline) + '</strong></div>' +
-            '<div style="padding:12px;background:var(--code-bg);border-radius:4px;font-size:13px;line-height:1.6">' +
-            esc(r.detail) + '</div>';
-          if (r.probedEntitySet) {
-            h += '<p style="font-size:13px">Read succeeded against entity set <code>' + esc(r.probedEntitySet) + '</code>.</p>';
-          }
-          if (typeof r.entitySetCount === 'number') {
-            h += '<p style="font-size:13px"><strong>' + r.entitySetCount +
-                 '</strong> entity set(s) advertised by the service document' +
-                 (r.sampleEntitySets && r.sampleEntitySets.length
-                   ? ' — first ' + r.sampleEntitySets.length + ', so you can see the real naming convention:'
-                   : '.') + '</p>';
-            if (r.sampleEntitySets && r.sampleEntitySets.length) {
-              h += '<div class="log-details">' + esc(r.sampleEntitySets.join('\\n')) + '</div>';
+          let h = '';
+          for (const r of (data.results || [])) {
+            const color = r.status === 'pass' ? 'success' : r.status === 'fail' ? 'error' : 'info';
+            h += '<div style="margin-bottom:18px">';
+            h += '<div class="alert alert-' + color + '"><strong>' + esc(r.name) + ':</strong> ' + esc(r.headline) + '</div>';
+            h += '<div style="padding:12px;background:var(--code-bg);border-radius:4px;font-size:13px;line-height:1.6">' +
+                 esc(r.detail) + '</div>';
+            if (r.probedEntitySet) {
+              h += '<p style="font-size:13px">Read succeeded against entity set <code>' + esc(r.probedEntitySet) + '</code>.</p>';
             }
+            if (typeof r.entitySetCount === 'number') {
+              h += '<p style="font-size:13px"><strong>' + r.entitySetCount +
+                   '</strong> entity set(s) advertised by the service document' +
+                   (r.sampleEntitySets && r.sampleEntitySets.length
+                     ? ' — first ' + r.sampleEntitySets.length + ', so you can see the real naming convention:'
+                     : '.') + '</p>';
+              if (r.sampleEntitySets && r.sampleEntitySets.length) {
+                h += '<div class="log-details">' + esc(r.sampleEntitySets.join('\\n')) + '</div>';
+              }
+            }
+            h += '</div>';
           }
-          out.innerHTML = h;
+          out.innerHTML = h || '<div class="alert alert-info">No results returned.</div>';
         } catch (err) {
           out.innerHTML = '<div class="alert alert-error">Probe failed: ' + esc(err && err.message) + '</div>';
         }
@@ -937,17 +940,18 @@ adminApp.post("/preflight/dac-probe", async (c) => {
       return c.json({ ok: false, error: reason });
     }
 
-    const result = await probeDacAuthenticated(
+    const results = await runAuthenticatedChecks(
       c.env.ACUMATICA_URL,
       c.env.ACUMATICA_TENANT,
+      c.env.ACUMATICA_ENDPOINT_VERSION,
+      c.env.ACUMATICA_ENDPOINT_NAME,
       tokenResult.accessToken
     );
-    logAdminAction("dac_probe", {
+    logAdminAction("authenticated_checks", {
       targetUsername: username,
-      outcome: result.status,
-      headline: result.headline,
+      outcomes: results.map((r) => `${r.name}=${r.status}`),
     });
-    return c.json({ ok: true, result });
+    return c.json({ ok: true, results });
   } catch (err) {
     return c.json(
       { ok: false, error: err instanceof Error ? err.message : "Probe failed." },

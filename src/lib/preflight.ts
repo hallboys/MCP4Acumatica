@@ -222,7 +222,17 @@ export async function checkTenantPath(
     };
   }
   if (res.status === 401 || res.status === 403) {
-    return { name, status: "pass", detail: `Tenant path exists (HTTP ${res.status} without auth — as expected).` };
+    // NOT a pass. Acumatica SaaS authenticates before routing, so an
+    // unauthenticated request returns 401 for EVERY path — verified live on
+    // 25R2: /t/NotARealTenant/api/odata/gi/ also returns 401. A 401 therefore
+    // says nothing about whether this tenant exists, and reporting it as a pass
+    // meant a typo'd ACUMATICA_TENANT sailed through preflight.
+    return {
+      name,
+      status: "warn",
+      detail: `Reachable, but unverifiable without a token (HTTP ${res.status}). Acumatica returns 401 for every path when unauthenticated — including a tenant that does not exist — so this cannot confirm ACUMATICA_TENANT ("${tenant}").`,
+      remediation: `Use the "Authenticated checks" form below to verify the tenant with a real user's token, or simply complete a login — the access gate queries this tenant, so a successful sign-in confirms it.`,
+    };
   }
   if (res.status === 404) {
     return {
@@ -492,6 +502,146 @@ export function interpretDacProbe(
   };
 }
 
+/** One row of the authenticated check set (DAC probe + the two 401-blind checks). */
+export interface AuthedCheckResult extends DacProbeResult {
+  name: string;
+}
+
+/**
+ * Verdict for the authenticated tenant check.
+ *
+ * With a bearer token the 401-before-routing problem goes away, so 404 finally
+ * means what `checkTenantPath` always claimed it meant: the tenant path does
+ * not exist. This is the check that actually catches a typo'd ACUMATICA_TENANT.
+ */
+export function interpretTenantAuthed(status: number, tenant: string): DacProbeResult {
+  if (status === 200) {
+    return {
+      status: "pass",
+      headline: `Tenant "${tenant}" confirmed.`,
+      detail: "The tenant-scoped OData path returned 200 with a real token, so ACUMATICA_TENANT is correct and OData is enabled on the tenant.",
+    };
+  }
+  if (status === 404) {
+    return {
+      status: "fail",
+      headline: `Tenant "${tenant}" does not exist.`,
+      detail: `An authenticated request to the tenant's OData path returned 404. ACUMATICA_TENANT must match the tenant/login company name exactly — it is case-sensitive. This is the failure the unauthenticated check cannot see, because Acumatica 401s a bad tenant rather than 404ing it.`,
+    };
+  }
+  if (status === 401) {
+    return {
+      status: "warn",
+      headline: "Token rejected — tenant unverified.",
+      detail: "The token was refused (401), most likely expired: access tokens live about an hour. Have the user make one tool call through Claude to refresh, then re-run.",
+    };
+  }
+  if (status === 403) {
+    return {
+      status: "warn",
+      headline: `Tenant "${tenant}" exists, but this user cannot read the OData root.`,
+      detail: "403 means authenticated-but-forbidden, so the tenant is real. The user simply lacks rights on the OData service root; that does not indicate a configuration problem.",
+    };
+  }
+  return {
+    status: "warn",
+    headline: `Unexpected HTTP ${status} verifying the tenant.`,
+    detail: "Inconclusive. Re-run, or check the instance's health.",
+  };
+}
+
+/** Verdict for the authenticated contract-API endpoint/version check. */
+export function interpretEndpointAuthed(
+  status: number,
+  endpointName: string,
+  version: string
+): DacProbeResult {
+  const label = `${endpointName}/${version}`;
+  if (status === 200) {
+    return {
+      status: "pass",
+      headline: `Contract endpoint "${label}" confirmed.`,
+      detail: "The endpoint returned 200 with a real token, so ACUMATICA_ENDPOINT_NAME and ACUMATICA_ENDPOINT_VERSION both match a published Web Service endpoint.",
+    };
+  }
+  if (status === 404) {
+    return {
+      status: "fail",
+      headline: `Contract endpoint "${label}" does not exist.`,
+      detail: `An authenticated request returned 404. Check ACUMATICA_ENDPOINT_VERSION and ACUMATICA_ENDPOINT_NAME against the published endpoints in Acumatica (SM207060) — the stock endpoint is "Default" and the 25R2 version is "25.200.001". This is the failure the unauthenticated check cannot see, since Acumatica 401s a bogus version rather than 404ing it.`,
+    };
+  }
+  if (status === 401) {
+    return {
+      status: "warn",
+      headline: "Token rejected — endpoint unverified.",
+      detail: "The token was refused (401), most likely expired. Refresh it with one tool call through Claude and re-run.",
+    };
+  }
+  return {
+    status: "warn",
+    headline: `Unexpected HTTP ${status} verifying "${label}".`,
+    detail: "Inconclusive — the endpoint may exist but responded unusually to a bare GET. A successful entity tool call is the definitive confirmation.",
+  };
+}
+
+/**
+ * Run every check that needs a real user's bearer token: the two that an
+ * unauthenticated probe cannot decide (tenant, contract endpoint version) plus
+ * the DAC capability probe.
+ */
+export async function runAuthenticatedChecks(
+  url: string,
+  tenant: string,
+  endpointVersion: string | undefined,
+  endpointName: string | undefined,
+  accessToken: string
+): Promise<AuthedCheckResult[]> {
+  const auth = { Authorization: `Bearer ${accessToken}` };
+  const epName = endpointName || "Default";
+  const results: AuthedCheckResult[] = [];
+
+  const tenantRes = await safeFetch(`${url}/t/${encodeURIComponent(tenant)}/api/odata/gi/`, { headers: auth });
+  if ("error" in tenantRes) {
+    results.push({
+      name: "Tenant (authenticated)",
+      status: "warn",
+      headline: "Could not reach Acumatica.",
+      detail: `Network error: ${tenantRes.error}`,
+    });
+  } else {
+    tenantRes.body?.cancel();
+    results.push({ name: "Tenant (authenticated)", ...interpretTenantAuthed(tenantRes.status, tenant) });
+  }
+
+  if (endpointVersion) {
+    const epRes = await safeFetch(
+      `${url}/entity/${encodeURIComponent(epName)}/${encodeURIComponent(endpointVersion)}`,
+      { headers: auth }
+    );
+    if ("error" in epRes) {
+      results.push({
+        name: "Contract endpoint (authenticated)",
+        status: "warn",
+        headline: "Could not reach Acumatica.",
+        detail: `Network error: ${epRes.error}`,
+      });
+    } else {
+      epRes.body?.cancel();
+      results.push({
+        name: "Contract endpoint (authenticated)",
+        ...interpretEndpointAuthed(epRes.status, epName, endpointVersion),
+      });
+    }
+  }
+
+  results.push({
+    name: "DAC-based OData endpoint",
+    ...(await probeDacAuthenticated(url, tenant, accessToken)),
+  });
+  return results;
+}
+
 /**
  * Run the authenticated DAC probe with a real user's bearer token.
  *
@@ -595,8 +745,19 @@ export async function checkEndpointVersion(
   if ("error" in res) {
     return { name, status: "fail", detail: `Network error: ${res.error}` };
   }
-  if (res.status === 401 || res.status === 403 || res.status === 200) {
-    return { name, status: "pass", detail: `Endpoint "${epName}/${version}" exists (HTTP ${res.status}).` };
+  if (res.status === 200) {
+    return { name, status: "pass", detail: `Endpoint "${epName}/${version}" exists (HTTP 200).` };
+  }
+  if (res.status === 401 || res.status === 403) {
+    // Same trap as checkTenantPath: verified live on 25R2 that
+    // /entity/Default/99.999.999 also returns 401 unauthenticated, so a 401
+    // cannot distinguish a real version from a bogus one.
+    return {
+      name,
+      status: "warn",
+      detail: `Reachable, but unverifiable without a token (HTTP ${res.status}). Acumatica returns 401 for every path when unauthenticated — including a version that does not exist — so this cannot confirm "${epName}/${version}".`,
+      remediation: `Use the "Authenticated checks" form below to verify with a real user's token. Any successful entity tool call also confirms it.`,
+    };
   }
   if (res.status === 404) {
     return {
