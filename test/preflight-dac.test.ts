@@ -98,11 +98,16 @@ test("root 404 → endpoint absent, reported as skip (not a failure)", () => {
   assert.match(r.detail, /Nothing is broken/i);
 });
 
-test("root 403 → elevated-role requirement confirmed, and called unusable here", () => {
+test("root 403 → points at granting the OData v4 role, NOT at abandoning the endpoint", () => {
   const r = interpretDacProbe(403, null);
   assert.equal(r.status, "warn");
-  assert.match(r.detail, /OData v4 User/);
-  assert.match(r.detail, /each user's own Acumatica role/);
+  assert.match(r.detail, /OData v4 role/);
+  assert.match(r.detail, /grant it/i);
+  // Requiring a role grant is a prerequisite like MCP Access, not a dead end.
+  assert.match(r.detail, /not a disqualifier/i);
+  assert.doesNotMatch(r.detail, /unusable/i);
+  // The per-user access model survives, because rights still come from roles.
+  assert.match(r.detail, /per-user access model is preserved/i);
 });
 
 test("root 401 → inconclusive, points at token expiry first", () => {
@@ -120,13 +125,21 @@ test("root 200 with no readable entity list → available but unlistable, still 
   assert.match(r.detail, /exists and is reachable/i);
 });
 
-test("root 200 + entity 200 → pass, names the set read and keeps the redaction caveat", () => {
+test("root 200 + entity 200 → pass, but scoped to the tested user and caveated", () => {
   const r = interpretDacProbe(200, 200, "SOOrder");
   assert.equal(r.status, "pass");
-  assert.match(r.headline, /normal user role suffices/i);
   assert.match(r.detail, /"SOOrder"/);
-  // A green verdict must not imply "safe to ship" — redaction is name-matched.
+  // Must NOT claim an ordinary role suffices: the tested user may be an
+  // Administrator, who can carry the OData v4 role implicitly.
+  assert.doesNotMatch(r.headline, /normal user role suffices/i);
+  assert.match(r.headline, /the user you tested/i);
+  assert.match(r.detail, /NON-ADMINISTRATOR/);
+  assert.match(r.detail, /OData v4/);
+  // Needing the role granted is a prerequisite, not a disqualifier.
+  assert.match(r.detail, /not a blocker/i);
+  // A green verdict must not imply "safe to ship".
   assert.match(r.detail, /redact\.ts/);
+  assert.match(r.detail, /row-level security/i);
 });
 
 test("root 200 + entity 404 → endpoint EXISTS; naming unaddressable, not reported absent", () => {

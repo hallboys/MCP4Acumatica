@@ -306,8 +306,11 @@ Until both are closed, prefer a Generic Inquiry for any read that gotchas 7 and 
 
 ### Verified on this deployment (25R2, 2026-07-31)
 
-The authenticated probe confirms the endpoint is **available and readable with an ordinary user's
-role** -- no elevated *OData v4 User* role was needed. Two findings shape any future use:
+The authenticated probe confirms the endpoint **works**: the service root and a read of `SOOrder`
+both succeeded. What it does *not* establish is whether a non-administrator can read it -- the
+test ran as an Administrator, which may carry the **OData v4** role implicitly. Acumatica has an
+explicit OData v4 role, so users may need it granted. That is a setup prerequisite of the same
+kind as the `MCP Access` role, not an obstacle.
 
 **Entity sets are addressed by bare class name.** `PX.Objects.SO.SOOrder` returns 404;
 `SOOrder` returns 200. Acumatica's documentation shows the namespace-qualified form, but that is
@@ -315,10 +318,23 @@ the OData *type* name, not the entity set. The service document advertises up to
 per DAC -- the namespace path with underscores (`AA_Objects_Labels_ALAutoPrint`), the bare class
 name (`ALAutoPrint`), and a de-prefixed variant (`AutoPrint`). Use the bare class name.
 
-**The surface is enormous: 4766 entity sets.** That is the same problem the GI opt-in gate exists
-to solve, one order of magnitude larger. Handing an AI assistant a 4766-entry menu would flood
-its context and degrade selection far worse than an uncurated GI list does, and three aliases per
-DAC means the same table can be named three ways. So a DAC-backed read tool cannot simply expose
-the endpoint -- it needs a curated allowlist of entity sets, exactly as
-[Generic Inquiries](generic-inquiries.md) do. Relatedly, never fetch `$metadata` from a tool:
-for 4766 sets it is enormous.
+The instance advertises **4766 entity sets**, but that count is not itself an obstacle: tools
+address entities *by name* -- the same way the 38 `acumatica_get_*` getters and
+`acumatica_list_entities` already do -- so the catalogue is never handed to the model. (Unlike
+Generic Inquiries, where `acumatica_list_generic_inquiries` puts the menu directly into context,
+which is what the GI opt-in gate exists to control.) The count matters only in that `$metadata`
+should never be fetched from a tool at that scale, and that a curated set of exposed entities is
+still worth having for discoverability.
+
+**What genuinely remains before a DAC read path could ship:**
+
+1. **Redaction.** `src/lib/redact.ts` matches on field *names*, and physical DAC field names
+   differ from contract-entity names. The patterns must be re-validated against real DAC output
+   or sensitive fields silently stop being redacted. This is the actual blocker.
+2. **Row-level security.** Acumatica's docs say access mirrors UI visibility, but a 200 for an
+   Administrator proves only that the request was allowed, not that rows are filtered for a
+   restricted user. Verify with a deliberately limited account.
+3. **A field-name source.** The offline schema index (`scripts/build-schema-index.mjs`) is built
+   from the contract API's `swagger.json` and so does not describe DAC fields. A DAC read path
+   needs its own field metadata, which the same ingestion pattern could provide from `$metadata`
+   offline.
