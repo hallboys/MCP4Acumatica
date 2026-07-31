@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.43.0`
+- **Current tag:** `25R2-0.44.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -146,6 +146,7 @@ src/
 ├── lib/
 │   ├── acumatica-client.ts        # HTTP client for Acumatica REST API (GET + PUT-as-upsert); re-exports field-transforms
 │   ├── field-transforms.ts        # wrapFields/unwrapFields — {value:X} wire-format round-trip (import-free leaf, unit-tested)
+│   ├── response-parse.ts          # parseAcumaticaJson — empty/non-JSON 2xx bodies → actionable errors (import-free leaf, unit-tested)
 │   ├── odata-filter.ts            # normalizeODataFilter() — strips `eq true` off substringof/startswith/endswith
 │   ├── gi-registry.ts             # GI opt-in gate + curated-schema assembly (pure leaf: checkGiGate, parseEdmxTypes, assembleRegistry)
 │   ├── gi-registry-build.ts       # getGiRegistry() — lazy registry build (caller's token) + KV cache (impure)
@@ -193,7 +194,8 @@ test/                              # Node built-in test runner (node --test, TS 
 ├── field-transforms.test.ts       # wrapFields/unwrapFields round-trips (nested/array/idempotent/null)
 ├── writer-validation.test.ts      # validateWriterPayload (size cap / JSON / type / top-level + nested allowlist)
 ├── rate-limiter.test.ts           # config precedence, bounded slot wait, per-minute bucket, token-accounting order, envelope
-└── preflight-dac.test.ts          # interpretDacProbe verdicts (absent vs. wrong-entity-name; only 200+200 passes)
+├── preflight-dac.test.ts          # interpretDacProbe verdicts (absent vs. wrong-entity-name; only 200+200 passes)
+└── response-parse.test.ts         # parseAcumaticaJson (empty body ≠ no records; write path forbids retry; non-JSON snippet)
 
 acumatica/                         # Acumatica-side setup package (Apache-2.0) for the GI exposure gate
 ├── MCP4Acumatica-AIDescription.zip # customization project: GIDesign/GIResult custom fields + SM208000 form
@@ -364,6 +366,7 @@ When the user says **"close session"**, perform all of the following:
 - **User identity retrieval:** The OIDC `/identity/connect/userinfo` endpoint (with `openid profile email` scopes) is the primary method. Falls back to `/entity/auth/25.200.001/UserSecurityInfo` which may not exist on all instances. If both fail, username defaults to a UUID-based key (breaks token reuse across sessions).
 - **Acumatica system entities not available via contract API:** `User`, `UserRole`, and screen-based API (`/entity/Default/.../screen/SM201010`) all return 404 on SaaS instances. The canary GI approach for the access gate was adopted because of this limitation (there's no API to query role membership).
 - **`$select` on some entities causes Acumatica 500:** Some entities (e.g., Payment) return internal server errors when `$select` is used with certain field names. The `acumatica_list_entities` tool auto-retries without `$select` when this occurs.
+- **Empty / non-JSON 2xx bodies (fixed 0.44.0):** `await response.json()` on an empty Acumatica body throws the raw V8 message `Unexpected end of JSON input`, which reached the model verbatim as the entire explanation. Production log analysis (4734 R2 objects, 13 292 tool invocations, 2026-04-09 → 07-31) counted **279 occurrences** — ~14 % of *current* tool errors — almost all from `acumatica_run_inquiry` (259) plus `acumatica_describe_inquiry` (20). `parseAcumaticaJson()` (`src/lib/response-parse.ts`, import-free leaf, unit-tested) now handles all three 2xx-body call sites in `acumatica-client.ts`. An empty body is **not** converted to "no rows" — standard OData returns `{"value":[]}` for an empty result set, so a body-less 200 is anomalous, and silently reporting zero rows is the same silent-wrong-data failure the `possibleFalseNegative` warnings exist to prevent; the message says so explicitly. The **write** path (`put()`) passes `kind: "write"` and gets the opposite advice — **do not retry**, because a success normally echoes the saved record and retrying an unconfirmed write can duplicate an auto-numbered record (PUT-as-upsert is only idempotent when the key is supplied); the user is told to verify in Acumatica. Non-JSON bodies report the cause plus a whitespace-collapsed 200-char snippet (usually an HTML sign-in page) instead of a parser message.
 - **`substringof(...) eq true` silently returns `[]`:** Acumatica's contract-REST `$filter` parser returns an empty set (HTTP 200, no error) for a boolean string function compared to a literal — `substringof('X', F) eq true` / `startswith(...) eq true` / `endswith(...) eq true` — but the *bare* function works. Models habitually append `eq true` (valid OData v3). `normalizeODataFilter()` (`src/lib/odata-filter.ts`) strips it server-side for both `acumatica_list_entities` and `acumatica_run_inquiry`. `eq false` is left verbatim — the only equivalent negation (`not substringof(...)`) 500s on the contract API. NOT a transport/encoding bug (an early parens-encoding hypothesis was disproven live).
 - **Complex document entities can't be server-side `$filtered` on non-key fields:** PurchaseOrder, Shipment, PhysicalInventoryCount (and any filter that reaches a child collection, e.g. `StockItem/CrossReferences/AlternateID`) fail in two ways — (A) HTTP 500 from the OData filter binder (`CannotOptimizeException`, "type conversions not supported", "not a single value", "key not present") or (B) a *silent* `[]` even when matching rows exist (e.g. `substringof` on PurchaseOrder `VendorID`). A keyed filter (`OrderNbr`/`ShipmentNbr eq '...'`, topN=1) is optimizable and works; broad search must use a Generic Inquiry. `getFilterErrorKind()` (`src/lib/complex-entities.ts`) classifies mode-A 500s into a structured `filterNotApplicable` error; mode-B empties on the known-list entities get a `possibleFalseNegative` warning so the model doesn't conclude "no such record exists." The known-list is hardcoded — see `docs/upgrading-acumatica.md` §7.
 - Old Entra ID secrets may still exist on Cloudflare — clean up with `wrangler secret delete ENTRA_CLIENT_ID`, etc.
