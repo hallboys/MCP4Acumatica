@@ -843,10 +843,24 @@ adminApp.get("/preflight", (c) => {
           }
           const r = data.result;
           const color = r.status === 'pass' ? 'success' : r.status === 'fail' ? 'error' : 'info';
-          out.innerHTML =
+          let h =
             '<div class="alert alert-' + color + '"><strong>' + esc(r.headline) + '</strong></div>' +
             '<div style="padding:12px;background:var(--code-bg);border-radius:4px;font-size:13px;line-height:1.6">' +
             esc(r.detail) + '</div>';
+          if (r.probedEntitySet) {
+            h += '<p style="font-size:13px">Read succeeded against entity set <code>' + esc(r.probedEntitySet) + '</code>.</p>';
+          }
+          if (typeof r.entitySetCount === 'number') {
+            h += '<p style="font-size:13px"><strong>' + r.entitySetCount +
+                 '</strong> entity set(s) advertised by the service document' +
+                 (r.sampleEntitySets && r.sampleEntitySets.length
+                   ? ' — first ' + r.sampleEntitySets.length + ', so you can see the real naming convention:'
+                   : '.') + '</p>';
+            if (r.sampleEntitySets && r.sampleEntitySets.length) {
+              h += '<div class="log-details">' + esc(r.sampleEntitySets.join('\\n')) + '</div>';
+            }
+          }
+          out.innerHTML = h;
         } catch (err) {
           out.innerHTML = '<div class="alert alert-error">Probe failed: ' + esc(err && err.message) + '</div>';
         }

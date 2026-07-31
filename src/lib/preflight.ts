@@ -292,7 +292,7 @@ export async function checkDacODataEndpoint(
     detail:
       "Not verifiable server-side. Acumatica returns 401 for every path when unauthenticated — including nonexistent ones — so an anonymous probe cannot tell whether this endpoint exists. Acumatica 2025 R1+ exposes DACs directly over OData 4.0 here; this server does not use it (reads are contract REST, search rides Generic Inquiries), so nothing depends on the answer today.",
     remediation:
-      `To settle it, use the "DAC-based OData probe (authenticated)" form below — it borrows a connected user's stored token and reports a real verdict. Equivalent by hand:  curl -i -H "Authorization: Bearer <user-token>" "${probeUrl}/${DAC_PROBE_ENTITY}?$top=1"`,
+      `To settle it, use the "DAC-based OData probe (authenticated)" form below — it borrows a connected user's stored token, reads the service document to discover the real entity-set names, and reports a verdict. Equivalent by hand:  curl -i -H "Authorization: Bearer <user-token>" "${probeUrl}/"`,
   };
 }
 
@@ -303,8 +303,92 @@ export async function checkDacODataEndpoint(
 // driven from the admin console. Split so the interpretation is pure and
 // unit-testable while the I/O stays trivial.
 
-/** Entity used for the read test — the class name is confirmed by Acumatica's own docs. */
-export const DAC_PROBE_ENTITY = "PX.Objects.SO.SOOrder";
+/**
+ * Entity-set names to try for the read test, in preference order.
+ *
+ * These are *short* class names, not namespace-qualified ones. Acumatica's docs
+ * describe DACs as `PX.Objects.SO.SOOrder`, but that is the OData **type** name;
+ * the **entity set** in the service container is the short name.
+ *
+ * Verified live on 25R2 (4766 entity sets on a customized instance): the service
+ * root returns 200, `PX.Objects.SO.SOOrder` returns 404, and `SOOrder` returns
+ * 200. The service document advertises up to THREE aliases per DAC — the
+ * namespace path with dots replaced by underscores, the bare class name, and a
+ * de-prefixed variant:
+ *
+ *   AA_Objects_Labels_ALAutoPrint   (qualified)
+ *   ALAutoPrint                     (bare class name — the canonical form)
+ *   AutoPrint                       (class name minus its prefix)
+ *
+ * The probe does not rely on this list being right: it reads the actual entity
+ * sets out of the service document and only uses these as preferences among
+ * what the instance really exposes (see pickProbeEntitySets).
+ */
+export const DAC_PROBE_PREFERRED_SETS = ["SOOrder", "Customer", "BAccount", "InventoryItem"];
+
+/** Max entity-set names echoed back to the admin console. */
+const DAC_SAMPLE_LIMIT = 40;
+
+/**
+ * Extract entity-set names from an OData v4 service document.
+ *
+ * Shape: `{"@odata.context": "...", "value": [{"name": "SOOrder", "kind":
+ * "EntitySet", "url": "SOOrder"}, ...]}`. `kind` is omitted for entity sets in
+ * many implementations, so absence is treated as "entity set" and only an
+ * explicit non-EntitySet kind (e.g. a singleton or function import) is skipped.
+ *
+ * Pure and tolerant: returns [] rather than throwing on anything unexpected, so
+ * a surprising payload degrades to "couldn't read the names" instead of a 500.
+ */
+export function parseODataServiceDocument(text: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const value = (parsed as { value?: unknown })?.value;
+  if (!Array.isArray(value)) return [];
+  const names: string[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as { name?: unknown; kind?: unknown };
+    if (typeof entry.kind === "string" && entry.kind !== "EntitySet") continue;
+    if (typeof entry.name === "string" && entry.name.length > 0) names.push(entry.name);
+  }
+  return names;
+}
+
+/**
+ * Choose which entity sets to attempt a read against, most promising first.
+ *
+ * Preference matters because per-DAC access rights are enforced: a user may be
+ * unable to read the first set alphabetically while having perfectly ordinary
+ * access to Customer. Trying a couple of well-known business tables before
+ * falling back to whatever exists avoids reporting "role insufficient" when the
+ * truth is "that one obscure table happens to be restricted".
+ *
+ * Matching is case-insensitive because entity-set casing is instance-dependent.
+ */
+export function pickProbeEntitySets(available: string[], limit = 3): string[] {
+  if (available.length === 0) return [];
+  const byLower = new Map<string, string>();
+  for (const n of available) {
+    const k = n.toLowerCase();
+    if (!byLower.has(k)) byLower.set(k, n);
+  }
+  const picked: string[] = [];
+  for (const pref of DAC_PROBE_PREFERRED_SETS) {
+    const hit = byLower.get(pref.toLowerCase());
+    if (hit && !picked.includes(hit)) picked.push(hit);
+    if (picked.length >= limit) return picked;
+  }
+  for (const n of available) {
+    if (!picked.includes(n)) picked.push(n);
+    if (picked.length >= limit) break;
+  }
+  return picked;
+}
 
 export interface DacProbeResult {
   status: PreflightStatus;
@@ -312,6 +396,12 @@ export interface DacProbeResult {
   headline: string;
   /** What it means for this server, including the next step where relevant. */
   detail: string;
+  /** How many entity sets the service document advertised (when readable). */
+  entitySetCount?: number;
+  /** First few entity-set names, so the real naming convention is visible. */
+  sampleEntitySets?: string[];
+  /** The entity set that was actually read, when one succeeded. */
+  probedEntitySet?: string;
 }
 
 /**
@@ -327,7 +417,8 @@ export interface DacProbeResult {
  */
 export function interpretDacProbe(
   rootStatus: number,
-  entityStatus: number | null
+  entityStatus: number | null,
+  entityName: string = "the probed entity set"
 ): DacProbeResult {
   if (rootStatus === 404) {
     return {
@@ -362,48 +453,68 @@ export function interpretDacProbe(
   }
 
   // Root is reachable — the endpoint exists and this user can talk to it.
+  if (entityStatus === null) {
+    return {
+      status: "warn",
+      headline: "Endpoint available, but its entity sets could not be listed.",
+      detail:
+        "The service root returned 200 with an ordinary user's token, so the DAC endpoint exists and is reachable. However the service document could not be parsed into entity-set names, so no read test was attempted. Fetch the service root or $metadata manually with the same token to see what it returns.",
+    };
+  }
   if (entityStatus === 200) {
     return {
       status: "pass",
       headline: "Available, and a normal user role suffices.",
       detail:
-        `Both the service root and a read of ${DAC_PROBE_ENTITY} succeeded with an ordinary user's token. The DAC endpoint is a viable read surface on this instance, which makes it a real candidate for fixing the contract-API $filter limitations (child-collection filters, the silent-[] family). Before using it: re-validate src/lib/redact.ts field-name patterns against physical DAC field names, since redaction matches on names and DAC names differ from contract-entity names.`,
+        `Both the service root and a read of "${entityName}" succeeded with an ordinary user's token. The DAC endpoint is a viable read surface on this instance, which makes it a real candidate for fixing the contract-API $filter limitations (child-collection filters, the silent-[] family). Before using it: re-validate src/lib/redact.ts field-name patterns against physical DAC field names, since redaction matches on names and DAC names differ from contract-entity names.`,
     };
   }
   if (entityStatus === 403) {
     return {
       status: "warn",
-      headline: "Endpoint reachable, but this DAC is not readable.",
+      headline: "Endpoint reachable, but the tried entity sets were not readable.",
       detail:
-        `The service root succeeded while ${DAC_PROBE_ENTITY} returned 403. Per-DAC access rights are being enforced — which is the desired behavior, but it means usability depends on what each user's role grants. Try another entity the user can read in the UI before drawing conclusions.`,
+        `The service root succeeded while reading "${entityName}" returned 403. Per-DAC access rights are being enforced — which is the desired behavior, but it means usability depends on what each user's role grants. Re-run with a user who can read these tables in the UI before concluding the endpoint is unusable.`,
     };
   }
   if (entityStatus === 404) {
     return {
       status: "warn",
-      headline: "Endpoint exists, but the entity name form differs.",
+      headline: "Endpoint exists, but the entity sets it advertises are not addressable.",
       detail:
-        `The service root succeeded while ${DAC_PROBE_ENTITY} returned 404, so entity naming on this instance isn't the class name we assumed. Fetch the service document or $metadata with the same token to see the real entity-set names. The endpoint itself is available.`,
+        `The service root succeeded and advertised entity sets, but reading "${entityName}" returned 404 — so the URL form for an entity set differs from the name the service document reports. Check $metadata with the same token. The endpoint itself is available.`,
     };
   }
   return {
     status: "warn",
     headline: `Endpoint reachable; entity read returned HTTP ${entityStatus}.`,
-    detail: `The service root succeeded, so the endpoint exists, but reading ${DAC_PROBE_ENTITY} gave an unexpected status. Inconclusive on usability.`,
+    detail: `The service root succeeded, so the endpoint exists, but reading "${entityName}" gave an unexpected status. Inconclusive on usability.`,
   };
 }
 
 /**
  * Run the authenticated DAC probe with a real user's bearer token.
  *
- * Deliberately does NOT read either response body: the DAC service document
- * enumerates every data access class on the instance and can be megabytes.
- * Only the status codes matter, so bodies are cancelled.
+ * Three steps, because guessing entity names was the thing that made the first
+ * version inconclusive:
+ *   1. GET the service root — settles existence and reachability.
+ *   2. Parse the service document for the entity-set names the instance ACTUALLY
+ *      advertises. Naming is instance-dependent (the docs' namespace-qualified
+ *      `PX.Objects.SO.SOOrder` is the OData *type*, not the entity set), so this
+ *      is discovered rather than assumed.
+ *   3. Read up to `maxReadAttempts` of those sets with `$top=1`. Multiple
+ *      attempts because per-DAC access rights are enforced, so one restricted
+ *      table must not be mistaken for "the user's role can't use this endpoint".
+ *
+ * Only the service document's body is read, and only to collect names — record
+ * data from step 3 is never read, just its status code. Response bodies that
+ * aren't needed are cancelled rather than buffered.
  */
 export async function probeDacAuthenticated(
   url: string,
   tenant: string,
-  accessToken: string
+  accessToken: string,
+  maxReadAttempts = 3
 ): Promise<DacProbeResult> {
   const base = `${url}/t/${encodeURIComponent(tenant)}/api/odata/dac`;
   const auth = { Authorization: `Bearer ${accessToken}` };
@@ -416,23 +527,53 @@ export async function probeDacAuthenticated(
       detail: `Network error contacting the service root: ${root.error}`,
     };
   }
-  root.body?.cancel();
-
   if (root.status !== 200) {
+    root.body?.cancel();
     return interpretDacProbe(root.status, null);
   }
 
-  const entity = await safeFetch(`${base}/${DAC_PROBE_ENTITY}?$top=1`, { headers: auth });
-  if ("error" in entity) {
+  // Root is 200 — read the service document to learn the real entity-set names.
+  let names: string[] = [];
+  try {
+    names = parseODataServiceDocument(await root.text());
+  } catch {
+    names = [];
+  }
+  const sample = names.slice(0, DAC_SAMPLE_LIMIT);
+
+  const candidates = pickProbeEntitySets(names, maxReadAttempts);
+  if (candidates.length === 0) {
     return {
-      status: "warn",
-      headline: "Service root reachable; entity read failed.",
-      detail: `Network error reading ${DAC_PROBE_ENTITY}: ${entity.error}`,
+      ...interpretDacProbe(root.status, null),
+      entitySetCount: names.length,
+      sampleEntitySets: sample,
     };
   }
-  entity.body?.cancel();
 
-  return interpretDacProbe(root.status, entity.status);
+  // Try each candidate; a 200 on any of them answers the question. Keep the
+  // last status so a total failure still reports something specific.
+  let lastStatus = 0;
+  let lastName = candidates[0];
+  for (const setName of candidates) {
+    const res = await safeFetch(`${base}/${encodeURIComponent(setName)}?$top=1`, { headers: auth });
+    if ("error" in res) {
+      lastStatus = 0;
+      lastName = setName;
+      continue;
+    }
+    res.body?.cancel();
+    lastStatus = res.status;
+    lastName = setName;
+    if (res.status === 200) break;
+  }
+
+  const verdict = interpretDacProbe(root.status, lastStatus, lastName);
+  return {
+    ...verdict,
+    entitySetCount: names.length,
+    sampleEntitySets: sample,
+    probedEntitySet: lastStatus === 200 ? lastName : undefined,
+  };
 }
 
 /**

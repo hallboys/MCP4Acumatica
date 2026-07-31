@@ -1,17 +1,93 @@
 // Copyright 2026 Hall Boys, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Guards interpretDacProbe — the verdict logic behind the authenticated
-// DAC-OData probe in the admin console. The two-request design exists so
-// "endpoint absent" (root 404) is never confused with "entity name wrong"
-// (root 200 + entity 404); these tests pin that distinction, since collapsing
-// it would silently report a usable endpoint as missing.
+// Guards the authenticated DAC-OData probe's pure parts:
+//   - parseODataServiceDocument: entity-set names out of a service document
+//   - pickProbeEntitySets: which sets to attempt, and why order matters
+//   - interpretDacProbe: the verdict, incl. the absent-vs-unaddressable split
+//
+// The three-step design (root → discover names → read one) exists because
+// entity naming is instance-dependent: Acumatica's docs show
+// `PX.Objects.SO.SOOrder`, but that is the OData *type*, and a live 25R2
+// instance 404s it while the service root returns 200. These tests pin the
+// distinctions that made the earlier one-shot version inconclusive.
 //
 // Run with:  node --test --experimental-strip-types test/preflight-dac.test.ts
 
 import { test } from "node:test";
 import assert from "node:assert";
-import { interpretDacProbe, DAC_PROBE_ENTITY } from "../src/lib/preflight.ts";
+import {
+  interpretDacProbe,
+  parseODataServiceDocument,
+  pickProbeEntitySets,
+  DAC_PROBE_PREFERRED_SETS,
+} from "../src/lib/preflight.ts";
+
+// ── parseODataServiceDocument ────────────────────────────────────
+
+test("parses entity-set names from a normal OData v4 service document", () => {
+  const doc = JSON.stringify({
+    "@odata.context": "https://x/t/T/api/odata/dac/$metadata",
+    value: [
+      { name: "SOOrder", kind: "EntitySet", url: "SOOrder" },
+      { name: "Customer", kind: "EntitySet", url: "Customer" },
+    ],
+  });
+  assert.deepEqual(parseODataServiceDocument(doc), ["SOOrder", "Customer"]);
+});
+
+test("treats a missing `kind` as an entity set (many implementations omit it)", () => {
+  const doc = JSON.stringify({ value: [{ name: "SOOrder", url: "SOOrder" }] });
+  assert.deepEqual(parseODataServiceDocument(doc), ["SOOrder"]);
+});
+
+test("skips non-EntitySet members (singletons, function imports)", () => {
+  const doc = JSON.stringify({
+    value: [
+      { name: "SOOrder", kind: "EntitySet" },
+      { name: "Me", kind: "Singleton" },
+      { name: "DoThing", kind: "FunctionImport" },
+    ],
+  });
+  assert.deepEqual(parseODataServiceDocument(doc), ["SOOrder"]);
+});
+
+test("tolerates malformed input rather than throwing", () => {
+  for (const bad of ["", "not json", "null", "[]", "{}", '{"value":"nope"}', '{"value":[null,3,{}]}']) {
+    assert.deepEqual(parseODataServiceDocument(bad), [], JSON.stringify(bad));
+  }
+});
+
+// ── pickProbeEntitySets ──────────────────────────────────────────
+
+test("prefers well-known business tables over document order", () => {
+  const available = ["APSetup", "Customer", "ZZObscure", "SOOrder"];
+  const picked = pickProbeEntitySets(available, 2);
+  // Preference order comes from DAC_PROBE_PREFERRED_SETS, not the input order.
+  assert.deepEqual(picked, ["SOOrder", "Customer"]);
+});
+
+test("matches preferred names case-insensitively, returning the instance's casing", () => {
+  const picked = pickProbeEntitySets(["soorder", "other"], 1);
+  assert.deepEqual(picked, ["soorder"]);
+});
+
+test("falls back to whatever the instance exposes when no preferred name is present", () => {
+  const picked = pickProbeEntitySets(["Aaa", "Bbb", "Ccc"], 2);
+  assert.deepEqual(picked, ["Aaa", "Bbb"]);
+});
+
+test("returns at most `limit` candidates, and [] for an empty document", () => {
+  assert.equal(pickProbeEntitySets(DAC_PROBE_PREFERRED_SETS, 2).length, 2);
+  assert.deepEqual(pickProbeEntitySets([], 3), []);
+});
+
+test("never returns duplicates even when a name repeats", () => {
+  const picked = pickProbeEntitySets(["Customer", "Customer", "Customer"], 3);
+  assert.deepEqual(picked, ["Customer"]);
+});
+
+// ── interpretDacProbe ────────────────────────────────────────────
 
 test("root 404 → endpoint absent, reported as skip (not a failure)", () => {
   const r = interpretDacProbe(404, null);
@@ -26,7 +102,6 @@ test("root 403 → elevated-role requirement confirmed, and called unusable here
   const r = interpretDacProbe(403, null);
   assert.equal(r.status, "warn");
   assert.match(r.detail, /OData v4 User/);
-  // The whole point: this outcome kills it for a per-user access model.
   assert.match(r.detail, /each user's own Acumatica role/);
 });
 
@@ -37,27 +112,35 @@ test("root 401 → inconclusive, points at token expiry first", () => {
   assert.match(r.detail, /expired/i);
 });
 
-test("root 200 + entity 200 → pass, with the redaction caveat attached", () => {
-  const r = interpretDacProbe(200, 200);
+test("root 200 with no readable entity list → available but unlistable, still not a pass", () => {
+  const r = interpretDacProbe(200, null);
+  assert.equal(r.status, "warn");
+  assert.match(r.headline, /could not be listed/i);
+  // Must still credit the endpoint as existing.
+  assert.match(r.detail, /exists and is reachable/i);
+});
+
+test("root 200 + entity 200 → pass, names the set read and keeps the redaction caveat", () => {
+  const r = interpretDacProbe(200, 200, "SOOrder");
   assert.equal(r.status, "pass");
   assert.match(r.headline, /normal user role suffices/i);
-  assert.match(r.detail, new RegExp(DAC_PROBE_ENTITY.replace(/\./g, "\\.")));
+  assert.match(r.detail, /"SOOrder"/);
   // A green verdict must not imply "safe to ship" — redaction is name-matched.
   assert.match(r.detail, /redact\.ts/);
 });
 
-test("root 200 + entity 404 → endpoint EXISTS; naming differs (not reported as absent)", () => {
-  const r = interpretDacProbe(200, 404);
+test("root 200 + entity 404 → endpoint EXISTS; naming unaddressable, not reported absent", () => {
+  const r = interpretDacProbe(200, 404, "SOOrder");
   assert.notEqual(r.status, "skip");
   assert.match(r.detail, /endpoint itself is available/i);
   assert.match(r.detail, /\$metadata/);
 });
 
-test("root 200 + entity 403 → per-DAC rights enforced, distinct from a root 403", () => {
-  const r = interpretDacProbe(200, 403);
+test("root 200 + entity 403 → per-DAC rights, distinct from the root-403 verdict", () => {
+  const r = interpretDacProbe(200, 403, "SOOrder");
   assert.equal(r.status, "warn");
   assert.match(r.detail, /Per-DAC access rights/i);
-  // Must NOT be conflated with the elevated-role verdict.
+  // Must NOT be conflated with the elevated-role conclusion.
   assert.doesNotMatch(r.detail, /OData v4 User/);
 });
 
@@ -69,23 +152,17 @@ test("unexpected root status → warn, never a false pass", () => {
   }
 });
 
-test("unexpected entity status → warn, and still credits the endpoint as existing", () => {
-  const r = interpretDacProbe(200, 500);
-  assert.equal(r.status, "warn");
-  assert.match(r.detail, /endpoint exists/i);
-});
-
 test("only root 200 + entity 200 ever yields a pass", () => {
   const combos: Array<[number, number | null]> = [
-    [404, null], [403, null], [401, null], [500, null],
-    [200, 403], [200, 404], [200, 401], [200, 500],
+    [404, null], [403, null], [401, null], [500, null], [200, null],
+    [200, 403], [200, 404], [200, 401], [200, 500], [200, 0],
   ];
   for (const [root, entity] of combos) {
     assert.notEqual(
-      interpretDacProbe(root, entity).status,
+      interpretDacProbe(root, entity, "X").status,
       "pass",
       `root=${root} entity=${entity} must not pass`
     );
   }
-  assert.equal(interpretDacProbe(200, 200).status, "pass");
+  assert.equal(interpretDacProbe(200, 200, "X").status, "pass");
 });
