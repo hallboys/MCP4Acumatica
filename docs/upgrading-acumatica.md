@@ -77,13 +77,28 @@ matters — clear it so curated tools don't describe the old shape.
 ## 5. Re-run preflight
 
 Visit `/docs/admin/preflight` and run the diagnostic (or `setup.sh` runs it automatically).
-It confirms, against the new version:
+The unauthenticated checks confirm:
 
 - `ACUMATICA_URL` reachable + OIDC discovery,
-- Connected App `client_credentials` grant,
-- tenant OData path (`/t/{tenant}/...`),
-- the **contract API endpoint version** resolves — this catches a wrong
-  `ACUMATICA_ENDPOINT_VERSION` from step 2.
+- Connected App `client_credentials` grant.
+
+**Then run the "Authenticated checks" form on the same page** with the Acumatica username of
+anyone who has signed in. This step is not optional after a version change: the unauthenticated
+checks **cannot** confirm the tenant or the endpoint version. Acumatica authenticates *before*
+routing, so an unauthenticated request returns **401 for every path** — including a tenant or a
+version that does not exist (verified on 25R2: `/entity/Default/99.999.999` → 401, not 404).
+Those rows therefore report `warn` ("unverifiable without a token"), never a false `pass`.
+
+With a real token a 404 means what it should, so the authenticated checks are what actually
+catch a wrong `ACUMATICA_ENDPOINT_VERSION` from step 2 or a mistyped `ACUMATICA_TENANT`:
+
+- **tenant** — 200 confirms it; 404 means `ACUMATICA_TENANT` is wrong (case-sensitive),
+- **contract API endpoint version** — 200 confirms `ACUMATICA_ENDPOINT_NAME`/`_VERSION`;
+  404 means the endpoint/version pair is not published (check SM207060),
+- plus the informational DAC-OData capability probe.
+
+If the token has expired (they live about an hour) you will get "Token rejected"; have that user
+make one tool call through Claude to refresh, then re-run.
 
 ## 6. Verify access control still holds
 
