@@ -22,7 +22,10 @@ on:
         description: "Version tag to create (e.g. 25R2-0.41.0)"
         required: true
       ref:
-        description: "Commit SHA or branch to tag"
+        # actions/checkout resolves this as a branch or tag name first, so a
+        # SHORT sha fails with "A branch or tag with the name '...' could not be
+        # found". Pass the full 40-character sha when tagging a specific commit.
+        description: "Branch, tag, or FULL 40-char commit SHA to tag (short SHAs are not resolvable)"
         required: false
         default: main
       notes:
