@@ -293,9 +293,11 @@ one surface that also supports writes), and search rides Generic Inquiries over
 1. **Does a normal user role suffice?** There are community reports that the DAC endpoint
    requires an elevated *OData v4 User* role, which the official documentation neither confirms
    nor denies. If true it is unusable here, since this server's entire access model is each
-   user's own Acumatica role. The preflight page (`/docs/admin/preflight`) reports whether the
-   endpoint *exists* on your instance and gives you the authenticated `curl` needed to settle
-   the role question -- an unauthenticated probe cannot answer it.
+   user's own Acumatica role. **The preflight page (`/docs/admin/preflight`) can now answer this
+   directly** -- the "DAC-based OData probe (authenticated)" form takes a connected user's
+   Acumatica username, borrows their stored token, and reports whether the endpoint exists and
+   whether an ordinary role can read it. Each run is audit-logged, and the request reaches
+   Acumatica as that user.
 2. **Field redaction is matched on field names.** `src/lib/redact.ts` patterns are tuned to
    contract-entity field names; DAC field names are physical and would need re-validating, or
    sensitive fields would silently stop being redacted.

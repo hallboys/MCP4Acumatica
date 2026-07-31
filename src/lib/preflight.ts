@@ -292,8 +292,147 @@ export async function checkDacODataEndpoint(
     detail:
       "Not verifiable server-side. Acumatica returns 401 for every path when unauthenticated — including nonexistent ones — so an anonymous probe cannot tell whether this endpoint exists. Acumatica 2025 R1+ exposes DACs directly over OData 4.0 here; this server does not use it (reads are contract REST, search rides Generic Inquiries), so nothing depends on the answer today.",
     remediation:
-      `Run this with a real user's bearer token to answer both open questions:  curl -i -H "Authorization: Bearer <user-token>" "${probeUrl}/PX.Objects.AR.Customer?$top=1"  — 200 means the endpoint exists AND a normal user role suffices (it would then be a candidate for fixing the contract-API $filter limitations). 404 means the instance predates 2025 R1 or has it disabled. 401/403 with a valid token means an elevated "OData v4 User" role is required, which would make it unusable under this server's per-user access model.`,
+      `To settle it, use the "DAC-based OData probe (authenticated)" form below — it borrows a connected user's stored token and reports a real verdict. Equivalent by hand:  curl -i -H "Authorization: Bearer <user-token>" "${probeUrl}/${DAC_PROBE_ENTITY}?$top=1"`,
   };
+}
+
+// ── Authenticated DAC-OData probe ────────────────────────────────
+//
+// The unauthenticated row above can't answer anything (Acumatica 401s every
+// path). These two functions do the real check with a user's bearer token,
+// driven from the admin console. Split so the interpretation is pure and
+// unit-testable while the I/O stays trivial.
+
+/** Entity used for the read test — the class name is confirmed by Acumatica's own docs. */
+export const DAC_PROBE_ENTITY = "PX.Objects.SO.SOOrder";
+
+export interface DacProbeResult {
+  status: PreflightStatus;
+  /** One-line verdict for the admin console. */
+  headline: string;
+  /** What it means for this server, including the next step where relevant. */
+  detail: string;
+}
+
+/**
+ * Turn the two probe responses into a verdict.
+ *
+ * Two requests rather than one, because a single entity GET can't distinguish
+ * "the DAC endpoint doesn't exist" from "the endpoint exists but I guessed the
+ * entity name wrong" — both are 404. So we check the service root first
+ * (existence + reachability), and only then read an entity (does data actually
+ * come back for this user).
+ *
+ * `entityStatus` is null when the root check already settled the question.
+ */
+export function interpretDacProbe(
+  rootStatus: number,
+  entityStatus: number | null
+): DacProbeResult {
+  if (rootStatus === 404) {
+    return {
+      status: "skip",
+      headline: "Not available on this instance.",
+      detail:
+        "The DAC-based OData endpoint returned 404 with a valid token, so it is not present — the instance predates Acumatica 2025 R1 or has the endpoint disabled. Nothing is broken; this server does not use it. Search reads continue to require a Generic Inquiry.",
+    };
+  }
+  if (rootStatus === 403) {
+    return {
+      status: "warn",
+      headline: "Exists, but this user's role is not permitted.",
+      detail:
+        "The endpoint responded 403 to an authenticated request, which confirms the reported requirement for an elevated role (\"OData v4 User\"). That makes it unusable here: this server's access model is each user's own Acumatica role, and granting every AI user an elevated role would defeat it. Keep search on Generic Inquiries.",
+    };
+  }
+  if (rootStatus === 401) {
+    return {
+      status: "warn",
+      headline: "Token rejected — inconclusive.",
+      detail:
+        "The token was refused (401). Most likely it had expired: access tokens live about an hour. Have the user make one tool call through Claude to force a refresh, then re-run this probe. A persistent 401 with a fresh token would suggest the endpoint does not accept OAuth bearer tokens the way the GI endpoint does.",
+    };
+  }
+  if (rootStatus !== 200) {
+    return {
+      status: "warn",
+      headline: `Unexpected HTTP ${rootStatus} from the service root.`,
+      detail: "Could not determine availability. Re-run, or check the instance's health.",
+    };
+  }
+
+  // Root is reachable — the endpoint exists and this user can talk to it.
+  if (entityStatus === 200) {
+    return {
+      status: "pass",
+      headline: "Available, and a normal user role suffices.",
+      detail:
+        `Both the service root and a read of ${DAC_PROBE_ENTITY} succeeded with an ordinary user's token. The DAC endpoint is a viable read surface on this instance, which makes it a real candidate for fixing the contract-API $filter limitations (child-collection filters, the silent-[] family). Before using it: re-validate src/lib/redact.ts field-name patterns against physical DAC field names, since redaction matches on names and DAC names differ from contract-entity names.`,
+    };
+  }
+  if (entityStatus === 403) {
+    return {
+      status: "warn",
+      headline: "Endpoint reachable, but this DAC is not readable.",
+      detail:
+        `The service root succeeded while ${DAC_PROBE_ENTITY} returned 403. Per-DAC access rights are being enforced — which is the desired behavior, but it means usability depends on what each user's role grants. Try another entity the user can read in the UI before drawing conclusions.`,
+    };
+  }
+  if (entityStatus === 404) {
+    return {
+      status: "warn",
+      headline: "Endpoint exists, but the entity name form differs.",
+      detail:
+        `The service root succeeded while ${DAC_PROBE_ENTITY} returned 404, so entity naming on this instance isn't the class name we assumed. Fetch the service document or $metadata with the same token to see the real entity-set names. The endpoint itself is available.`,
+    };
+  }
+  return {
+    status: "warn",
+    headline: `Endpoint reachable; entity read returned HTTP ${entityStatus}.`,
+    detail: `The service root succeeded, so the endpoint exists, but reading ${DAC_PROBE_ENTITY} gave an unexpected status. Inconclusive on usability.`,
+  };
+}
+
+/**
+ * Run the authenticated DAC probe with a real user's bearer token.
+ *
+ * Deliberately does NOT read either response body: the DAC service document
+ * enumerates every data access class on the instance and can be megabytes.
+ * Only the status codes matter, so bodies are cancelled.
+ */
+export async function probeDacAuthenticated(
+  url: string,
+  tenant: string,
+  accessToken: string
+): Promise<DacProbeResult> {
+  const base = `${url}/t/${encodeURIComponent(tenant)}/api/odata/dac`;
+  const auth = { Authorization: `Bearer ${accessToken}` };
+
+  const root = await safeFetch(`${base}/`, { headers: auth });
+  if ("error" in root) {
+    return {
+      status: "warn",
+      headline: "Probe failed to reach Acumatica.",
+      detail: `Network error contacting the service root: ${root.error}`,
+    };
+  }
+  root.body?.cancel();
+
+  if (root.status !== 200) {
+    return interpretDacProbe(root.status, null);
+  }
+
+  const entity = await safeFetch(`${base}/${DAC_PROBE_ENTITY}?$top=1`, { headers: auth });
+  if ("error" in entity) {
+    return {
+      status: "warn",
+      headline: "Service root reachable; entity read failed.",
+      detail: `Network error reading ${DAC_PROBE_ENTITY}: ${entity.error}`,
+    };
+  }
+  entity.body?.cancel();
+
+  return interpretDacProbe(root.status, entity.status);
 }
 
 /**

@@ -54,6 +54,30 @@ export function logAuthEvent(
   }));
 }
 
+/**
+ * Log a privileged action taken from the admin console. Emitted for anything
+ * that reaches outside the console itself — notably the DAC probe, which calls
+ * Acumatica using a *user's* token, so the call also lands in Acumatica's own
+ * audit trail under that user's name. Recording it here makes the "why did my
+ * account query OData?" question answerable.
+ *
+ * The admin handler runs on the Worker request path, where console.log IS
+ * captured by Logpush (unlike DO traces — see writeLogsToR2), so no explicit
+ * R2 write is needed.
+ */
+export function logAdminAction(
+  action: string,
+  details?: Record<string, unknown>
+): void {
+  console.log(JSON.stringify({
+    level: "info",
+    type: "admin_action",
+    timestamp: new Date().toISOString(),
+    action,
+    ...details,
+  }));
+}
+
 export function logRedaction(
   tool: string,
   acumaticaUsername: string,

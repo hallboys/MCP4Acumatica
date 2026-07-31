@@ -5,6 +5,20 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.43.0] - 2026-07-31
+### Added
+- **Authenticated DAC-OData probe in the admin console.** The 0.42.0 preflight row could only tell you the question was unanswerable, since Acumatica 401s every unauthenticated path and preflight has no token of its own. `/docs/admin/preflight` now has a **"DAC-based OData probe (authenticated)"** form: enter a connected user's Acumatica username and it borrows their stored token via the same `TokenManager` DO the MCP tools use, then reports a real verdict — is the endpoint present, and does an ordinary user's role suffice? Removes the need to extract a bearer token by hand.
+- **`admin_action` audit log type** (`logAdminAction()`). The probe reaches Acumatica **as the named user** and therefore appears in Acumatica's own audit trail under their name, so every run is recorded on our side with the target username and outcome. The admin handler runs on the Worker request path, where `console.log` is captured by Logpush, so no explicit R2 write is needed.
+- **`test/preflight-dac.test.ts`** — 9 tests pinning `interpretDacProbe`, including the distinction that motivated the two-request design and a guard that root 200 + entity 200 is the *only* combination yielding a pass.
+
+### Changed
+- The probe issues **two** requests — service root, then `PX.Objects.SO.SOOrder` — because one entity GET cannot distinguish "the DAC endpoint doesn't exist" from "the entity name was guessed wrong": both return 404. The root settles existence and reachability; the entity read settles whether data actually comes back. Neither response body is read (`body.cancel()`), since the DAC service document enumerates every data access class on the instance and can be megabytes. Only status codes cross the boundary — no Acumatica record data is returned or stored.
+- Verdict logic lives in a pure, unit-tested `interpretDacProbe()` rather than inline in the route, matching the existing `interpretTokenError()` split. A `pass` verdict explicitly carries the redaction caveat: `redact.ts` matches on field *names*, so DAC physical names must be re-validated before any DAC read path ships or sensitive fields silently stop being redacted.
+- The unauthenticated preflight row now defers to the form instead of printing a `curl` for the operator to run.
+
+### Security
+- The probe route is POST + CSRF-protected (not a GET that could be triggered by a link), requires an admin session like every other admin route, validates and length-caps the username, and maps `TokenResult` failures to actionable text without echoing the provider's internal message.
+
 ## [0.42.0] - 2026-07-30
 ### Added
 - **Preflight row for the DAC-based OData endpoint.** Acumatica **2025 R1+** exposes data access classes directly over OData 4.0 at `/t/{tenant}/api/odata/dac` — entities named by class (`PX.Objects.SO.SOOrder`), navigation properties (`SOLineCollection`, `BAccountByCustomerID`), no Generic Inquiry required. This server does not use it (reads are contract REST; GI OData serves search and the login gate), but it is the strongest candidate fix for the contract-API `$filter` failure family, so `/docs/admin/preflight` now surfaces it. Per Acumatica's docs it honors each user's existing rights ("users have access to the same data that is visible to them in the UI based on their access rights"), so it does not bypass row- or field-level security.
