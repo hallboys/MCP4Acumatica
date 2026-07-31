@@ -38,7 +38,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.45.0",
+    version: "0.46.0",
   });
 
   private redactPatterns?: string;
@@ -165,7 +165,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         filterExpression: z
           .string()
           .optional()
-          .describe("OData v3 $filter expression (e.g., \"BranchID eq 'BTC' and Status eq 'Open'\"). For partial match use the BARE boolean function — substringof('needle', Field) (needle comes first), startswith(Field,'prefix'), or endswith(Field,'suffix'). Do NOT append `eq true`: write substringof('needle', Field), NOT substringof('needle', Field) eq true — Acumatica's parser silently returns an empty result set for the `eq true` form. Do NOT use contains() (v4 syntax) or wrap fields in toupper()/tolower() — Acumatica does not support these and returns a 500. Substring matching is case-insensitive, so pass the needle in any casing."),
+          .describe("OData v4 $filter expression. Generic Inquiries use a DIFFERENT dialect from acumatica_list_entities (which is OData v3) — do NOT carry filter syntax between the two tools. Partial match: contains(Field,'needle') — field FIRST. substringof() does NOT exist here and fails with 'unknown function'. startswith(Field,'prefix') and endswith(Field,'suffix') work in both. tolower(Field)/toupper(Field) ARE supported here (unlike acumatica_list_entities). Dates are bare ISO-8601 instants with no prefix or quotes: \"CreatedOn gt 2024-01-01T00:00:00Z\" — the v3 form datetimeoffset'2024-01-01' is rejected. Numbers unquoted, strings single-quoted. Property names are the inquiry's RESULT-COLUMN CAPTIONS, which often differ from the underlying entity's field names, and are case-sensitive — call acumatica_describe_inquiry first if unsure."),
         topN: z
           .coerce.number()
           .int()

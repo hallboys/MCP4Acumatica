@@ -9,6 +9,8 @@ import { cleanGiRows } from "../lib/gi-rows";
 import { checkGiGate, parameterizedGiNames } from "../lib/gi-registry";
 import { getGiRegistry } from "../lib/gi-registry-build";
 import { getCached, setCached } from "../lib/metadata-cache";
+import { classifyODataV4Error, buildODataV4Correction } from "../lib/odata-v4-errors";
+import { AcumaticaApiError } from "../lib/acumatica-client";
 
 /** OData query response with value array */
 interface ODataQueryResponse {
@@ -76,8 +78,11 @@ export async function handleRunInquiry(
   const requestedTop = args.topN ?? 100;
   const effectiveTop = Math.min(requestedTop, MAX_TOP);
 
-  // Keep filter handling identical to acumatica_list_entities: strip
-  // `substringof(...) eq true` → bare boolean function. See normalizeODataFilter.
+  // normalizeODataFilter strips `substringof|startswith|endswith(...) eq true`.
+  // That workaround is motivated by the CONTRACT-REST (v3) parser; this endpoint
+  // is v4, where `f(...) eq true` is legal anyway. Kept because it is harmless
+  // here (a bare boolean function is equally valid in v4) and because dropping it
+  // would silently change behavior for filters already in use.
   const filterExpression = normalizeODataFilter(args.filterExpression);
 
   const query: Record<string, string> = {};
@@ -92,12 +97,33 @@ export async function handleRunInquiry(
     query.$select = args.selectFields;
   }
 
-  const response = await client.getOData<ODataQueryResponse>(
-    args.inquiryName,
-    "acumatica_run_inquiry",
-    { inquiryName: args.inquiryName, filter: filterExpression, topN: effectiveTop, select: args.selectFields },
-    query
-  );
+  let response: ODataQueryResponse;
+  try {
+    response = await client.getOData<ODataQueryResponse>(
+      args.inquiryName,
+      "acumatica_run_inquiry",
+      { inquiryName: args.inquiryName, filter: filterExpression, topN: effectiveTop, select: args.selectFields },
+      query
+    );
+  } catch (err) {
+    // Turn an OData v4 filter-parser rejection into a correction instead of a
+    // dead end. The GI endpoint is v4 while acumatica_list_entities is v3, so
+    // the most common cause is v3 syntax carried across (substringof,
+    // datetimeoffset'...') — and for a bad property name the registry already
+    // holds the authoritative $metadata names, so we can simply supply them.
+    // No extra round-trip: `gate.entry` was resolved above.
+    if (err instanceof AcumaticaApiError) {
+      const kind = classifyODataV4Error(err.message);
+      if (kind) {
+        return buildODataV4Correction(kind, err.message, {
+          inquiryName: args.inquiryName,
+          filterExpression,
+          availableFields: gate.entry?.fields?.map((f) => f.name),
+        });
+      }
+    }
+    throw err;
+  }
 
   const rows = response.value || [];
 

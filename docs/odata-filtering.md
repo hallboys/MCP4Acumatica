@@ -1,6 +1,25 @@
 # OData Filtering Guide
 
-The MCP4Acumatica uses OData query parameters for filtering, sorting, field selection, and entity expansion. This guide covers the syntax supported by the `acumatica_list_entities` and `acumatica_run_inquiry` tools.
+The MCP4Acumatica uses OData query parameters for filtering, sorting, field selection, and entity expansion.
+
+> ## ⚠️ Two tools, two OData dialects
+>
+> **`acumatica_list_entities`** queries the contract-based REST API, which is **OData v3**.
+> **`acumatica_run_inquiry`** queries Generic Inquiries over `/api/odata/gi`, which is **OData v4**.
+> Filter syntax is **not** portable between them. Everything below documents **v3** unless a
+> section says otherwise; see [Generic Inquiries use OData v4](#generic-inquiries-use-odata-v4)
+> for the differences.
+>
+> | | `list_entities` (v3) | `run_inquiry` (v4) |
+> |---|---|---|
+> | Partial match | `substringof('n', Field)` | `contains(Field, 'n')` |
+> | `substringof` | ✅ | ❌ *unknown function* |
+> | `contains` | ❌ 500 | ✅ |
+> | `startswith` / `endswith` | ✅ | ✅ |
+> | `tolower` / `toupper` | ❌ 500 | ✅ |
+> | Date literal | `datetimeoffset'2026-01-01'` | `2026-01-01T00:00:00Z` |
+>
+> *All rows verified live against a 25R2 instance, 2026-07-31.*
 
 ## Table of Contents
 
@@ -269,6 +288,45 @@ expand: "Details"
 9. **Numeric values** don't use quotes: `Amount gt 10000` (not `Amount gt '10000'`)
 
 10. **The `substringof` function** has reversed parameter order compared to other OData implementations: `substringof('search', FieldName)` (the search value comes first).
+
+---
+
+## Generic Inquiries use OData v4
+
+`acumatica_run_inquiry` goes to `/t/{tenant}/api/odata/gi`, which is an **OData v4** endpoint. Its
+parser errors are Microsoft.OData.Core wording (`An unknown function with name '...' was found`,
+`Could not find a property named '...' on type '...'`), distinct from the contract API's
+`CannotOptimizeException` family. Differences that matter:
+
+**Partial match uses `contains`, with the field first:**
+
+```
+contains(Description, 'BAD')        -- correct on a GI
+substringof('BAD', Description)     -- v3 syntax; fails with "unknown function 'substringof'"
+```
+
+**Dates are bare ISO-8601 instants** — no `datetimeoffset` prefix, no quotes:
+
+```
+CreatedOn gt 2024-01-01T00:00:00Z              -- correct on a GI
+CreatedOn gt datetimeoffset'2024-01-01'        -- v3 syntax; "Unrecognized 'Edm.String' literal"
+```
+
+**`tolower` / `toupper` work here** (they 500 on `list_entities`), so case-insensitive matching can
+be explicit: `contains(tolower(Description),'bad')`.
+
+**`startswith` / `endswith` are identical in both dialects**, so those are safe to carry across.
+
+**Property names are the inquiry's result-column captions**, not the underlying entity's field
+names, and they are case-sensitive. Use `acumatica_describe_inquiry` to get the exact names — its
+schema comes from the GI registry's `$metadata` resolution, so it is authoritative including any
+`_N` collision suffixes.
+
+When a filter is rejected for one of these reasons, the tool no longer returns the bare Acumatica
+message: it returns a structured `{ error: "invalid_filter", problem, useInstead, supportedFunctions
+| availableFields, actionRequired }` envelope naming the correct syntax or the real column names, so
+the next attempt can succeed. Importantly it also states that the query never executed — a rejected
+filter must never be reported to the user as "no records matched".
 
 ---
 

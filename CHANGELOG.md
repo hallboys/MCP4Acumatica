@@ -5,6 +5,19 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.46.0] - 2026-07-31
+### Fixed
+- **The Generic Inquiry tool was documented with the wrong OData dialect — the single largest source of tool errors.** `acumatica_run_inquiry` queries `/api/odata/gi`, which is **OData v4**, while `acumatica_list_entities` queries the contract API, which is **v3**. Both tools carried *byte-identical v3 filter guidance*, so every partial-match GI query was told to use `substringof()` — which does not exist in v4 — and explicitly forbidden from using `contains()`, the function it should have used. Verified live against a 25R2 instance: `substringof('BAD', Description)` fails with *"An unknown function with name 'substringof' was found"*, `contains(Description,'BAD')` works, `startswith`/`endswith` work in both dialects, `tolower()`/`toupper()` work on v4 despite 500ing on contract REST, and `CreatedOn gt datetimeoffset'2024-01-01'` is rejected where bare `2024-01-01T00:00:00Z` succeeds. July 2026 logs attribute **97 of 242 tool errors (~41%)** to this class: 44 unknown-function, 43 unknown-property, 10 operator type-mismatch.
+- `acumatica_run_inquiry`'s `filterExpression` description now documents v4 and warns explicitly not to carry syntax over from `acumatica_list_entities`. `acumatica_list_entities` keeps its v3 guidance unchanged.
+- `docs/odata-filtering.md` no longer presents one dialect as covering both tools. It opens with a verified side-by-side comparison table and gains a **"Generic Inquiries use OData v4"** section.
+
+### Added
+- **Self-correcting filter errors for Generic Inquiries.** `src/lib/odata-v4-errors.ts` (import-free leaf) classifies the four v4 parser errors, and `handleRunInquiry` now returns a correction instead of the bare Acumatica message: `{ error: "invalid_filter", problem, useInstead, supportedFunctions | availableFields, actionRequired }`. A `substringof` rejection names `contains()` *and* its reversed argument order; a bad property name returns the **actual** column names, taken from the GI registry's `$metadata`-resolved fields (no extra round-trip); a bad date literal gives the bare ISO-8601 form. Every correction states the query **never executed**, so a rejected filter can never be reported to the user as "no records matched".
+- `test/odata-v4-errors.test.ts` — 14 tests built from the real production error strings, including that the supported-function list never advertises `substringof`, and that every correction carries both the dialect warning and the "never executed" clause.
+
+### Notes
+- `normalizeODataFilter()` is a v3-motivated workaround that still runs on the GI path. It is harmless under v4 (a bare boolean function is equally valid there) and was deliberately left in place rather than silently changing behavior for filters already in use; the misleading "identical to list_entities" comment was corrected.
+
 ## [0.45.0] - 2026-07-31
 ### Fixed
 - **Preflight no longer reports a wrong tenant or endpoint version as `pass`.** `checkTenantPath` and `checkEndpointVersion` treated a 401 as "the path exists" and reserved `fail` for a 404 — but Acumatica SaaS authenticates *before* routing, so an unauthenticated request returns **401 for every path**, including ones that do not exist. Verified live on 25R2: `/t/NotARealTenant/api/odata/gi/` → 401 and `/entity/Default/99.999.999` → 401, both previously reported as passing. A typo'd `ACUMATICA_TENANT` or `ACUMATICA_ENDPOINT_VERSION` therefore sailed through the diagnostic that exists to catch exactly that. Both rows now return **`warn`** on a 401, stating plainly that the value cannot be confirmed without a token, and reserve `pass` for a genuine 200.
