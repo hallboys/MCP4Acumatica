@@ -56,10 +56,10 @@ export function logAuthEvent(
 
 /**
  * Log a privileged action taken from the admin console. Emitted for anything
- * that reaches outside the console itself — notably the DAC probe, which calls
- * Acumatica using a *user's* token, so the call also lands in Acumatica's own
- * audit trail under that user's name. Recording it here makes the "why did my
- * account query OData?" question answerable.
+ * that reaches outside the console itself — notably the authenticated preflight
+ * checks, which call Acumatica using a *user's* token, so the call also lands in
+ * Acumatica's own audit trail under that user's name. Recording it here makes
+ * the "why did my account query Acumatica?" question answerable.
  *
  * The admin handler runs on the Worker request path, where console.log IS
  * captured by Logpush (unlike DO traces — see writeLogsToR2), so no explicit

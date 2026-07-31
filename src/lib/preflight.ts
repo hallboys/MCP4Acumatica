@@ -350,9 +350,9 @@ export function interpretEndpointAuthed(
 }
 
 /**
- * Run every check that needs a real user's bearer token: the two that an
- * unauthenticated probe cannot decide (tenant, contract endpoint version) plus
- * the DAC capability probe.
+ * Run the checks that need a real user's bearer token — the two an
+ * unauthenticated probe cannot decide, because Acumatica 401s every path
+ * whether or not it exists: the tenant, and the contract endpoint version.
  */
 export async function runAuthenticatedChecks(
   url: string,
