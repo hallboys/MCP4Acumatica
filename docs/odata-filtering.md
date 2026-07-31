@@ -269,3 +269,35 @@ expand: "Details"
 9. **Numeric values** don't use quotes: `Amount gt 10000` (not `Amount gt '10000'`)
 
 10. **The `substringof` function** has reversed parameter order compared to other OData implementations: `substringof('search', FieldName)` (the search value comes first).
+
+---
+
+## Note on the limitations above
+
+Gotchas 5, 7, and 8 -- no `$skip`, no child-collection filtering, and the silent-`[]` /
+`CannotOptimizeException` family on complex document entities -- are **not OData limitations**.
+They are artifacts of the *contract-based REST API's* filter binder. A genuine OData 4.0
+implementation handles all three.
+
+Acumatica **2025 R1** added exactly that: a **DAC-based OData endpoint** at
+`/t/{tenant}/api/odata/dac`, exposing data access classes directly (entities named by class,
+e.g. `PX.Objects.SO.SOOrder`, with navigation properties such as `SOLineCollection`) with no
+Generic Inquiry required. Per Acumatica's documentation it honors each user's existing access
+rights -- *"users have access to the same data that is visible to them in the UI based on their
+access rights"* -- so it does not bypass row- or field-level security.
+
+**This server does not use it today.** Reads go through contract REST (keyed lookups, and the
+one surface that also supports writes), and search rides Generic Inquiries over
+`/t/{tenant}/api/odata/gi`. Two things need resolving before it could replace the search path:
+
+1. **Does a normal user role suffice?** There are community reports that the DAC endpoint
+   requires an elevated *OData v4 User* role, which the official documentation neither confirms
+   nor denies. If true it is unusable here, since this server's entire access model is each
+   user's own Acumatica role. The preflight page (`/docs/admin/preflight`) reports whether the
+   endpoint *exists* on your instance and gives you the authenticated `curl` needed to settle
+   the role question -- an unauthenticated probe cannot answer it.
+2. **Field redaction is matched on field names.** `src/lib/redact.ts` patterns are tuned to
+   contract-entity field names; DAC field names are physical and would need re-validating, or
+   sensitive fields would silently stop being redacted.
+
+Until both are closed, prefer a Generic Inquiry for any read that gotchas 7 and 8 block.
