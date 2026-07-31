@@ -925,7 +925,7 @@ adminApp.post("/preflight/authed-checks", async (c) => {
         tokenResult.status === "reauth"
           ? `No usable token for "${username}". They must sign in to the MCP server again (or the username is wrong — it is the Acumatica login, case-sensitive).`
           : `Token lookup for "${username}" failed transiently. Retry in a moment.`;
-      logAdminAction("dac_probe", { targetUsername: username, outcome: tokenResult.status });
+      logAdminAction("authenticated_checks", { targetUsername: username, outcome: tokenResult.status });
       return c.json({ ok: false, error: reason });
     }
 
