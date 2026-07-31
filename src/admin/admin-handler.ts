@@ -5,7 +5,9 @@ import { Hono } from "hono";
 import type { Env } from "../types/acumatica";
 import { getConfig, setConfig, deleteConfig, CONFIG_KEYS, validateConfigValue } from "../lib/config";
 import { hmacSign, hmacVerify, constantTimeEqual, parseCookies } from "../lib/crypto";
-import { runPreflight, type PreflightCheck } from "../lib/preflight";
+import { runPreflight, probeDacAuthenticated, type PreflightCheck } from "../lib/preflight";
+import { DOTokenProvider } from "../platform/do-token-provider";
+import { logAdminAction } from "../lib/logger";
 
 // ── Session cookie + CSRF helpers ─────────────────────────────────
 //
@@ -753,6 +755,21 @@ adminApp.get("/preflight", (c) => {
     <div id="preflight-results" style="margin-top:20px">
       <div class="empty-state">Click "Run checks" to probe Acumatica.</div>
     </div>
+
+    <hr style="margin:32px 0;border:0;border-top:1px solid var(--border, #e2e8f0)">
+    <h2>DAC-based OData probe (authenticated)</h2>
+    <p>The checks above run without a user, and Acumatica returns 401 for every path when unauthenticated &mdash; so they cannot tell whether the <code>/api/odata/dac</code> endpoint (Acumatica 2025 R1+) exists here. This probe answers it using a connected user's stored token.</p>
+    <p><strong>Note:</strong> the request is made <em>as that user</em>, so it appears in Acumatica's audit trail under their name. Every run is logged here as an <code>admin_action</code>. Only HTTP status codes are read &mdash; no record data is returned or stored.</p>
+    <div class="filters">
+      <div class="form-group">
+        <label>Acumatica username</label>
+        <input type="text" id="dacUsername" placeholder="the Acumatica login, case-sensitive">
+      </div>
+      <div class="form-group">
+        <button class="btn btn-primary" onclick="runDacProbe()">Run probe</button>
+      </div>
+    </div>
+    <div id="dac-results"></div>
     <script>
       async function runPreflight() {
         document.getElementById('preflight-results').innerHTML = '<div class="empty-state">Running checks… this can take up to 30 seconds.</div>';
@@ -801,6 +818,39 @@ adminApp.get("/preflight", (c) => {
         html += '</tbody></table>';
         document.getElementById('preflight-results').innerHTML = html;
       }
+      function dacCsrf() {
+        const m = document.cookie.match(/(?:^|; )mcp_admin_csrf=([^;]+)/);
+        return m ? m[1] : '';
+      }
+      async function runDacProbe() {
+        const username = document.getElementById('dacUsername').value.trim();
+        const out = document.getElementById('dac-results');
+        if (!username) {
+          out.innerHTML = '<div class="alert alert-error">Enter an Acumatica username first.</div>';
+          return;
+        }
+        out.innerHTML = '<div class="empty-state">Probing as ' + esc(username) + '…</div>';
+        try {
+          const res = await fetch('/docs/admin/preflight/dac-probe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': dacCsrf() },
+            body: JSON.stringify({ username: username })
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            out.innerHTML = '<div class="alert alert-error">' + esc(data.error) + '</div>';
+            return;
+          }
+          const r = data.result;
+          const color = r.status === 'pass' ? 'success' : r.status === 'fail' ? 'error' : 'info';
+          out.innerHTML =
+            '<div class="alert alert-' + color + '"><strong>' + esc(r.headline) + '</strong></div>' +
+            '<div style="padding:12px;background:var(--code-bg);border-radius:4px;font-size:13px;line-height:1.6">' +
+            esc(r.detail) + '</div>';
+        } catch (err) {
+          out.innerHTML = '<div class="alert alert-error">Probe failed: ' + esc(err && err.message) + '</div>';
+        }
+      }
     </script>`;
   return c.html(renderAdminPage("Preflight", "preflight", html));
 });
@@ -819,6 +869,77 @@ adminApp.get("/preflight/api", async (c) => {
     expectedCallbackUrl: `${origin}/callback`,
   });
   return c.json({ checks });
+});
+
+/**
+ * Authenticated DAC-OData probe.
+ *
+ * The unauthenticated preflight row can't determine anything (Acumatica 401s
+ * every path, existent or not), and preflight has no token of its own — no user,
+ * and client_credentials is disabled on the Connected App. So this route borrows
+ * a *user's* stored token via the same TokenManager DO the MCP tools use.
+ *
+ * That is a real capability, so it is deliberately constrained: POST + CSRF (not
+ * a GET that could be triggered by a link), admin session required by the
+ * middleware above, and every invocation is logged as an `admin_action` with the
+ * target username — the call appears in Acumatica's own audit trail under that
+ * user, so it must be attributable on our side too.
+ *
+ * Only status codes cross this boundary; no Acumatica record data is returned.
+ */
+adminApp.post("/preflight/dac-probe", async (c) => {
+  try {
+    const session = c.get("session");
+    const csrfOk = await requireCsrf(
+      c.req.header("cookie"),
+      c.req.header("x-csrf-token") ?? undefined,
+      session
+    );
+    if (!csrfOk) {
+      return c.json({ ok: false, error: "CSRF validation failed. Reload the page and retry." }, 403);
+    }
+
+    const body = (await c.req.json().catch(() => ({}))) as { username?: unknown };
+    const username = typeof body.username === "string" ? body.username.trim() : "";
+    if (!username) {
+      return c.json({ ok: false, error: "Enter the Acumatica username whose stored token should be used." }, 400);
+    }
+    if (username.length > 256) {
+      return c.json({ ok: false, error: "Username is too long." }, 400);
+    }
+    if (!c.env.ACUMATICA_URL || !c.env.ACUMATICA_TENANT) {
+      return c.json({ ok: false, error: "ACUMATICA_URL / ACUMATICA_TENANT are not configured." }, 400);
+    }
+
+    const tokenResult = await new DOTokenProvider(c.env.TOKEN_MANAGER).getAccessToken(username);
+    if (tokenResult.status !== "ok") {
+      // Don't leak the provider's message verbatim; map to the two cases an
+      // admin can act on.
+      const reason =
+        tokenResult.status === "reauth"
+          ? `No usable token for "${username}". They must sign in to the MCP server again (or the username is wrong — it is the Acumatica login, case-sensitive).`
+          : `Token lookup for "${username}" failed transiently. Retry in a moment.`;
+      logAdminAction("dac_probe", { targetUsername: username, outcome: tokenResult.status });
+      return c.json({ ok: false, error: reason });
+    }
+
+    const result = await probeDacAuthenticated(
+      c.env.ACUMATICA_URL,
+      c.env.ACUMATICA_TENANT,
+      tokenResult.accessToken
+    );
+    logAdminAction("dac_probe", {
+      targetUsername: username,
+      outcome: result.status,
+      headline: result.headline,
+    });
+    return c.json({ ok: true, result });
+  } catch (err) {
+    return c.json(
+      { ok: false, error: err instanceof Error ? err.message : "Probe failed." },
+      500
+    );
+  }
 });
 
 // ── Logs page ────────────────────────────────────────────────────
