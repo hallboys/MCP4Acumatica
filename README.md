@@ -333,6 +333,14 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 - **[Self-Hosting Guide](docs/self-hosting-guide.md)** -- How to run the MCP server on Node.js or other platforms outside Cloudflare
 - **[Upgrading Acumatica](docs/upgrading-acumatica.md)** -- Steps to take when changing or upgrading the connected Acumatica version
 
+## Skills
+
+Reusable Claude skills that ship with this repo, in [`skills/`](skills/):
+
+- **[acumatica-gi-descriptions](skills/acumatica-gi-descriptions/)** -- End-to-end process for writing AI-facing descriptions for Generic Inquiries and their result columns, grounded in the GI's own design metadata (tables, joins, WHERE conditions, columns) rather than guessed from names. Includes the platform tripwires that make bulk GI metadata work go silently wrong, a checklist of design signals worth hunting, and three scripts for truncation auditing, design briefing, and draft validation.
+
+To use it, point Claude at the skill directory, or copy it into your own `.claude/skills/`.
+
 ## Security
 
 - **No stored credentials.** The MCP server does not store Acumatica passwords. It uses OAuth 2.0 authorization code flow -- users authenticate directly with Acumatica.

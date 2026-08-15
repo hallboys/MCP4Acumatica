@@ -74,6 +74,22 @@ of its `builtAt`; clearing the cache forces an immediate rebuild on the next GI 
 the field **types** come from `$metadata`, an endpoint-version change is exactly when a refresh
 matters — clear it so curated tools don't describe the old shape.
 
+**Re-verify the `MCPGIFields` feed after an upgrade.** Curated *column* descriptions are attached
+positionally — design rows are matched to `$metadata` properties by grid position, because a
+column's property name can't be predicted from the design (see `resolveFields` in
+`src/lib/gi-registry.ts`). That needs the feed's `SortOrder` and `IsActive` output columns, and it
+assumes Acumatica's projection rule (keys hoisted to the front, then active rows in `SortOrder`
+order, then non-result keys appended). Two things to check:
+
+- The feed still emits `SortOrder` and `IsActive` — re-import `acumatica/MCPGIFields.xml` if the
+  instance predates the 0.48.0 version of it.
+- Spot-check one GI with `acumatica_describe_inquiry`: fields should carry `description` text. If
+  a GI's fields come back with names and types but no descriptions, its alignment was **rejected**
+  (deliberate — a mis-shifted description is worse than none), which on a new release would suggest
+  the projection rule itself changed. Re-run
+  `skills/acumatica-gi-descriptions/scripts/align_columns.mjs --report` to see which GIs failed and
+  why before changing the algorithm.
+
 ## 5. Re-run preflight
 
 Visit `/docs/admin/preflight` and run the diagnostic (or `setup.sh` runs it automatically).

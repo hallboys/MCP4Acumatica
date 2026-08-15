@@ -144,10 +144,10 @@ test("assembleRegistry: $metadata wins, collisions resolve by LineNbr order, Usr
       { Name: "MCPGIs" }, // feed GI must be dropped
     ],
     fieldRows: [
-      { Name: "InventoryUsageMCP", SchemaField: "inventoryID", Caption: "Inventory ID", AIDescription: "primary item", LineNbr: 1 },
-      { Name: "InventoryUsageMCP", SchemaField: "qty", Caption: "Quantity", AIDescription: "qty used", LineNbr: 2 },
-      { Name: "InventoryUsageMCP", SchemaField: "inventoryID", Caption: "Inventory ID", AIDescription: "component item", LineNbr: 3 },
-      { Name: "InventoryUsageMCP", SchemaField: "UsrAIDescription", AIDescription: "the AI note", LineNbr: 4 },
+      { Name: "InventoryUsageMCP", SchemaField: "inventoryID", Caption: "Inventory ID", AIDescription: "primary item", LineNbr: 1, IsActive: true },
+      { Name: "InventoryUsageMCP", SchemaField: "qty", Caption: "Quantity", AIDescription: "qty used", LineNbr: 2, IsActive: true },
+      { Name: "InventoryUsageMCP", SchemaField: "inventoryID", Caption: "Inventory ID", AIDescription: "component item", LineNbr: 3, IsActive: true },
+      { Name: "InventoryUsageMCP", SchemaField: "UsrAIDescription", AIDescription: "the AI note", LineNbr: 4, IsActive: true },
     ],
     edmxTypes: parseEdmxTypes(EDMX),
     builtAt: "2026-06-20T00:00:00Z",
@@ -184,6 +184,199 @@ test("assembleRegistry: no EDMX for a GI → fields fall back to feed rows, no d
   assert.equal(gi.fields?.[0].name, "AccountName");
   assert.equal(gi.fields?.[0].type, undefined);
   assert.equal(gi.fields?.[0].description, "the name");
+});
+
+// ── Positional column alignment ───────────────────────────────────────────
+//
+// Property names cannot be predicted from the design (a caption is only an
+// override and is NULL for most columns; SchemaField is DAC-qualified where it
+// exists at all), so design rows are joined to properties by position:
+//   keys hoisted to the front ++ active rows in SortOrder order ++ trailing keys
+
+/** Assemble one GI and return its resolved fields, keyed by property name. */
+function fieldsOf(edmx: string, fieldRows: object[], giName = "GI") {
+  const reg = assembleRegistry({
+    giRows: [{ Name: giName }],
+    fieldRows: fieldRows as never,
+    edmxTypes: parseEdmxTypes(edmx),
+    builtAt: "2026-08-15T00:00:00Z",
+  });
+  const fields = reg.gis[0].fields ?? [];
+  return {
+    names: fields.map((f) => f.name),
+    byName: Object.fromEntries(fields.map((f) => [f.name, f])),
+    annotated: fields.filter((f) => f.description || f.caption).length,
+  };
+}
+
+test("alignment: columns follow SortOrder, not LineNbr", () => {
+  // Design rows are numbered 1,2,3 but sit in the grid as 2,3,1. Aligning by
+  // LineNbr would put the captioned row on "Status" and reject the whole GI.
+  const { byName, annotated } = fieldsOf(
+    `<EntityType Name="GI">
+       <Property Name="Builder" Type="Edm.String"/>
+       <Property Name="Status" Type="Edm.String"/>
+       <Property Name="Amount" Type="Edm.Decimal"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 3, IsActive: true, AIDescription: "the amount" },
+      { Name: "GI", LineNbr: 2, SortOrder: 1, IsActive: true, AIDescription: "who built it" },
+      { Name: "GI", LineNbr: 3, SortOrder: 2, IsActive: true, Caption: "Status", AIDescription: "current status" },
+    ]
+  );
+  assert.equal(annotated, 3, "all three rows landed");
+  assert.equal(byName.Builder.description, "who built it");
+  assert.equal(byName.Status.description, "current status");
+  assert.equal(byName.Amount.description, "the amount");
+  assert.equal(byName.Amount.type, "decimal");
+});
+
+test("alignment: inactive design rows never consume a property slot", () => {
+  const { byName, annotated } = fieldsOf(
+    `<EntityType Name="GI">
+       <Property Name="Builder" Type="Edm.String"/>
+       <Property Name="Status" Type="Edm.String"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, AIDescription: "who built it" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: false, AIDescription: "hidden column" },
+      { Name: "GI", LineNbr: 3, SortOrder: 3, Caption: "Status", AIDescription: "current status" },
+    ]
+  );
+  assert.equal(annotated, 2, "the inactive row contributes nothing");
+  assert.equal(byName.Builder.description, "who built it");
+  assert.equal(byName.Status.description, "current status");
+});
+
+test("alignment: IsActive accepts the wire's boolean/number/string spellings", () => {
+  for (const inactive of [false, 0, "0", "false", "False"]) {
+    const { byName, annotated } = fieldsOf(
+      `<EntityType Name="GI"><Property Name="Status" Type="Edm.String"/></EntityType>`,
+      [
+        { Name: "GI", LineNbr: 1, SortOrder: 1, ColumnIsActive: inactive, AIDescription: "hidden" },
+        { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Caption: "Status", AIDescription: "current status" },
+      ]
+    );
+    assert.equal(annotated, 1, `IsActive=${JSON.stringify(inactive)}`);
+    assert.equal(byName.Status.description, "current status");
+  }
+});
+
+test("alignment: key columns are hoisted to the front of the property list", () => {
+  // ProjectID is the 3rd result column in the design but the 1st property.
+  const { names, byName } = fieldsOf(
+    `<EntityType Name="GI">
+       <Key><PropertyRef Name="ProjectID"/></Key>
+       <Property Name="ProjectID" Type="Edm.String"/>
+       <Property Name="Builder" Type="Edm.String"/>
+       <Property Name="Status" Type="Edm.String"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Field: "builder", AIDescription: "who built it" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Caption: "Status", AIDescription: "current status" },
+      { Name: "GI", LineNbr: 3, SortOrder: 3, IsActive: true, Caption: "Project ID", AIDescription: "the project" },
+    ]
+  );
+  assert.deepEqual(names, ["ProjectID", "Builder", "Status"]);
+  assert.equal(byName.ProjectID.description, "the project");
+  assert.equal(byName.Builder.description, "who built it");
+  assert.equal(byName.Status.description, "current status");
+});
+
+test("alignment: keys that are not result columns are appended with no design row", () => {
+  const { names, byName } = fieldsOf(
+    `<EntityType Name="GI">
+       <Key><PropertyRef Name="ProjectID"/><PropertyRef Name="RowNumber"/></Key>
+       <Property Name="ProjectID" Type="Edm.String"/>
+       <Property Name="Builder" Type="Edm.String"/>
+       <Property Name="RowNumber" Type="Edm.Int32"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Field: "builder", AIDescription: "who built it" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Caption: "Project ID", AIDescription: "the project" },
+    ]
+  );
+  assert.deepEqual(names, ["ProjectID", "Builder", "RowNumber"]);
+  assert.equal(byName.ProjectID.description, "the project");
+  assert.equal(byName.Builder.description, "who built it");
+  // The appended key has no design row — it must not inherit a neighbour's text.
+  assert.equal(byName.RowNumber.description, undefined);
+  assert.equal(byName.RowNumber.caption, undefined);
+  assert.equal(byName.RowNumber.type, "integer");
+});
+
+test("alignment: a misaligned captioned row rejects the whole GI's annotation", () => {
+  // The two captioned rows are in the wrong order relative to $metadata: every
+  // assignment misplaces one, so no description may be attached to either.
+  const { names, byName, annotated } = fieldsOf(
+    `<EntityType Name="GI">
+       <Property Name="Amount" Type="Edm.Decimal"/>
+       <Property Name="Status" Type="Edm.String"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, Caption: "Status", AIDescription: "current status" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, Caption: "Amount", AIDescription: "the amount" },
+    ]
+  );
+  assert.equal(annotated, 0, "no description survives a rejected alignment");
+  // Names and declared types are still authoritative and still returned.
+  assert.deepEqual(names, ["Amount", "Status"]);
+  assert.equal(byName.Amount.type, "decimal");
+  assert.equal(byName.Status.type, "string");
+});
+
+test("alignment: more active rows than properties rejects rather than shifts", () => {
+  const { names, annotated } = fieldsOf(
+    `<EntityType Name="GI"><Property Name="Status" Type="Edm.String"/></EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, Caption: "Status", AIDescription: "current status" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, Caption: "Amount", AIDescription: "the amount" },
+    ]
+  );
+  assert.equal(annotated, 0);
+  assert.deepEqual(names, ["Status"]);
+});
+
+test("alignment: a caption ending in _N matches the literal property name", () => {
+  // `_2` is usually a collision suffix the platform appended, but it can also
+  // be typed into the caption by hand (production: IN-StockItem "ItemStatus_2").
+  // Comparing only against the stripped name makes such a row unsatisfiable and
+  // needlessly rejects the whole GI.
+  const { byName, annotated } = fieldsOf(
+    `<EntityType Name="GI">
+       <Property Name="ItemStatus" Type="Edm.String"/>
+       <Property Name="ItemStatus_2" Type="Edm.String"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Caption: "ItemStatus", AIDescription: "stock status" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Caption: "ItemStatus_2", AIDescription: "second status" },
+    ]
+  );
+  assert.equal(annotated, 2);
+  assert.equal(byName.ItemStatus.description, "stock status");
+  assert.equal(byName.ItemStatus_2.description, "second status");
+});
+
+test("alignment: a feed with no active flag at all is refused, not aligned by LineNbr", () => {
+  // A pre-0.48.0 MCPGIFields emits no IsActive, so an inactive row is
+  // indistinguishable from an active one — it consumes a property slot and
+  // shifts every later column. Captions do not save this: verified on
+  // production PM-Projects (25 captioned columns), where dropping the flag
+  // moved EndDate from line 47 onto line 45, because both neighbours were
+  // uncaptioned and so neither constrained the alignment. Wrong annotations
+  // are worse than none, so such a feed gets names and types only.
+  const { names, annotated } = fieldsOf(
+    `<EntityType Name="GI">
+       <Property Name="Builder" Type="Edm.String"/>
+       <Property Name="Status" Type="Edm.String"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, AIDescription: "who built it" },
+      { Name: "GI", LineNbr: 2, Caption: "Status", AIDescription: "current status" },
+    ]
+  );
+  assert.deepEqual(names, ["Builder", "Status"], "names and types still returned");
+  assert.equal(annotated, 0, "no captions or descriptions attached");
 });
 
 // ── Parameterized-GI detection (run_inquiry guard + discovery exclusion) ──

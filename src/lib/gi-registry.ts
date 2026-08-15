@@ -153,24 +153,40 @@ export interface FeedGiRow {
 export interface FeedFieldRow {
   /** Owning GI name (MCPGIFields "Name") — groups columns by GI. */
   Name?: string;
-  /** Target column's DAC field name (MCPGIFields "SchemaField"); fallback for
-   *  predicting the OData property name when the column has no caption. */
+  /** Target column's DAC field name (MCPGIFields "SchemaField"). NULL for most
+   *  rows, and DAC-qualified ("INTran.RefNbr") where present, so it cannot be
+   *  used to predict a property name — kept for the no-$metadata fallback only. */
   SchemaField?: string;
-  /** Target column's caption (MCPGIFields "Caption"). */
+  /** Target column's caption (MCPGIFields "Caption"). An *override*, usually
+   *  NULL — see the alignment note on resolveFields. */
   Caption?: string;
   /** Curated per-column description (MCPGIFields "AIDescription"). */
   AIDescription?: string;
-  /** Target column's result-grid line number (MCPGIFields "LineNbr"); orders
-   *  columns for collision disambiguation. */
+  /** Target column's design line number (MCPGIFields "LineNbr"). NOT the grid
+   *  position — see SortOrder. */
   LineNbr?: number | string;
+  /** Grid position (GIResult.SortOrder). This, not LineNbr, is the order the
+   *  columns appear in — and therefore the order OData declares them in. */
+  SortOrder?: number | string;
+  /** Whether the column is active (GIResult.IsActive). Inactive columns never
+   *  reach OData at all, so they must not consume a property slot. */
+  IsActive?: boolean | number | string;
+  /** Alias for IsActive, as captioned by the MCPGIColumnsAll feed. */
+  ColumnIsActive?: boolean | number | string;
+  /** Target column's GIResult field name (MCPGIFields "Field"), e.g.
+   *  "primaryScreenID_description". Only a weak tiebreak during alignment. */
+  Field?: string;
 }
 
-/** Parsed EDMX EntityType: ordered property names + declared types. */
+/** Parsed EDMX EntityType: ordered property names + declared types + key props. */
 export interface EdmxEntity {
   /** Property names in declaration order (carry `_N` collision suffixes). */
   order: string[];
   /** propertyName → raw Edm type (e.g. "Edm.Decimal"). */
   types: Map<string, string>;
+  /** `<Key><PropertyRef>` property names. Acumatica hoists result columns that
+   *  are also keys to the front of the property list — see resolveFields. */
+  keys: string[];
 }
 
 /** Normalize a GI or field name for matching: alphanumerics only, lower-cased. */
@@ -224,21 +240,29 @@ export function parseEdmxTypes(xml: string): Map<string, EdmxEntity> {
     const body = m[2];
     const order: string[] = [];
     const types = new Map<string, string>();
+    // `<Property Name= Type=>` only — `<PropertyRef Name=>` has no Type and the
+    // `\s+` after `Property` keeps the two apart.
     const propRe = /<Property\s+Name="([^"]+)"\s+Type="([^"]+)"/g;
     for (const p of body.matchAll(propRe)) {
       order.push(p[1]);
       types.set(p[1], p[2]);
     }
-    out.set(normalizeName(name), { order, types });
+    const keys: string[] = [];
+    for (const k of body.matchAll(/<PropertyRef\s+Name="([^"]+)"/g)) keys.push(k[1]);
+    out.set(normalizeName(name), { order, types, keys });
   }
   return out;
 }
 
 /**
- * Predicted OData property name for a MCPGIFields row, per the precedence rule
- * (spec §3): caption (whitespace/invalid stripped) → `Usr`-stripped field →
- * field name. The result is only used to *match* against authoritative
- * $metadata names, so it's returned un-normalized; callers normalize.
+ * Best-effort property name for a MCPGIFields row: caption (invalid characters
+ * stripped) → `Usr`-stripped schema field → schema field.
+ *
+ * This is a *guess*, and only good enough for the degraded no-$metadata path.
+ * It cannot be used to join design rows to real properties: a caption is only an
+ * override and is NULL for most columns, and where SchemaField is populated it
+ * is DAC-qualified ("INTran.RefNbr"), which never equals the bare property name.
+ * The real join is positional — see resolveFields.
  */
 export function predictPropertyName(row: FeedFieldRow): string {
   const caption = row.Caption?.trim();
@@ -248,9 +272,58 @@ export function predictPropertyName(row: FeedFieldRow): string {
   return field;
 }
 
-function lineNbr(row: FeedFieldRow): number {
-  const n = typeof row.LineNbr === "string" ? parseInt(row.LineNbr, 10) : row.LineNbr;
+function toNumber(v: number | string | undefined): number {
+  const n = typeof v === "string" ? parseInt(v, 10) : v;
   return Number.isFinite(n as number) ? (n as number) : Number.MAX_SAFE_INTEGER;
+}
+
+function lineNbr(row: FeedFieldRow): number {
+  return toNumber(row.LineNbr);
+}
+
+/** Grid position of a column. SortOrder is authoritative; LineNbr is the
+ *  fallback for a feed that doesn't (yet) emit SortOrder. */
+function sortOrder(row: FeedFieldRow): number {
+  const n = toNumber(row.SortOrder);
+  return n === Number.MAX_SAFE_INTEGER ? lineNbr(row) : n;
+}
+
+/**
+ * Whether a design row is an active column. Inactive rows are excluded from the
+ * OData projection entirely, so counting them would shift every later column.
+ * A feed that doesn't emit the flag yields `true` (no worse than before it did).
+ */
+function isActiveRow(row: FeedFieldRow): boolean {
+  const raw = row.IsActive ?? row.ColumnIsActive;
+  if (raw === undefined || raw === null || raw === "") return true;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  const s = String(raw).trim().toLowerCase();
+  return !(s === "false" || s === "0" || s === "no" || s === "n");
+}
+
+/** Whether a row carries a usable active flag at all (vs. the feed omitting the
+ *  column). Distinct from `isActiveRow`, which defaults a missing flag to true. */
+function hasActiveFlag(row: FeedFieldRow): boolean {
+  const raw = row.IsActive ?? row.ColumnIsActive;
+  return raw !== undefined && raw !== null && raw !== "";
+}
+
+/** Active design rows for one GI, deduped by LineNbr, in grid order. */
+function gridOrderedRows(rows: FeedFieldRow[]): FeedFieldRow[] {
+  // LineNbr is the row identity (GIResult's key), so it also dedupes an
+  // overlapping feed pull. A row with no parseable LineNbr keeps its own slot —
+  // collapsing every such row into one would silently lose columns.
+  const byLine = new Map<number, FeedFieldRow>();
+  const unnumbered: FeedFieldRow[] = [];
+  for (const row of rows) {
+    const n = lineNbr(row);
+    if (n === Number.MAX_SAFE_INTEGER) unnumbered.push(row);
+    else byLine.set(n, row);
+  }
+  return [...byLine.values(), ...unnumbered]
+    .filter(isActiveRow)
+    .sort((a, b) => sortOrder(a) - sortOrder(b) || lineNbr(a) - lineNbr(b));
 }
 
 /**
@@ -259,11 +332,10 @@ function lineNbr(row: FeedFieldRow): number {
  * Field resolution per GI:
  *  - If EDMX has the EntityType, its property names (with `_N` suffixes) are the
  *    authoritative field list, in order, with declared types. Curated
- *    descriptions/captions from MCPGIFields are matched onto them: rows are
- *    grouped by predicted name (LineNbr order), then assigned to authoritative
- *    properties by stripped-base name so collisions (`InventoryID`,
- *    `InventoryID_2`) line up with the result-grid order.
- *  - If EDMX lacks the GI, fields fall back to the MCPGIFields rows by predicted
+ *    captions/descriptions from MCPGIFields are attached POSITIONALLY (see
+ *    resolveFields) — a GI whose design rows can't be aligned keeps its names
+ *    and types but gets no annotation.
+ *  - If EDMX lacks the GI, fields fall back to the MCPGIFields rows by guessed
  *    name with no declared types (still useful for descriptions; types infer at
  *    runtime). If neither feed has fields, `fields` is omitted entirely.
  */
@@ -306,54 +378,220 @@ export function assembleRegistry(opts: {
   return registry;
 }
 
+/**
+ * Score for pairing design `row` with property `prop`.
+ *
+ * A captioned row is a *hard constraint*: the caption is what Acumatica derives
+ * the property name from, so a captioned row that doesn't land on its own
+ * property proves the alignment is wrong. Uncaptioned rows score only a weak
+ * field-name resemblance, used purely to break ties.
+ */
+const VIOLATION = -1e6;
+
+function columnScore(row: FeedFieldRow, prop: string): number {
+  const base = normalizeName(stripCollisionSuffix(prop));
+  const caption = row.Caption?.trim();
+  // Compare against the stripped *and* the full property name: a trailing `_N`
+  // may be a collision suffix the platform added, or part of a caption someone
+  // typed literally (seen in production as `ItemStatus_2`).
+  if (caption) {
+    const c = normalizeName(caption);
+    return c === base || c === normalizeName(prop) ? 100 : VIOLATION;
+  }
+
+  const field = normalizeName(
+    (row.Field ?? "")
+      .trim()
+      .replace(/_description$/i, "")
+      .replace(/_Attributes$/i, "")
+      .replace(/^Attribute/i, "")
+  );
+  if (!field) return 0;
+  if (field === base) return 10;
+  if (field.length > 3 && (base.includes(field) || field.includes(base))) return 3;
+  return 0;
+}
+
+/**
+ * Align `rows` (active design rows, grid order) to `rest` (the properties that
+ * kept their grid position) plus `hoisted` (leading key properties that were
+ * pulled to the front). Each row either takes the next `rest` property or is one
+ * of the hoisted ones; exactly `hoisted.length` rows must be hoisted.
+ *
+ * dp[i][h] = best score for rows i.. given h rows already hoisted. Returns null
+ * when no assignment satisfies every captioned row — an unaligned GI must not be
+ * annotated from guesswork.
+ */
+function alignRows(
+  rows: FeedFieldRow[],
+  rest: string[],
+  hoisted: string[]
+): Array<[FeedFieldRow, string]> | null {
+  const n = rows.length;
+  const H = hoisted.length;
+  const NEG = -Infinity;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(H + 1).fill(NEG));
+  const back: (string | null)[][] = Array.from({ length: n + 1 }, () =>
+    new Array<string | null>(H + 1).fill(null)
+  );
+  dp[n][H] = 0;
+
+  for (let i = n - 1; i >= 0; i--) {
+    for (let h = 0; h <= Math.min(H, i); h++) {
+      const j = i - h; // index into rest
+      if (j < rest.length && dp[i + 1][h] > NEG) {
+        const v = columnScore(rows[i], rest[j]) + dp[i + 1][h];
+        if (v > dp[i][h]) {
+          dp[i][h] = v;
+          back[i][h] = "align";
+        }
+      }
+      if (h < H && dp[i + 1][h + 1] > NEG) {
+        // Optimistic: the best any hoisted property could do. The exact
+        // row→property assignment happens below.
+        const best = Math.max(...hoisted.map((p) => columnScore(rows[i], p)));
+        const v = best + dp[i + 1][h + 1];
+        if (v > dp[i][h]) {
+          dp[i][h] = v;
+          back[i][h] = "hoist";
+        }
+      }
+    }
+  }
+  if (dp[0][0] <= VIOLATION / 2) return null; // a captioned row could not be satisfied
+
+  const pairs: Array<[FeedFieldRow, string]> = [];
+  const hoistedRows: FeedFieldRow[] = [];
+  for (let i = 0, h = 0; i < n; i++) {
+    if (back[i][h] === "hoist") {
+      hoistedRows.push(rows[i]);
+      h++;
+    } else {
+      pairs.push([rows[i], rest[i - h]]);
+    }
+  }
+
+  // Assign the hoisted rows to the hoisted properties (H is small — greedy on
+  // best score, rejecting outright if a captioned row can't be placed).
+  const propsLeft = [...hoisted];
+  const rowsLeft = [...hoistedRows];
+  while (propsLeft.length && rowsLeft.length) {
+    let bi = 0;
+    let bj = 0;
+    let bs = -Infinity;
+    for (let i = 0; i < rowsLeft.length; i++) {
+      for (let j = 0; j < propsLeft.length; j++) {
+        const s = columnScore(rowsLeft[i], propsLeft[j]);
+        if (s > bs) {
+          bs = s;
+          bi = i;
+          bj = j;
+        }
+      }
+    }
+    if (bs <= VIOLATION / 2) return null;
+    pairs.push([rowsLeft[bi], propsLeft[bj]]);
+    rowsLeft.splice(bi, 1);
+    propsLeft.splice(bj, 1);
+  }
+
+  // Final sweep: no captioned row may sit on a property it doesn't name.
+  for (const [row, prop] of pairs) {
+    if (columnScore(row, prop) <= VIOLATION / 2) return null;
+  }
+  return pairs;
+}
+
+/**
+ * Resolve one GI's field metadata: authoritative property names + declared types
+ * from $metadata, annotated with the curated captions/descriptions of the design
+ * rows they correspond to.
+ *
+ * The join is POSITIONAL, not by name. Property names cannot be predicted from
+ * the design: `GIResult.Caption` is only an override (NULL for the majority of
+ * columns — 57% on a 115-GI production instance), and where `SchemaField` is
+ * populated it is DAC-qualified ("INTran.RefNbr"), which never equals the bare
+ * property. Matching by predicted name therefore dropped most descriptions.
+ *
+ * The verified layout rule (25R2):
+ *
+ *   properties = [result columns that are also entity keys, hoisted to the FRONT
+ *                 in key order]
+ *             ++ [remaining ACTIVE design rows in SortOrder order]
+ *             ++ [keys that are not result columns, appended at the END, with no
+ *                 design row]
+ *
+ * Validity checks, in order: the active-row count must not exceed the property
+ * count, and every captioned row must land on the property matching its caption.
+ * If either fails the GI's annotation is rejected *wholesale* — names and types
+ * are still returned, but no caption or description is attached, because a
+ * mis-shifted annotation is worse than none.
+ */
 function resolveFields(
   giName: string,
   rows: FeedFieldRow[],
   edmxTypes: Map<string, EdmxEntity>
 ): GiFieldMeta[] {
-  const sorted = [...rows].sort((a, b) => lineNbr(a) - lineNbr(b));
-
-  // Group description rows by normalized predicted base name, preserving
-  // LineNbr order within each group (collision disambiguation).
-  const byPredicted = new Map<string, FeedFieldRow[]>();
-  for (const row of sorted) {
-    const key = normalizeName(predictPropertyName(row));
-    if (!key) continue;
-    (byPredicted.get(key) ?? byPredicted.set(key, []).get(key)!).push(row);
-  }
-
+  const active = gridOrderedRows(rows);
   const edmx = edmxTypes.get(normalizeName(giName));
-  if (edmx && edmx.order.length) {
-    // Authoritative path: $metadata property names win.
-    const cursor = new Map<string, number>();
-    return edmx.order.map((prop) => {
-      const meta: GiFieldMeta = { name: prop };
-      const edm = edmx.types.get(prop);
-      if (edm) meta.type = edmTypeToSimple(edm);
 
-      const base = normalizeName(stripCollisionSuffix(prop));
-      const queue = byPredicted.get(base);
-      if (queue && queue.length) {
-        const i = cursor.get(base) ?? 0;
-        const row = queue[Math.min(i, queue.length - 1)];
-        cursor.set(base, i + 1);
-        const caption = row.Caption?.trim();
-        if (caption) meta.caption = caption;
-        const d = row.AIDescription?.trim();
-        if (d) meta.description = d;
-      }
+  // Fallback path: no $metadata for this GI — emit fields from the feed rows by
+  // guessed name, no declared types (runtime inference fills in types).
+  if (!edmx || !edmx.order.length) {
+    return active.map((row) => {
+      const meta: GiFieldMeta = { name: predictPropertyName(row) };
+      const caption = row.Caption?.trim();
+      if (caption) meta.caption = caption;
+      const d = row.AIDescription?.trim();
+      if (d) meta.description = d;
       return meta;
     });
   }
 
-  // Fallback path: no EDMX for this GI — emit fields from the feed rows by
-  // predicted name, no declared types (runtime inference fills in types).
-  return sorted.map((row) => {
-    const meta: GiFieldMeta = { name: predictPropertyName(row) };
-    const caption = row.Caption?.trim();
-    if (caption) meta.caption = caption;
-    const d = row.AIDescription?.trim();
-    if (d) meta.description = d;
+  const bare = (): GiFieldMeta[] =>
+    edmx.order.map((prop) => {
+      const meta: GiFieldMeta = { name: prop };
+      const edm = edmx.types.get(prop);
+      if (edm) meta.type = edmTypeToSimple(edm);
+      return meta;
+    });
+
+  // A feed that emits no active flag at all cannot be aligned safely. Inactive
+  // rows are then indistinguishable from active ones, so they consume property
+  // slots and shift every later column — and a GI with no captions has no hard
+  // constraint to catch it, so the misalignment is accepted silently. That is
+  // the one path that produces *wrong* annotations rather than none, so refuse
+  // it outright: an operator on a pre-0.48.0 MCPGIFields keeps names and types
+  // until they re-import.
+  if (!rows.some(hasActiveFlag)) return bare();
+
+  // More active design rows than properties → the feed and $metadata disagree
+  // about this GI (stale cache, truncated feed, renamed GI). Don't guess.
+  if (edmx.order.length < active.length) return bare();
+
+  // Trailing properties beyond the active-row count are keys that aren't result
+  // columns; they get no design row.
+  const head = edmx.order.slice(0, active.length);
+  const keys = new Set(edmx.keys);
+  let hoistCount = 0;
+  while (hoistCount < head.length && keys.has(head[hoistCount])) hoistCount++;
+
+  const pairs = alignRows(active, head.slice(hoistCount), head.slice(0, hoistCount));
+  if (!pairs) return bare();
+
+  const rowByProp = new Map(pairs.map(([row, prop]) => [prop, row]));
+  return edmx.order.map((prop) => {
+    const meta: GiFieldMeta = { name: prop };
+    const edm = edmx.types.get(prop);
+    if (edm) meta.type = edmTypeToSimple(edm);
+
+    const row = rowByProp.get(prop);
+    if (row) {
+      const caption = row.Caption?.trim();
+      if (caption) meta.caption = caption;
+      const d = row.AIDescription?.trim();
+      if (d) meta.description = d;
+    }
     return meta;
   });
 }

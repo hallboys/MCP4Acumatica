@@ -31,6 +31,15 @@ import {
  */
 
 const REGISTRY_CACHE_KEY = "gi_registry";
+/**
+ * Page cap for the feed pulls. The field feed emits one row per output column of
+ * every exposed GI — a mature instance runs to several thousand, well past the
+ * single-request record cap, and a silently truncated tail costs every GI after
+ * it its curated descriptions (positional alignment needs the GI's full column
+ * set). This is an internal metadata pull, not a model-facing query, so paging
+ * is appropriate here; the anti-pagination policy is about tool responses.
+ */
+const FEED_MAX_PAGES = 10;
 const REGISTRY_FRESH_SECONDS = 3600; // rebuild when older than 1h
 const REGISTRY_DURABLE_TTL = 7 * 24 * 3600; // last-good survives 7 days of failed/absent rebuilds
 const GI_METADATA_TTL_SECONDS = 3600;
@@ -101,22 +110,77 @@ async function buildRegistry(env: AppEnv, acumaticaUsername: string): Promise<Gi
   const client = new AcumaticaClient(env, acumaticaUsername);
 
   const maxRecords = await getConfig(env.store, "acumatica_max_records", env.ACUMATICA_MAX_RECORDS);
-  const top = String(parsePositiveIntConfig(maxRecords, 1000));
+  const pageSize = parsePositiveIntConfig(maxRecords, 1000);
 
   // The two feeds + $metadata. $metadata reuses the shared gi_metadata cache.
-  const [giResp, fieldResp, metaXml] = await Promise.all([
-    client.getOData<ODataValue<FeedGiRow>>(FEED_REGISTRY_GI, "gi_registry_build", {}, { $top: top }),
-    client.getOData<ODataValue<FeedFieldRow>>(FEED_FIELDS_GI, "gi_registry_build", {}, { $top: top }),
+  const [giRows, fieldRows, metaXml] = await Promise.all([
+    fetchFeed<FeedGiRow>(client, FEED_REGISTRY_GI, pageSize, "Name"),
+    fetchFeed<FeedFieldRow>(client, FEED_FIELDS_GI, pageSize, "Name,LineNbr"),
     loadMetadata(client, env),
   ]);
 
   return assembleRegistry({
-    giRows: giResp.value || [],
-    fieldRows: fieldResp.value || [],
+    giRows,
+    fieldRows,
     edmxTypes: parseEdmxTypes(metaXml),
     builtAt: new Date().toISOString(),
     endpointVersion: env.ACUMATICA_ENDPOINT_VERSION,
   });
+}
+
+/**
+ * Read a feed GI in full, paging past the per-request record cap.
+ *
+ * The first page is fetched exactly as before (no `$skip`); paging only starts
+ * if that page comes back full. Later pages are best-effort — an endpoint that
+ * rejects `$skip` degrades to "what we already have" rather than failing the
+ * whole registry build.
+ */
+async function fetchFeed<T>(
+  client: AcumaticaClient,
+  giName: string,
+  pageSize: number,
+  orderBy: string
+): Promise<T[]> {
+  // $skip paging is only sound over a stable sort. GI results are otherwise
+  // unordered, so a page boundary could silently repeat or omit rows — and an
+  // omitted row costs a GI its column text with no error to notice. Verified
+  // supported on the 25R2 GI OData endpoint.
+  const first = await client.getOData<ODataValue<T>>(
+    giName,
+    "gi_registry_build",
+    {},
+    { $top: String(pageSize), $orderby: orderBy }
+  );
+  const rows = first.value || [];
+  if (rows.length < pageSize) return rows;
+
+  for (let page = 1; page < FEED_MAX_PAGES; page++) {
+    let next: T[];
+    try {
+      const resp = await client.getOData<ODataValue<T>>(
+        giName,
+        "gi_registry_build",
+        {},
+        { $top: String(pageSize), $skip: String(page * pageSize), $orderby: orderBy }
+      );
+      next = resp.value || [];
+    } catch (error) {
+      logError(
+        "gi_registry_build",
+        `${giName}: paging stopped at ${rows.length} rows — ${error instanceof Error ? error.message : String(error)}`
+      );
+      return rows;
+    }
+    rows.push(...next);
+    if (next.length < pageSize) return rows;
+  }
+
+  logError(
+    "gi_registry_build",
+    `${giName}: hit the ${FEED_MAX_PAGES}-page cap at ${rows.length} rows; later GIs may lose their curated column descriptions.`
+  );
+  return rows;
 }
 
 async function loadMetadata(client: AcumaticaClient, env: AppEnv): Promise<string> {

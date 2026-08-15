@@ -169,30 +169,26 @@
   </layout>
   <data>
     <GIDesign>
-      <row DesignID="a23a250b-190e-4ce4-b5b3-743045f852a7" Name="MCPGIFields" FilterColCount="3" PageSize="0" ExportTop="0" NewRecordCreationEnabled="0" MassDeleteEnabled="0" AutoConfirmDelete="0" MassRecordsUpdateEnabled="0" MassActionsOnRecordsEnabled="0" ExposeViaOData="1" ExposeViaMobile="0" ShowDeletedRecords="0" ShowArchivedRecords="0" NotesAndFilesTable="$&lt;None&gt;" MLDetectionEnabled="0" SkipEmptyGroups="0">
+      <row DesignID="0e94866f-2535-4fbd-9721-3e949ca78780" Name="MCPGIColumnDescEditor" FilterColCount="3" PageSize="0" ExportTop="0" NewRecordCreationEnabled="0" MassDeleteEnabled="0" AutoConfirmDelete="0" MassRecordsUpdateEnabled="1" MassActionsOnRecordsEnabled="1" ExposeViaOData="0" ExposeViaMobile="0" ShowDeletedRecords="0" ShowArchivedRecords="0" NotesAndFilesTable="$&lt;None&gt;" MLDetectionEnabled="0" SkipEmptyGroups="0" UsrExposedToMCP="0">
         <GITable Alias="GIResult" Name="PX.Data.Maintenance.GI.GIResult" Type="0">
-          <GIResult LineNbr="9" SortOrder="9" IsActive="1" Field="lineNbr" Caption="LineNbr" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="f446a800-2c19-4e4b-9ccb-c5f3f0bda920" />
-          <GIResult LineNbr="8" SortOrder="8" IsActive="1" Field="usrResAIDescription" Caption="AIDescription" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="0190aa53-c4d9-4c24-9ba0-a2f697f93d83" />
-          <GIResult LineNbr="7" SortOrder="7" IsActive="1" Field="caption" Caption="Caption" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="b84590ed-ecaf-4427-893b-030e7e99936b" />
-          <GIResult LineNbr="6" SortOrder="6" IsActive="1" Field="schemaField" Caption="SchemaField" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="b7397497-bdae-408b-a88e-99998a96e92f" />
-          <GIResult LineNbr="5" SortOrder="5" IsActive="1" Field="fieldName" Caption="FieldName" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="af6a7c6f-8525-4082-b457-d5a0a91ce1c7" />
-          <GIResult LineNbr="4" SortOrder="4" IsActive="1" Field="field" Caption="Field" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="0e5eefed-ad27-4f25-ac5b-7dd2f108740b" />
-          <GIResult LineNbr="3" SortOrder="3" IsActive="1" Field="objectName" Caption="ObjectName" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="840d2e34-d0a6-4619-b7ec-26d5b41d2736" />
-          <GIResult LineNbr="10" SortOrder="10" IsActive="1" Field="sortOrder" Caption="SortOrder" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="3d1a2f66-8a4f-4b19-9d3a-1f0c6b7e5a41" />
-          <GIResult LineNbr="11" SortOrder="11" IsActive="1" Field="isActive" Caption="IsActive" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="7c58e0b3-2e91-4a77-b6d5-9a4c81f0d3b2" />
+          <GIResult LineNbr="1" SortOrder="1" IsActive="1" Field="lineNbr" Caption="LineNbr" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="872294ff-fa87-4bad-b1fa-2937b80704a4" />
+          <GIResult LineNbr="2" SortOrder="2" IsActive="1" Field="objectName" Caption="ObjectName" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="59f77eca-8d95-4da7-af1e-dd6e95eb5a25" />
+          <GIResult LineNbr="3" SortOrder="3" IsActive="1" Field="field" Caption="Field" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="4cb1521e-7730-41e4-8772-3598bb62004c" />
+          <GIResult LineNbr="4" SortOrder="4" IsActive="1" Field="caption" Caption="Caption" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="867feecf-e3ec-473c-8251-78adf76e0b3a" />
+          <GIResult LineNbr="5" SortOrder="5" IsActive="1" Field="isVisible" Caption="IsVisible" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="9e806865-4c2b-48dc-bfb0-4b5c2b7d0db5" />
+          <GIResult LineNbr="6" SortOrder="6" IsActive="1" Field="usrResAIDescription" Caption="ColumnAIDescription" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="fcc087b1-2491-447a-94fb-2837e1870042" />
         </GITable>
         <GITable Alias="GIDesign" Name="PX.Data.Maintenance.GI.GIDesign" Type="0">
           <GIRelation LineNbr="1" ChildTable="GIResult" IsActive="1" JoinType="I">
-            <GIOn LineNbr="1" ParentField="designID" Condition="E" ChildField="designID" Operation="A" />
+            <GIOn LineNbr="1" ParentField="GIDesign.DesignID" Condition="E" ChildField="GIResult.DesignID" Operation="A" />
           </GIRelation>
-          <GIResult LineNbr="2" SortOrder="2" IsActive="1" Field="designID" Caption="DesignID" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="a704da18-83c3-4606-a9fa-976c46f8b64b" />
-          <GIResult LineNbr="1" SortOrder="1" IsActive="1" Field="name" Caption="Name" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="e07ba112-486e-48c6-ac1c-604eb7f7f508" />
+          <GIResult LineNbr="7" SortOrder="7" IsActive="1" Field="name" Caption="GIName" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="bcae8a6b-dab6-4e6b-a6ab-981f0a6e0887" />
+          <GIResult LineNbr="8" SortOrder="8" IsActive="1" Field="usrExposedToMCP" Caption="ExposedToMCP" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="23247711-74d3-40c8-bc33-ead003e4a57d" />
         </GITable>
-        <GIWhere LineNbr="2" IsActive="1" DataFieldName="GIDesign.ExposeViaOData" Condition="NE" IsExpression="1" Value1="False" Operation="A" />
-        <GIWhere LineNbr="1" IsActive="1" DataFieldName="GIDesign.UsrExposedToMCP" Condition="NE" IsExpression="1" Value1="False" Operation="A" />
+        <GIMassUpdateField LineNbr="1" IsActive="1" ObjectName="GIResult" FieldName="usrResAIDescription" />
         <SiteMap linkname="toDesignByIdNew">
-          <row Title="MCPGIFields" Url="~/Scripts/Screens/GenericInquiry.html?id=a23a250b-190e-4ce4-b5b3-743045f852a7" ScreenID="GI999558" NodeID="325cd8f1-5335-49af-bea3-7b8e8be0af5c" ParentID="00000000-0000-0000-0000-000000000000" SelectedUI="D">
-            <MUIScreen IsPortal="0" WorkspaceID="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" Order="795982" SubcategoryID="98e86774-69e3-41ea-b94f-eb2c7a8426d4">
+          <row Title="MCP GI Column Description Editor" Url="~/Scripts/Screens/GenericInquiry.html?id=0e94866f-2535-4fbd-9721-3e949ca78780" ScreenID="GI999566" NodeID="1b97342c-dca9-45bb-bb2a-efc8e30f682e" ParentID="00000000-0000-0000-0000-000000000000" SelectedUI="D">
+            <MUIScreen IsPortal="0" WorkspaceID="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" Order="795995" SubcategoryID="98e86774-69e3-41ea-b94f-eb2c7a8426d4">
               <MUIPinnedScreen IsPortal="0" Username="" IsPinned="1" />
             </MUIScreen>
           </row>
