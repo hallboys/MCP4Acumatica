@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AppEnv } from "../types/acumatica";
+import { resetGiRegistryMemo } from "../lib/gi-registry-build";
 
 const CACHE_PREFIX = "cache:";
 
@@ -16,6 +17,13 @@ export async function handleClearCache(
   target?: string
 ): Promise<unknown> {
   const kv = env.store;
+
+  // The GI registry is memoized per isolate, and getGiRegistry() short-circuits
+  // on that memo *before* it reads KV. Deleting the KV key alone therefore does
+  // nothing for the life of the isolate: the tool reports "cleared" and keeps
+  // serving the stale registry, which reads as "my Acumatica edit didn't take".
+  // Reset the memo whenever this clear could plausibly cover the registry.
+  if (!target || target === "gi" || target === "gi_registry") resetGiRegistryMemo();
 
   if (target && !BULK_TARGETS.has(target)) {
     if (!target.includes(":")) {

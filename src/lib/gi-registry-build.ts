@@ -61,8 +61,13 @@ let memo: { attempted: boolean; registry: GiRegistry | null } = {
   registry: null,
 };
 
-/** Reset the per-isolate memo. Test seam only. */
-export function __resetGiRegistryMemo(): void {
+/**
+ * Drop the per-isolate memo so the next getGiRegistry() re-reads KV and, if
+ * needed, rebuilds. Called by acumatica_clear_cache: without it, clearing the
+ * KV entry is a no-op for the life of the isolate, because getGiRegistry()
+ * checks the memo before it ever looks at KV.
+ */
+export function resetGiRegistryMemo(): void {
   memo = { attempted: false, registry: null };
 }
 
