@@ -14,15 +14,15 @@ This folder bundles everything the Acumatica side of the **GI exposure gate** ne
 | `MCPGIWhereAll.xml` | Authoring aid: one row per design-time WHERE condition. |
 | `MCPGIDescriptionEditor.xml` | Editor GI: edit `GIDesign.UsrAIDescription` in a grid. |
 | `MCPGIColumnDescEditor.xml` | Editor GI: edit `GIResult.UsrResAIDescription` in a grid. |
-| `gi-descriptions.csv` | 116 drafted GI-level descriptions (`GIName, AIDescription`). |
+**No drafted descriptions ship in this repo.** A description states what one tenant's inquiry
+actually does — its document-type filters, custom fields and business rules — so it is instance
+data, not project source, and this repo is public. `.gitignore` keeps
+`acumatica/gi-descriptions*.csv` out of git; write yours somewhere private.
 
-Column-level descriptions are **not** shipped yet. The first draft was keyed to design rows
-resolved the wrong way — by `LineNbr` rather than `SortOrder`, counting inactive rows, and
-ignoring that key columns are hoisted out of grid order — so a majority of its text pointed at
-the wrong column. It was discarded rather than corrected in place. The verified mapping now
-exists (1 656 columns across 112 of 116 GIs, produced by
-`skills/acumatica-gi-descriptions/scripts/align_columns.mjs`); the text is being rewritten
-against it.
+To produce your own, use the skill at `skills/acumatica-gi-descriptions/`: it covers selecting
+which GIs are worth describing, pulling the design metadata, and — via
+`scripts/align_columns.mjs` — mapping each design row to the OData property it actually becomes,
+which cannot be predicted from the design and is the step everything else depends on.
 
 > The customization is built on Acumatica **2025 R2** (`product-version 25.201`). The
 > `AIDescription` fields are a stopgap until native support lands in **26R1+**.
@@ -115,8 +115,7 @@ gate refuses them with "not exposed to the AI assistant."
 
 ## 4. Loading the descriptions
 
-`gi-descriptions.csv` holds the drafted GI-level text (column-level text is pending — see the
-file table above). Getting it into
+Once you have drafted text (see the file table above — none ships here), getting it into
 Acumatica is the awkward step, because `GIDesign` and `GIResult` are **system DACs and are not in
 the contract-based REST API** — there is no write path from this MCP server, and none from any
 REST client. That leaves two routes.

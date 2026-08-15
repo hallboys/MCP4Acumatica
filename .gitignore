@@ -25,3 +25,9 @@ dac-source/
 # .local-backup file is written by setup.sh / past versions of this repo
 # whenever an existing wrangler.jsonc is overwritten.
 wrangler.jsonc.local-backup
+
+# Drafted GI descriptions are instance data, not project source: they describe
+# one tenant's inquiries — their document-type filters, custom fields and
+# business rules — and this repo is public. Keep them out of git entirely.
+acumatica/gi-descriptions*.csv
+acumatica/gi-column-descriptions*.csv
