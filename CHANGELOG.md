@@ -5,6 +5,17 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.48.2] - 2026-08-16
+### Fixed
+- **The column aligner committed to an arbitrary hoist on lightly-captioned GIs, mis-shifting descriptions by one.** A caption is a hard constraint, but most columns have none, and `columnScore()` scored an uncaptioned row purely on field-name resemblance — so on a GI with few captions every candidate scored 0, the DP tied, and the tie was broken by iteration order. Caught on production `SO-Invoice` by reading the GI back through `acumatica_describe_inquiry`: six columns each carried the *previous* column's description, because the aligner had hoisted the `curyDocBal` row onto the string key `Customer`. Note this is invisible to an ERP-side read-back — the stored `GIResult.UsrResAIDescription` values were correct; only the delivery mapping was wrong.
+  - `columnScore()` now rejects a pairing whose declared `$metadata` type contradicts the type family implied by the design row's source field (`expectedTypeFamily()` / `typeConflicts()`, both exported and unit-tested). Deliberately conservative: only unambiguous naming conventions are classified, calculated columns (`=…`) yield no constraint, and `integer` is compatible with everything because Acumatica surfaces identifiers as int or string depending on the DAC.
+  - A surviving tie is now **refused**. `alignRows()` counts optimal hoist sets and returns null when more than one exists, and the hoisted-row assignment refuses when the chosen row scores equally on another property (or the chosen property scores equally with another row). Ambiguity is *not* merely "several pairs share the best score" — four captioned rows each scoring 100 on their own property tie and resolve perfectly.
+  - Added a weak shared-token signal, scored below the substring tiers, to separate candidates the existing tiers rank identically (`finPeriodID`→`PostPeriod` shares "period"; `acctCD`→`PostPeriod` shares nothing).
+  - Measured against the production feed (112 gated GIs): 95 unchanged, **4 mappings corrected** (`HPL-Appt_NamePhoneSearch`, `HPL-ProjectForecast_JobLevel`, `HPL-ProjectForecast_WHLevel`, `HPL-CostCodes` — one of which had a decimal `qty` column landing on the string `ProjectID`), and 13 now refuse annotation instead of guessing. Refusal keeps names and declared types; only captions and descriptions are withheld.
+
+### Notes
+- A GI that refuses can be made determinate without any code change: set `GIResult.Caption` on its hoisted key columns to **exactly the property name OData already reports**. That pins the alignment permanently and is a no-op rename, since the property name is derived from the caption.
+
 ## [0.48.1] - 2026-08-15
 ### Fixed
 - **`acumatica_clear_cache` now actually clears the GI registry.** The registry is memoized per isolate and `getGiRegistry()` checks that memo *before* it reads KV, so deleting the KV entry did nothing for the life of the isolate: the tool reported `cleared` and kept serving the stale registry. An operator who tagged a GI, edited a description, or re-imported a feed and then cleared the cache to check saw no change and reasonably concluded the Acumatica-side edit had not taken. `handleClearCache` now calls `resetGiRegistryMemo()` whenever the clear could cover the registry (no target, `gi`, or `gi_registry`); the function was previously exported as a test-only seam.

@@ -13,6 +13,8 @@ import {
   parameterizedGiNames,
   parseEdmxTypes,
   edmTypeToSimple,
+  expectedTypeFamily,
+  typeConflicts,
   assembleRegistry,
   type GiRegistry,
 } from "../src/lib/gi-registry.ts";
@@ -397,4 +399,118 @@ test("parameterizedGiNames extracts {Name}_WithParameters function imports", () 
 test("parameterizedGiNames returns empty set for empty/absent metadata", () => {
   assert.equal(parameterizedGiNames("").size, 0);
   assert.equal(parameterizedGiNames("<edmx:Edmx/>").size, 0);
+});
+
+// ── Hoist disambiguation: declared types, tie refusal, token tiebreak (0.48.2) ──
+
+test("expectedTypeFamily classifies only what Acumatica's naming makes certain", () => {
+  assert.equal(expectedTypeFamily("curyDocBal"), "numeric");
+  assert.equal(expectedTypeFamily("createdDateTime"), "datetime");
+  assert.equal(expectedTypeFamily("isTangible"), "boolean");
+  assert.equal(expectedTypeFamily("branchID_description"), "text");
+  assert.equal(expectedTypeFamily("acctCD"), "text");
+  // A calculated column's result type is not derivable from its expression, and
+  // an unrecognized name must not be guessed — both yield no constraint.
+  assert.equal(expectedTypeFamily("=[A.Qty]-[B.Qty]"), null);
+  assert.equal(expectedTypeFamily("invoiceNbr"), null);
+  assert.equal(expectedTypeFamily(undefined), null);
+});
+
+test("typeConflicts treats integer as compatible with everything", () => {
+  // Acumatica surfaces identifiers and line numbers as int or string depending
+  // on the DAC, so `integer` can never be the thing that rejects an alignment.
+  assert.equal(typeConflicts("text", "integer"), false);
+  assert.equal(typeConflicts("numeric", "integer"), false);
+  assert.equal(typeConflicts("numeric", "string"), true);
+  assert.equal(typeConflicts("datetime", "string"), true);
+  assert.equal(typeConflicts("text", "decimal"), true);
+  assert.equal(typeConflicts(null, "decimal"), false);
+});
+
+test("alignment: a declared type rules out an otherwise-tied hoist", () => {
+  // Production SO-Invoice in miniature. Two uncaptioned rows could be hoisted
+  // onto the string key; only one is type-possible, because a `*Bal` field
+  // cannot produce a string property.
+  const { byName, annotated } = fieldsOf(
+    `<EntityType Name="GI">
+       <Key><PropertyRef Name="Customer"/></Key>
+       <Property Name="Customer" Type="Edm.String"/>
+       <Property Name="Status" Type="Edm.String"/>
+       <Property Name="Balance" Type="Edm.Decimal"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Field: "status", AIDescription: "doc status" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Field: "acctCD", AIDescription: "customer code" },
+      { Name: "GI", LineNbr: 3, SortOrder: 3, IsActive: true, Field: "curyDocBal", AIDescription: "open balance" },
+    ]
+  );
+  assert.equal(annotated, 3);
+  assert.equal(byName.Customer.description, "customer code");
+  assert.equal(byName.Status.description, "doc status");
+  assert.equal(byName.Balance.description, "open balance");
+});
+
+test("alignment: a genuinely tied hoist is refused rather than guessed", () => {
+  // Nothing distinguishes the two string rows — same type family, no caption, no
+  // name resemblance to the key. Committing to one would shift the other column.
+  const { names, annotated } = fieldsOf(
+    `<EntityType Name="GI">
+       <Key><PropertyRef Name="Widget"/></Key>
+       <Property Name="Widget" Type="Edm.String"/>
+       <Property Name="Gadget" Type="Edm.String"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Field: "alpha", AIDescription: "first" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Field: "beta", AIDescription: "second" },
+    ]
+  );
+  assert.deepEqual(names, ["Widget", "Gadget"], "names and types still returned");
+  assert.equal(annotated, 0, "no annotation attached to an under-determined GI");
+});
+
+test("alignment: every hoisted row captioned is NOT a tie — all four resolve", () => {
+  // Regression guard. Four captioned rows each score identically on their own
+  // property; treating equal scores as ambiguity refused production
+  // Velixo-ARByPeriod, which is fully determined by construction.
+  const { byName, annotated } = fieldsOf(
+    `<EntityType Name="GI">
+       <Key><PropertyRef Name="FinPeriodID"/><PropertyRef Name="BranchID"/></Key>
+       <Property Name="FinPeriodID" Type="Edm.String"/>
+       <Property Name="BranchID" Type="Edm.String"/>
+       <Property Name="Balance" Type="Edm.Decimal"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Caption: "BranchID", Field: "branchCD", AIDescription: "branch" },
+      { Name: "GI", LineNbr: 5, SortOrder: 5, IsActive: true, Caption: "Balance", Field: "=[H.Bal]", AIDescription: "ar balance" },
+      { Name: "GI", LineNbr: 7, SortOrder: 7, IsActive: true, Caption: "FinPeriodID", Field: "finPeriodID", AIDescription: "as-of period" },
+    ]
+  );
+  assert.equal(annotated, 3);
+  assert.equal(byName.FinPeriodID.description, "as-of period");
+  assert.equal(byName.BranchID.description, "branch");
+  assert.equal(byName.Balance.description, "ar balance");
+});
+
+test("alignment: shared tokens break a tie the substring tiers cannot", () => {
+  // Production HPL-CostCodes: `costCodeCD` and `costCodeCD_description` both
+  // resemble the `CostCode` key equally, so the hoist was decided arbitrarily
+  // and landed the description text on the code column. "description" is a
+  // shared token with the `Description` property; "cd" is too short to count.
+  const { byName, annotated } = fieldsOf(
+    `<EntityType Name="GI">
+       <Key><PropertyRef Name="CostCode"/></Key>
+       <Property Name="CostCode" Type="Edm.String"/>
+       <Property Name="PMCostCode_costCodeID" Type="Edm.Int32"/>
+       <Property Name="Description" Type="Edm.String"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Field: "costCodeID", AIDescription: "internal id" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Field: "costCodeCD", AIDescription: "the code" },
+      { Name: "GI", LineNbr: 3, SortOrder: 3, IsActive: true, Field: "costCodeCD_description", AIDescription: "the label" },
+    ]
+  );
+  assert.equal(annotated, 3);
+  assert.equal(byName.CostCode.description, "the code");
+  assert.equal(byName.Description.description, "the label");
+  assert.equal(byName.PMCostCode_costCodeID.description, "internal id");
 });

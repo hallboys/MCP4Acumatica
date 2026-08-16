@@ -388,7 +388,75 @@ export function assembleRegistry(opts: {
  */
 const VIOLATION = -1e6;
 
-function columnScore(row: FeedFieldRow, prop: string): number {
+/**
+ * Coarse type family implied by a design row's source field NAME, or null when
+ * nothing can be said.
+ *
+ * Deliberately conservative: a false positive here rejects a *correct* alignment
+ * and silently drops a GI's annotations, so only patterns that are unambiguous in
+ * Acumatica's field-naming conventions are classified. Calculated columns (`=…`)
+ * are always null — their result type is not derivable from the expression.
+ */
+export function expectedTypeFamily(
+  field: string | undefined
+): "datetime" | "boolean" | "numeric" | "text" | null {
+  const raw = (field ?? "").trim();
+  if (!raw || raw.startsWith("=")) return null;
+  // `*_description` is the resolved display text of a foreign key — always text,
+  // and checked before the suffix rules below strip it.
+  if (/_description$/i.test(raw)) return "text";
+  const n = raw.toLowerCase();
+  if (/^(is|has)[a-z]/.test(n) || /^(released|voided|prebooked|opendoc|depreciable|active|approved|printed|emailed)$/.test(n)) {
+    return "boolean";
+  }
+  if (/(datetime|date)$/.test(n) && !/(update|dateid)$/.test(n)) return "datetime";
+  if (/(amt|amount|balance|bal|cost|price|qty|quantity|total|discount|profit|percent|rate)$/.test(n)) {
+    return "numeric";
+  }
+  if (/(descr|description|name|cd|code|status)$/.test(n)) return "text";
+  return null;
+}
+
+/**
+ * Whether a design row's implied family is impossible for a property's DECLARED
+ * type. Only clearly-disjoint pairs conflict; `integer` is treated as compatible
+ * with everything, because Acumatica surfaces identifiers and line numbers as
+ * either an int or a string depending on the DAC.
+ *
+ * This is the constraint that makes an uncaptioned GI alignable at all: without
+ * it the aligner scores every uncaptioned candidate 0, ties, and commits to an
+ * arbitrary hoist — observed in production putting the string field `invoiceNbr`
+ * on the decimal property `Amount` (SO-Invoice, 0.48.1).
+ */
+export function typeConflicts(
+  family: ReturnType<typeof expectedTypeFamily>,
+  simpleType: string | undefined
+): boolean {
+  if (!family || !simpleType || simpleType === "integer") return false;
+  switch (family) {
+    case "datetime":
+      return simpleType !== "datetime";
+    case "boolean":
+      return simpleType !== "boolean";
+    case "numeric":
+      return simpleType !== "decimal";
+    case "text":
+      return simpleType === "decimal" || simpleType === "boolean" || simpleType === "datetime";
+  }
+}
+
+/** camelCase/underscore tokens of length >= 4, lower-cased. */
+function tokens(s: string): Set<string> {
+  return new Set(
+    s
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .split(/[^A-Za-z0-9]+/)
+      .map((t) => t.toLowerCase())
+      .filter((t) => t.length >= 4)
+  );
+}
+
+function columnScore(row: FeedFieldRow, prop: string, simpleType?: string): number {
   const base = normalizeName(stripCollisionSuffix(prop));
   const caption = row.Caption?.trim();
   // Compare against the stripped *and* the full property name: a trailing `_N`
@@ -399,9 +467,11 @@ function columnScore(row: FeedFieldRow, prop: string): number {
     return c === base || c === normalizeName(prop) ? 100 : VIOLATION;
   }
 
+  const rawField = (row.Field ?? "").trim();
+  if (typeConflicts(expectedTypeFamily(rawField), simpleType)) return VIOLATION;
+
   const field = normalizeName(
-    (row.Field ?? "")
-      .trim()
+    rawField
       .replace(/_description$/i, "")
       .replace(/_Attributes$/i, "")
       .replace(/^Attribute/i, "")
@@ -409,7 +479,11 @@ function columnScore(row: FeedFieldRow, prop: string): number {
   if (!field) return 0;
   if (field === base) return 10;
   if (field.length > 3 && (base.includes(field) || field.includes(base))) return 3;
-  return 0;
+  // Weak shared-token signal, enough to separate two otherwise-tied candidates
+  // (`finPeriodID`→`PostPeriod` shares "period"; `acctCD`→`PostPeriod` shares
+  // nothing). Scored below the substring tiers so it never outranks them.
+  const shared = [...tokens(rawField)].filter((t) => tokens(prop).has(t)).length;
+  return shared > 0 ? 1 : 0;
 }
 
 /**
@@ -418,47 +492,57 @@ function columnScore(row: FeedFieldRow, prop: string): number {
  * pulled to the front). Each row either takes the next `rest` property or is one
  * of the hoisted ones; exactly `hoisted.length` rows must be hoisted.
  *
- * dp[i][h] = best score for rows i.. given h rows already hoisted. Returns null
- * when no assignment satisfies every captioned row — an unaligned GI must not be
- * annotated from guesswork.
+ * dp[i][h] = best score for rows i.. given h rows already hoisted, and cnt[i][h]
+ * how many distinct hoist sets achieve it (saturating at 2). Returns null when no
+ * assignment satisfies every captioned row, and ALSO when the optimum is TIED —
+ * two hoist sets scoring equally means nothing in the data chooses between them,
+ * and committing to one silently mis-shifts every column after the disagreement.
+ * An unaligned GI must not be annotated from guesswork.
  */
 function alignRows(
   rows: FeedFieldRow[],
   rest: string[],
-  hoisted: string[]
+  hoisted: string[],
+  typeOf: (prop: string) => string | undefined
 ): Array<[FeedFieldRow, string]> | null {
   const n = rows.length;
   const H = hoisted.length;
   const NEG = -Infinity;
+  const score = (row: FeedFieldRow, prop: string) => columnScore(row, prop, typeOf(prop));
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(H + 1).fill(NEG));
+  const cnt: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(H + 1).fill(0));
   const back: (string | null)[][] = Array.from({ length: n + 1 }, () =>
     new Array<string | null>(H + 1).fill(null)
   );
   dp[n][H] = 0;
+  cnt[n][H] = 1;
+
+  const relax = (i: number, h: number, v: number, ways: number, how: string) => {
+    if (v > dp[i][h]) {
+      dp[i][h] = v;
+      cnt[i][h] = ways;
+      back[i][h] = how;
+    } else if (v === dp[i][h] && v > NEG) {
+      cnt[i][h] = Math.min(2, cnt[i][h] + ways);
+    }
+  };
 
   for (let i = n - 1; i >= 0; i--) {
     for (let h = 0; h <= Math.min(H, i); h++) {
       const j = i - h; // index into rest
       if (j < rest.length && dp[i + 1][h] > NEG) {
-        const v = columnScore(rows[i], rest[j]) + dp[i + 1][h];
-        if (v > dp[i][h]) {
-          dp[i][h] = v;
-          back[i][h] = "align";
-        }
+        relax(i, h, score(rows[i], rest[j]) + dp[i + 1][h], cnt[i + 1][h], "align");
       }
       if (h < H && dp[i + 1][h + 1] > NEG) {
         // Optimistic: the best any hoisted property could do. The exact
         // row→property assignment happens below.
-        const best = Math.max(...hoisted.map((p) => columnScore(rows[i], p)));
-        const v = best + dp[i + 1][h + 1];
-        if (v > dp[i][h]) {
-          dp[i][h] = v;
-          back[i][h] = "hoist";
-        }
+        const best = Math.max(...hoisted.map((p) => score(rows[i], p)));
+        relax(i, h, best + dp[i + 1][h + 1], cnt[i + 1][h + 1], "hoist");
       }
     }
   }
   if (dp[0][0] <= VIOLATION / 2) return null; // a captioned row could not be satisfied
+  if (cnt[0][0] > 1) return null; // under-determined: nothing picks between the hoist sets
 
   const pairs: Array<[FeedFieldRow, string]> = [];
   const hoistedRows: FeedFieldRow[] = [];
@@ -472,7 +556,9 @@ function alignRows(
   }
 
   // Assign the hoisted rows to the hoisted properties (H is small — greedy on
-  // best score, rejecting outright if a captioned row can't be placed).
+  // best score). Rejects outright if a captioned row can't be placed, and also if
+  // the best score is achieved by more than one (row, property) pair: a tie here
+  // swaps two key columns' descriptions with nothing to justify the choice.
   const propsLeft = [...hoisted];
   const rowsLeft = [...hoistedRows];
   while (propsLeft.length && rowsLeft.length) {
@@ -481,7 +567,7 @@ function alignRows(
     let bs = -Infinity;
     for (let i = 0; i < rowsLeft.length; i++) {
       for (let j = 0; j < propsLeft.length; j++) {
-        const s = columnScore(rowsLeft[i], propsLeft[j]);
+        const s = score(rowsLeft[i], propsLeft[j]);
         if (s > bs) {
           bs = s;
           bi = i;
@@ -490,14 +576,23 @@ function alignRows(
       }
     }
     if (bs <= VIOLATION / 2) return null;
+    // Ambiguity is NOT "several pairs share the best score" — four captioned rows
+    // each scoring 100 on their own property tie at 100 and resolve perfectly.
+    // It is the chosen row being equally happy on another property, or the chosen
+    // property being equally happy with another row. Either way nothing in the
+    // data picks, so refuse rather than swap two key columns' descriptions.
+    const rowAmbiguous = propsLeft.some((p, j) => j !== bj && score(rowsLeft[bi], p) === bs);
+    const propAmbiguous = rowsLeft.some((r, i) => i !== bi && score(r, propsLeft[bj]) === bs);
+    if (rowAmbiguous || propAmbiguous) return null;
     pairs.push([rowsLeft[bi], propsLeft[bj]]);
     rowsLeft.splice(bi, 1);
     propsLeft.splice(bj, 1);
   }
 
-  // Final sweep: no captioned row may sit on a property it doesn't name.
+  // Final sweep: no captioned row may sit on a property it doesn't name, and no
+  // row may sit on a property whose declared type its source field contradicts.
   for (const [row, prop] of pairs) {
-    if (columnScore(row, prop) <= VIOLATION / 2) return null;
+    if (score(row, prop) <= VIOLATION / 2) return null;
   }
   return pairs;
 }
@@ -522,10 +617,18 @@ function alignRows(
  *                 design row]
  *
  * Validity checks, in order: the active-row count must not exceed the property
- * count, and every captioned row must land on the property matching its caption.
- * If either fails the GI's annotation is rejected *wholesale* — names and types
- * are still returned, but no caption or description is attached, because a
- * mis-shifted annotation is worse than none.
+ * count; every captioned row must land on the property matching its caption; no
+ * row may land on a property whose DECLARED type its source field contradicts;
+ * and the optimum must be unique. If any fails the GI's annotation is rejected
+ * *wholesale* — names and types are still returned, but no caption or description
+ * is attached, because a mis-shifted annotation is worse than none.
+ *
+ * The last two checks were added in 0.48.2. Captions are a hard constraint but
+ * most columns have none, so on a lightly-captioned GI every candidate scored 0,
+ * the aligner tied, and it committed to an arbitrary hoist — which on production
+ * SO-Invoice put the string field `invoiceNbr` on the decimal property `Amount`
+ * and shifted six columns' descriptions by one. Declared types now rule such an
+ * assignment out, and a surviving tie refuses instead of guessing.
  */
 function resolveFields(
   giName: string,
@@ -576,7 +679,11 @@ function resolveFields(
   let hoistCount = 0;
   while (hoistCount < head.length && keys.has(head[hoistCount])) hoistCount++;
 
-  const pairs = alignRows(active, head.slice(hoistCount), head.slice(0, hoistCount));
+  const typeOf = (prop: string): string | undefined => {
+    const edm = edmx.types.get(prop);
+    return edm ? edmTypeToSimple(edm) : undefined;
+  };
+  const pairs = alignRows(active, head.slice(hoistCount), head.slice(0, hoistCount), typeOf);
   if (!pairs) return bare();
 
   const rowByProp = new Map(pairs.map(([row, prop]) => [prop, row]));
