@@ -123,6 +123,30 @@ So: `properties = [hoisted key columns] ++ [remaining active rows by SortOrder]
 row that *does* carry a caption lands on the matching property name; if a single
 captioned row misaligns, the whole mapping is wrong.
 
+**`[UNIVERSAL]` The hoist choice is the one genuinely ambiguous part of the
+mapping — sample the data before trusting it.** Once you know how many key
+columns are hoisted, everything else is fixed: the remaining rows follow
+`SortOrder`. So the *only* freedom is **which** rows get hoisted, and where those
+rows carry no caption there is nothing to determine it. An aligner will then pick
+one arbitrarily and report success.
+
+Seen in production on `AP-Bills and Adjustments`: four keys are hoisted, one of
+them the vendor code. Getting that single hoist wrong shifted every uncaptioned
+column by one — `Amount` was attributed to the row holding the vendor's invoice
+number, `Vendor` to the currency row — while the captioned columns near the end
+still matched, so the alignment looked valid. A live sample settled it in one
+query: `Vendor` returns `P-SANCHE9` and `Amount` returns `487.5`.
+
+Name-similarity heuristics do **not** settle it. They produce false positives in
+both directions: `EmployeeId ← acctCD` scores zero and is correct, while
+`refNbr → ReferenceNbr` and `branchCD → BranchID` are correct but fail naive
+string matching because the source field is abbreviated.
+
+**So: before writing descriptions for a GI, query a few rows and check that each
+property's values match what its design row implies** — a code where you expect a
+code, an amount where you expect an amount. One query per GI, and it is the only
+check that reliably catches a shifted hoist.
+
 **`[UNIVERSAL]` An active result column can silently produce no property at all.**
 Where two result columns resolve to the same property name — the same DAC field
 output twice, or the same field name drawn from two different DACs — the platform
