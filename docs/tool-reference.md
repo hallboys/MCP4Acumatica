@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 49 tools available in the MCP4Acumatica (v0.48.2).
+Complete specification for all 49 tools available in the MCP4Acumatica (v0.49.0).
 
 > The `**Endpoint:**` paths below show the default deployment values — the `Default` endpoint
 > name and contract version `25.200.001`. The base `/entity/{name}/{version}` is governed by
@@ -78,6 +78,8 @@ Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom re
 
 > **Truncation semantics:** Same as `acumatica_list_entities` — when results hit the max, the response includes `truncated: true`, `paginationSupported: false`, and `actionRequired` text telling the model to ask the user for a narrower filter rather than calling again.
 
+> **Calculated columns are refused in filters (0.49.0):** a `$filter` referencing a **calculated** GI column (an `=…` expression in the inquiry design) makes Acumatica return HTTP 200 with an *empty body* — not an error, not an empty list. For curated GIs the registry flags expression columns, and this tool refuses such a filter **before contacting Acumatica**, returning an `invalid_filter` envelope naming the offending columns and listing the stored `filterableFields` to rewrite against. Filter on stored columns (keys, dates, statuses, codes) and apply conditions on calculated columns to the returned rows client-side. See [OData filtering](odata-filtering.md).
+
 > **GI opt-in gate (0.37.0):** Instances accumulate many GIs built for human screens; exposing them all floods the model's context and degrades GI selection — and a **parameterized GI exposed via OData returns silently wrong data** (queried without its parameters, Acumatica returns default/unfiltered rows with no error), so curating which GIs the assistant can reach is a data-correctness safeguard, not just tidiness (full rationale + setup: [Generic Inquiries](generic-inquiries.md)). If your Acumatica administrator has configured the GI registry (the `MCPGIs`/`MCPGIFields` feed GIs), only inquiries explicitly flagged `ExposedtoMCP` are available — `run_inquiry`, `describe_inquiry`, and `list_generic_inquiries` all enforce it, and an unexposed GI returns a "not exposed to the AI assistant" error. When the registry is **not** configured, the gate is inactive: `list_generic_inquiries` returns **no GIs** (discovery is suppressed — the model isn't handed an uncurated menu), and a GI can only be run by **exact name** via `run_inquiry` / `describe_inquiry`. Exposed GIs may also carry curated descriptions and `$metadata`-accurate field types, surfaced by `describe_inquiry`/`list_generic_inquiries`. Independently of the gate, `run_inquiry` and `describe_inquiry` refuse any parameterized GI (querying/sampling one over OData returns silently wrong data). Fixed-width key values are trimmed in all GI output.
 
 ---
@@ -99,7 +101,7 @@ List all Generic Inquiries (GIs) exposed via OData in Acumatica. Returns inquiry
 
 ### `acumatica_describe_inquiry`
 
-Returns the field schema for a Generic Inquiry (GI) exposed via OData. Field names and types are **inferred from a single live sample row**, so types may be approximate (a column that is null in the sample reports as `unknown`) and a GI that returns no rows yields an empty field list. Use this before calling `acumatica_run_inquiry` to know which fields are available for filtering and selection. For authoritative entity schemas (not GIs), use `acumatica_describe_entity` instead.
+Returns the field schema for a Generic Inquiry (GI) exposed via OData. Field names and types are **inferred from a single live sample row**, so types may be approximate (a column that is null in the sample reports as `unknown`) and a GI that returns no rows yields an empty field list. Curated GIs (see the GI opt-in gate above) instead return authoritative `$metadata` names/types with curated descriptions, and mark calculated (expression) columns with `calculated: true` — those columns **cannot** be used in a `run_inquiry` `filterExpression` (Acumatica fails such filters with an empty response, so `run_inquiry` refuses them up front). Use this before calling `acumatica_run_inquiry` to know which fields are available for filtering and selection. For authoritative entity schemas (not GIs), use `acumatica_describe_entity` instead.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

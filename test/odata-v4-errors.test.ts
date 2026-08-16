@@ -18,6 +18,8 @@ import {
   classifyODataV4Error,
   buildODataV4Correction,
   V4_SUPPORTED_FUNCTIONS,
+  filterReferencedColumns,
+  buildCalculatedColumnRefusal,
 } from "../src/lib/odata-v4-errors.ts";
 
 // ── classifyODataV4Error ─────────────────────────────────────────
@@ -159,4 +161,79 @@ test("supported-function list advertises contains and tolower, never substringof
   assert.match(joined, /contains\(/);
   assert.match(joined, /tolower\(/);
   assert.doesNotMatch(joined, /substringof/);
+});
+
+// ── filterReferencedColumns (calculated-column pre-flight) ────────────────
+//
+// A $filter that references a CALCULATED GI column ("=…" design expression)
+// makes Acumatica return HTTP 200 with an EMPTY BODY — no error, no rows.
+// Verified live on 25R2 (2026-08-16): `AgingFinPeriodID eq '092026'` works,
+// adding `and Amount ne 0` fails with the empty body, and Amount is an
+// expression column. run_inquiry therefore refuses such filters up front.
+
+test("finds calculated columns referenced by a filter, in filter order, deduped", () => {
+  const hits = filterReferencedColumns(
+    "Balance ne 0 and Amount gt 100 or Amount lt -100",
+    ["Amount", "Balance", "AdjustedAmount"]
+  );
+  assert.deepEqual(hits, ["Balance", "Amount"]);
+});
+
+test("a column name inside a string literal is NOT a reference", () => {
+  assert.deepEqual(
+    filterReferencedColumns("Description eq 'Amount due'", ["Amount"]),
+    []
+  );
+  // OData escapes a quote by doubling it — the literal must still swallow it.
+  assert.deepEqual(
+    filterReferencedColumns("Description eq 'it''s the Amount' and Balance ne 0", ["Amount", "Balance"]),
+    ["Balance"]
+  );
+});
+
+test("matching is exact and case-sensitive (wrong case is unknown_property upstream)", () => {
+  assert.deepEqual(filterReferencedColumns("amount gt 0", ["Amount"]), []);
+  // A name that merely contains a flagged name is not a reference to it.
+  assert.deepEqual(filterReferencedColumns("AmountDue gt 0", ["Amount"]), []);
+});
+
+test("a calculated column inside a function call is still a reference", () => {
+  assert.deepEqual(
+    filterReferencedColumns("contains(tolower(Amount),'x')", ["Amount"]),
+    ["Amount"]
+  );
+});
+
+test("empty filter or no flagged columns → no hits", () => {
+  assert.deepEqual(filterReferencedColumns("", ["Amount"]), []);
+  assert.deepEqual(filterReferencedColumns("Amount gt 0", []), []);
+});
+
+// ── buildCalculatedColumnRefusal ──────────────────────────────────────────
+
+test("refusal names the columns, hands over the stored ones, and forbids a false 'no records'", () => {
+  const r = buildCalculatedColumnRefusal({
+    inquiryName: "AP-Aging",
+    filterExpression: "AgingFinPeriodID eq '092026' and Amount ne 0",
+    calculatedColumns: ["Amount"],
+    filterableFields: ["AgingFinPeriodID", "RefNbr", "Vendor"],
+  });
+  assert.equal(r.error, "invalid_filter");
+  assert.match(String(r.problem), /'Amount'/);
+  assert.match(String(r.problem), /empty response/);
+  assert.deepEqual(r.calculatedColumns, ["Amount"]);
+  assert.deepEqual(r.filterableFields, ["AgingFinPeriodID", "RefNbr", "Vendor"]);
+  assert.match(String(r.actionRequired), /never executed/);
+  assert.match(String(r.actionRequired), /filterableFields/);
+});
+
+test("refusal omits filterableFields when none are known and pluralizes correctly", () => {
+  const r = buildCalculatedColumnRefusal({
+    inquiryName: "GI",
+    filterExpression: "Amount ne 0 and Balance ne 0",
+    calculatedColumns: ["Amount", "Balance"],
+  });
+  assert.equal(r.filterableFields, undefined);
+  assert.match(String(r.problem), /calculated columns/);
+  assert.doesNotMatch(String(r.actionRequired), /filterableFields/);
 });

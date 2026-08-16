@@ -35,6 +35,14 @@ export interface GiFieldMeta {
   caption?: string;
   /** Curated per-column description (UsrResAIDescription on GIResult). Optional. */
   description?: string;
+  /**
+   * The column is a calculated expression (`=…` design field), not a stored
+   * field. A `$filter` referencing one makes Acumatica return HTTP 200 with an
+   * EMPTY BODY — not an error, not an empty list — so run_inquiry refuses such
+   * filters before calling Acumatica. Only set where a design row was aligned
+   * to this property; a GI whose alignment was rejected carries no flags.
+   */
+  expression?: boolean;
 }
 
 /** One exposed GI in the registry. */
@@ -270,6 +278,11 @@ export function predictPropertyName(row: FeedFieldRow): string {
   const field = (row.SchemaField ?? "").trim();
   if (field.startsWith("Usr")) return field.slice(3);
   return field;
+}
+
+/** Whether a design row's source field is a calculated expression (`=…`). */
+function isExpressionRow(row: FeedFieldRow): boolean {
+  return (row.Field ?? "").trim().startsWith("=");
 }
 
 function toNumber(v: number | string | undefined): number {
@@ -647,6 +660,7 @@ function resolveFields(
       if (caption) meta.caption = caption;
       const d = row.AIDescription?.trim();
       if (d) meta.description = d;
+      if (isExpressionRow(row)) meta.expression = true;
       return meta;
     });
   }
@@ -698,6 +712,7 @@ function resolveFields(
       if (caption) meta.caption = caption;
       const d = row.AIDescription?.trim();
       if (d) meta.description = d;
+      if (isExpressionRow(row)) meta.expression = true;
     }
     return meta;
   });

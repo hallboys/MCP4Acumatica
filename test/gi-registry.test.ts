@@ -514,3 +514,54 @@ test("alignment: shared tokens break a tie the substring tiers cannot", () => {
   assert.equal(byName.Description.description, "the label");
   assert.equal(byName.PMCostCode_costCodeID.description, "internal id");
 });
+
+// ── Expression (calculated) column flagging ────────────────────────────────
+//
+// A calculated column ("=…" design field) cannot be $filtered — Acumatica
+// returns HTTP 200 with an empty body. resolveFields flags such columns so
+// run_inquiry can refuse the filter before calling Acumatica.
+
+test("expression columns are flagged; stored fields are not", () => {
+  const { byName } = fieldsOf(
+    `<EntityType Name="GI">
+       <Property Name="RefNbr" Type="Edm.String"/>
+       <Property Name="Amount" Type="Edm.Decimal"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Field: "refNbr", AIDescription: "doc ref" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Field: "=Switch(…)", Caption: "Amount", AIDescription: "signed amount" },
+    ]
+  );
+  assert.equal(byName.Amount.expression, true);
+  assert.equal(byName.Amount.description, "signed amount");
+  assert.equal(byName.RefNbr.expression, undefined);
+});
+
+test("the no-EDMX fallback path also flags expression columns", () => {
+  const reg = assembleRegistry({
+    giRows: [{ Name: "SomeGI" }],
+    fieldRows: [
+      { Name: "SomeGI", Caption: "Balance", Field: "=[a]-[b]", LineNbr: 1 },
+      { Name: "SomeGI", Caption: "RefNbr", Field: "refNbr", LineNbr: 2 },
+    ],
+    edmxTypes: new Map(),
+    builtAt: "2026-08-16T00:00:00Z",
+  });
+  const f = Object.fromEntries((reg.gis[0].fields ?? []).map((x) => [x.name, x]));
+  assert.equal(f.Balance.expression, true);
+  assert.equal(f.RefNbr.expression, undefined);
+});
+
+test("a refused alignment withholds expression flags along with annotations", () => {
+  // More active rows than properties → alignment rejected → bare names+types,
+  // and NO expression flags: a flag placed by a wrong alignment would refuse
+  // filters on a perfectly filterable stored column.
+  const { byName } = fieldsOf(
+    `<EntityType Name="GI"><Property Name="OnlyOne" Type="Edm.String"/></EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Field: "=calc" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Field: "stored" },
+    ]
+  );
+  assert.equal(byName.OnlyOne.expression, undefined);
+});

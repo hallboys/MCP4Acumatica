@@ -38,7 +38,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.48.2",
+    version: "0.49.0",
   });
 
   private redactPatterns?: string;
@@ -165,7 +165,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
         filterExpression: z
           .string()
           .optional()
-          .describe("OData v4 $filter expression. Generic Inquiries use a DIFFERENT dialect from acumatica_list_entities (which is OData v3) — do NOT carry filter syntax between the two tools. Partial match: contains(Field,'needle') — field FIRST. substringof() does NOT exist here and fails with 'unknown function'. startswith(Field,'prefix') and endswith(Field,'suffix') work in both. tolower(Field)/toupper(Field) ARE supported here (unlike acumatica_list_entities). Dates are bare ISO-8601 instants with no prefix or quotes: \"CreatedOn gt 2024-01-01T00:00:00Z\" — the v3 form datetimeoffset'2024-01-01' is rejected. Numbers unquoted, strings single-quoted. Property names are the inquiry's RESULT-COLUMN CAPTIONS, which often differ from the underlying entity's field names, and are case-sensitive — call acumatica_describe_inquiry first if unsure."),
+          .describe("OData v4 $filter expression. Generic Inquiries use a DIFFERENT dialect from acumatica_list_entities (which is OData v3) — do NOT carry filter syntax between the two tools. Partial match: contains(Field,'needle') — field FIRST. substringof() does NOT exist here and fails with 'unknown function'. startswith(Field,'prefix') and endswith(Field,'suffix') work in both. tolower(Field)/toupper(Field) ARE supported here (unlike acumatica_list_entities). Dates are bare ISO-8601 instants with no prefix or quotes: \"CreatedOn gt 2024-01-01T00:00:00Z\" — the v3 form datetimeoffset'2024-01-01' is rejected. Numbers unquoted, strings single-quoted. Property names are the inquiry's RESULT-COLUMN CAPTIONS, which often differ from the underlying entity's field names, and are case-sensitive — call acumatica_describe_inquiry first if unsure. CALCULATED columns (marked 'calculated: true' by acumatica_describe_inquiry) cannot be filtered — Acumatica fails such filters with an empty response, so this tool refuses them up front; filter on stored columns (keys, dates, statuses, codes) and apply conditions on calculated columns to the returned rows yourself."),
         topN: z
           .coerce.number()
           .int()
@@ -271,7 +271,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
     this.server.tool(
       "acumatica_describe_inquiry",
-      "Returns the field schema for a Generic Inquiry (GI) exposed via OData. Field names and types are inferred from a single live sample row — types may be approximate (e.g. a column that is null in the sample reports as 'unknown'), and a GI that returns no rows yields an empty field list. Use this before calling acumatica_run_inquiry to know which fields are available for filtering and selection. For authoritative entity schemas (not GIs), use acumatica_describe_entity instead.",
+      "Returns the field schema for a Generic Inquiry (GI) exposed via OData. Field names and types are inferred from a single live sample row — types may be approximate (e.g. a column that is null in the sample reports as 'unknown'), and a GI that returns no rows yields an empty field list. Curated GIs return authoritative names/types instead, and mark calculated (expression) columns with 'calculated: true' — those columns CANNOT be used in a run_inquiry filterExpression. Use this before calling acumatica_run_inquiry to know which fields are available for filtering and selection. For authoritative entity schemas (not GIs), use acumatica_describe_entity instead.",
       {
         inquiryName: z
           .string()

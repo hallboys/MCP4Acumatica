@@ -221,7 +221,9 @@ function buildSchemaResponse(
       dataType: cf.type ?? inferred.get(cf.name) ?? "unknown",
       ...(cf.caption ? { caption: cf.caption } : {}),
       ...(cf.description ? { description: cf.description } : {}),
+      ...(cf.expression ? { calculated: true } : {}),
     }));
+    const hasCalculated = fields.some((f) => "calculated" in f);
     return {
       inquiryName,
       ...(entry.description ? { description: entry.description } : {}),
@@ -229,7 +231,12 @@ function buildSchemaResponse(
       sampleRow,
       note:
         "Curated schema: field names and types from the GI definition / OData $metadata, " +
-        "annotated with curated descriptions. Any field without a curated type falls back to a live-sample inference.",
+        "annotated with curated descriptions. Any field without a curated type falls back to a live-sample inference." +
+        (hasCalculated
+          ? " Fields marked 'calculated: true' are computed expressions and CANNOT be used in a filterExpression — " +
+            "Acumatica fails such filters with an empty response instead of an error. Filter on stored fields and " +
+            "apply conditions on calculated fields to the returned rows yourself."
+          : ""),
     };
   }
   return {

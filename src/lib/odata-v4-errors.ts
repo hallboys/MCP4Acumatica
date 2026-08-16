@@ -56,6 +56,67 @@ export const V4_SUPPORTED_FUNCTIONS = [
 ];
 
 /**
+ * Property identifiers referenced by a `$filter` that appear in `names`,
+ * in filter order, deduped. Single-quoted string literals are removed first
+ * (OData doubles a quote to escape it) so a literal like `'Amount due'` cannot
+ * false-positive on a column named `Amount`. Matching is exact and
+ * case-sensitive — a wrong-case reference is rejected by the endpoint as
+ * unknown_property before it could ever hit the calculated-column failure.
+ *
+ * Used to pre-flight run_inquiry filters against the registry's
+ * expression-flagged columns: a `$filter` referencing a calculated GI column
+ * makes Acumatica return HTTP 200 with an EMPTY BODY (no error, no rows), so
+ * the only good handling is to refuse before calling Acumatica at all.
+ */
+export function filterReferencedColumns(
+  filterExpression: string,
+  names: readonly string[]
+): string[] {
+  if (!filterExpression || !names.length) return [];
+  const candidates = new Set(names);
+  const withoutLiterals = filterExpression.replace(/'(?:[^']|'')*'/g, " ");
+  const found: string[] = [];
+  for (const m of withoutLiterals.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+    if (candidates.has(m[0]) && !found.includes(m[0])) found.push(m[0]);
+  }
+  return found;
+}
+
+/**
+ * Refusal envelope for a filter that references calculated (expression)
+ * columns. Same shape family as buildODataV4Correction, but this one is a
+ * PRE-FLIGHT refusal — Acumatica was never contacted, because its response to
+ * such a filter is an empty-body 200 that cannot be distinguished from an
+ * outage after the fact.
+ */
+export function buildCalculatedColumnRefusal(context: {
+  inquiryName: string;
+  filterExpression: string;
+  calculatedColumns: string[];
+  filterableFields?: string[];
+}): Record<string, unknown> {
+  const stored = context.filterableFields ?? [];
+  return {
+    error: "invalid_filter",
+    inquiryName: context.inquiryName,
+    filterExpression: context.filterExpression,
+    problem:
+      `The filter references ${context.calculatedColumns.length === 1 ? "a calculated column" : "calculated columns"} ` +
+      `(${context.calculatedColumns.map((c) => `'${c}'`).join(", ")}). ` +
+      `These are computed by an expression in the inquiry design, not stored fields, and Acumatica cannot ` +
+      `filter on them — it fails with an empty response instead of an error, which is why the query was refused up front.`,
+    calculatedColumns: context.calculatedColumns,
+    ...(stored.length ? { filterableFields: stored } : {}),
+    actionRequired:
+      `Rewrite filterExpression using only stored columns` +
+      (stored.length ? ` (see filterableFields)` : "") +
+      ` — typically keys, dates, statuses, and codes — and apply any condition on the calculated ` +
+      `column${context.calculatedColumns.length === 1 ? "" : "s"} to the returned rows yourself. ` +
+      `Do not report to the user that no records matched — the query was never executed.`,
+  };
+}
+
+/**
  * Classify a v4 parser error. Returns null when the message is not one of the
  * recognized shapes, so the caller falls through to the original error.
  */

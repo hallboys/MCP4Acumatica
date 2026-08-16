@@ -130,6 +130,14 @@ Until at least one GI is tagged and the feeds are readable, the gate stays inact
   description; a tagged GI with no `AIDescription` still works via inferred schema.
 - **Fixed-width keys trimmed.** Acumatica returns padded key values (`"GARES     "`) that
   break equality filters; all GI output is trimmed before it reaches the model.
+- **Calculated columns are guarded (0.49.0).** A `$filter` referencing a **calculated** column
+  (an `=…` expression in the GI design) makes Acumatica return HTTP 200 with an *empty body* —
+  no error, no rows, indistinguishable from an outage. For curated GIs the registry flags
+  expression columns during its `$metadata` alignment: `describe_inquiry` marks them
+  `calculated: true`, and `run_inquiry` refuses such a filter before contacting Acumatica,
+  telling the model which stored columns to filter on instead. Flags are only attached where
+  the column alignment succeeded — a GI whose alignment was refused carries none (a
+  mis-placed flag would block filters on a perfectly filterable column).
 - **If your column descriptions don't appear, caption the GI's key columns.** When
   `acumatica_describe_inquiry` returns field names and types but **no** `description` text,
   the server rejected that GI's column alignment on purpose — a mis-shifted description is

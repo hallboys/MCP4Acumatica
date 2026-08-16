@@ -17,6 +17,18 @@
 // carrying a caption lands on the property matching it. If one captioned row
 // misaligns, the whole GI's mapping is rejected rather than half-trusted.
 //
+// Two more rejection rules (in sync with the server's resolveFields, 0.48.2 —
+// keep them matched or this script will bless alignments the server rejects):
+//   - a pairing whose DECLARED $metadata type contradicts the type family the
+//     design row's field NAME implies is impossible (a string `invoiceNbr` can
+//     never be the decimal `Amount`);
+//   - a TIED optimum is refused, not guessed. Ambiguity means the chosen row
+//     scores equally on another property (or the chosen property equally with
+//     another row) — nothing in the data picks, and committing silently
+//     mis-shifts every column after the disagreement.
+// A refusing GI is made determinate with no code change by captioning its
+// hoisted key columns with exactly the property names OData already reports.
+//
 // Usage:
 //   node align_columns.mjs --cols <f> --metadata <f.xml> [--only <f>] [--out <f>]
 //                          [--report <f>] [--strict]
@@ -72,20 +84,81 @@ function parseEdmx(xml) {
 // ------------------------------------------------------------------ scoring
 // A captioned row is a hard constraint: it must land on its caption's property.
 const VIOLATION = -1e6;
-function score(row, prop) {
+
+// Coarse type family implied by a design row's source field NAME (server:
+// expectedTypeFamily). Deliberately conservative — a false positive rejects a
+// CORRECT alignment — so only patterns unambiguous in Acumatica's naming
+// conventions classify. Calculated columns (`=…`) are always null.
+function expectedTypeFamily(field) {
+  const raw = String(field ?? "").trim();
+  if (!raw || raw.startsWith("=")) return null;
+  if (/_description$/i.test(raw)) return "text";
+  const n = raw.toLowerCase();
+  if (/^(is|has)[a-z]/.test(n) || /^(released|voided|prebooked|opendoc|depreciable|active|approved|printed|emailed)$/.test(n)) {
+    return "boolean";
+  }
+  if (/(datetime|date)$/.test(n) && !/(update|dateid)$/.test(n)) return "datetime";
+  if (/(amt|amount|balance|bal|cost|price|qty|quantity|total|discount|profit|percent|rate)$/.test(n)) {
+    return "numeric";
+  }
+  if (/(descr|description|name|cd|code|status)$/.test(n)) return "text";
+  return null;
+}
+
+// Simplified declared type of a property (server: edmTypeToSimple; the parse
+// above strips the `Edm.` prefix already).
+function simpleType(t) {
+  if (!t) return undefined;
+  const x = String(t).replace(/^Edm\./, "");
+  if (x === "Decimal" || x === "Double" || x === "Single") return "decimal";
+  if (x === "Byte" || x === "SByte" || x === "Int16" || x === "Int32" || x === "Int64") return "integer";
+  if (x === "Boolean") return "boolean";
+  if (x === "DateTime" || x === "DateTimeOffset" || x === "Date" || x === "Time") return "datetime";
+  return x.toLowerCase();
+}
+
+// Whether the implied family is impossible for the declared type (server:
+// typeConflicts). `integer` is compatible with everything — Acumatica surfaces
+// identifiers and line numbers as int or string depending on the DAC.
+function typeConflicts(family, simple) {
+  if (!family || !simple || simple === "integer") return false;
+  switch (family) {
+    case "datetime": return simple !== "datetime";
+    case "boolean": return simple !== "boolean";
+    case "numeric": return simple !== "decimal";
+    case "text": return simple === "decimal" || simple === "boolean" || simple === "datetime";
+  }
+}
+
+// camelCase/underscore tokens of length >= 4, lower-cased (server: tokens).
+function tokens(s) {
+  return new Set(String(s)
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .map((t) => t.toLowerCase())
+    .filter((t) => t.length >= 4));
+}
+
+function score(row, prop, propType) {
   const cap = String(row.Caption ?? "").trim();
   const base = norm(stripSuffix(prop));
   // Compare against both the stripped and the full property name: a `_2` may be
   // a collision suffix the platform added OR part of a caption someone typed
   // literally (seen in the wild as `ItemStatus_2`).
   if (cap) return norm(cap) === base || norm(cap) === norm(prop) ? 100 : VIOLATION;
-  // Uncaptioned: fall back to weak field-name similarity purely as a tiebreak.
-  const f = norm(String(row.Field ?? "")
+  // Uncaptioned: a declared-type contradiction is a hard reject; otherwise fall
+  // back to weak field-name similarity purely as a tiebreak.
+  const rawField = String(row.Field ?? "").trim();
+  if (typeConflicts(expectedTypeFamily(rawField), simpleType(propType))) return VIOLATION;
+  const f = norm(rawField
     .replace(/_description$/i, "").replace(/_Attributes$/i, "").replace(/^Attribute/i, ""));
   if (!f) return 0;
   if (f === base) return 10;
   if (f.length > 3 && (base.includes(f) || f.includes(base))) return 3;
-  return 0;
+  // Weak shared-token signal, below the substring tiers so it never outranks
+  // them (`finPeriodID`→`PostPeriod` shares "period").
+  const shared = [...tokens(rawField)].filter((t) => tokens(prop).has(t)).length;
+  return shared > 0 ? 1 : 0;
 }
 
 // --------------------------------------------------------------- alignment
@@ -103,36 +176,42 @@ function align(A, rest, hoistedProps, D, allPropNames) {
     const cap = String(row.Caption ?? "").trim();
     return !cap || !allPropNames.has(norm(cap));
   };
+  const sc = (row, prop) => score(row, prop.name, prop.type);
   const n = A.length, H = hoistedProps.length;
   const NEG = -Infinity;
-  const mk = () => Array.from({ length: H + 1 }, () => new Array(D + 1).fill(NEG));
-  const dp = Array.from({ length: n + 1 }, mk);
-  const back = Array.from({ length: n + 1 }, () =>
-    Array.from({ length: H + 1 }, () => new Array(D + 1).fill(null)));
+  const mk = (fill) => Array.from({ length: H + 1 }, () => new Array(D + 1).fill(fill));
+  const dp = Array.from({ length: n + 1 }, () => mk(NEG));
+  // cnt[i][h][d] = distinct optimal move sequences (saturating at 2). A tied
+  // optimum means the data does not determine the alignment — refuse it.
+  const cnt = Array.from({ length: n + 1 }, () => mk(0));
+  const back = Array.from({ length: n + 1 }, () => mk(null));
   dp[n][H][D] = 0;
+  cnt[n][H][D] = 1;
   for (let i = n - 1; i >= 0; i--) {
     for (let h = 0; h <= Math.min(H, i); h++) {
       for (let d = 0; d <= Math.min(D, i - h); d++) {
+        const relax = (v, ways, how) => {
+          if (v > dp[i][h][d]) { dp[i][h][d] = v; cnt[i][h][d] = ways; back[i][h][d] = how; }
+          else if (v === dp[i][h][d] && v > NEG) cnt[i][h][d] = Math.min(2, cnt[i][h][d] + ways);
+        };
         const j = i - h - d;                 // index into rest
         if (j < rest.length && dp[i + 1][h][d] > NEG) {
-          const v = score(A[i], rest[j].name) + dp[i + 1][h][d];
-          if (v > dp[i][h][d]) { dp[i][h][d] = v; back[i][h][d] = "align"; }
+          relax(sc(A[i], rest[j]) + dp[i + 1][h][d], cnt[i + 1][h][d], "align");
         }
         if (h < H && dp[i + 1][h + 1][d] > NEG) {
           // Best any hoisted prop could do for this row; exact assignment later.
-          const best = Math.max(...hoistedProps.map((p) => score(A[i], p.name)));
-          const v = best + dp[i + 1][h + 1][d];
-          if (v > dp[i][h][d]) { dp[i][h][d] = v; back[i][h][d] = "hoist"; }
+          const best = Math.max(...hoistedProps.map((p) => sc(A[i], p)));
+          relax(best + dp[i + 1][h + 1][d], cnt[i + 1][h + 1][d], "hoist");
         }
         if (d < D && droppable(A[i]) && dp[i + 1][h][d + 1] > NEG) {
           // Prefer any real placement over dropping; -1 breaks ties only.
-          const v = -1 + dp[i + 1][h][d + 1];
-          if (v > dp[i][h][d]) { dp[i][h][d] = v; back[i][h][d] = "drop"; }
+          relax(-1 + dp[i + 1][h][d + 1], cnt[i + 1][h][d + 1], "drop");
         }
       }
     }
   }
   if (dp[0][0][0] <= VIOLATION / 2) return null;  // a captioned row could not be satisfied
+  if (cnt[0][0][0] > 1) return { status: "tie" }; // under-determined: refuse, don't guess
   const alignedRows = [], hoistedRows = [], droppedRows = [];
   for (let i = 0, h = 0, d = 0; i < n; i++) {
     const mv = back[i][h][d];
@@ -147,14 +226,27 @@ function align(A, rest, hoistedProps, D, allPropNames) {
     let bi = 0, bj = 0, bs = -Infinity;
     for (let i = 0; i < rowsLeft.length; i++)
       for (let j = 0; j < propsLeft.length; j++) {
-        const s = score(rowsLeft[i], propsLeft[j].name);
+        const s = sc(rowsLeft[i], propsLeft[j]);
         if (s > bs) { bs = s; bi = i; bj = j; }
       }
     if (bs <= VIOLATION / 2) return null;
+    // Ambiguity is NOT "several pairs share the best score" — four captioned
+    // rows each scoring 100 on their own property tie at 100 and resolve
+    // perfectly. It is the chosen row being equally happy on another property,
+    // or the chosen property equally happy with another row: nothing in the
+    // data picks, so refuse rather than swap two key columns' descriptions.
+    const rowAmbiguous = propsLeft.some((p, j) => j !== bj && sc(rowsLeft[bi], p) === bs);
+    const propAmbiguous = rowsLeft.some((r, i) => i !== bi && sc(r, propsLeft[bj]) === bs);
+    if (rowAmbiguous || propAmbiguous) return { status: "tie" };
     pairs.push([rowsLeft[bi], propsLeft[bj]]);
     rowsLeft.splice(bi, 1); propsLeft.splice(bj, 1);
   }
-  return { aligned: alignedRows, hoisted: pairs, dropped: droppedRows };
+  // Final sweep: no captioned row on a property it doesn't name, and no row on
+  // a property whose declared type its source field contradicts.
+  for (const [row, prop] of [...pairs, ...alignedRows]) {
+    if (sc(row, prop) <= VIOLATION / 2) return null;
+  }
+  return { status: "ok", aligned: alignedRows, hoisted: pairs, dropped: droppedRows };
 }
 
 // -------------------------------------------------------------------- main
@@ -197,7 +289,7 @@ for (const [gi, m] of [...byGi].sort()) {
   // result columns must be an entity key — that is what makes the search safe
   // rather than a free parameter that can rationalise any misalignment.
   const MAX_DROPPED = 6;
-  let res = null, appended = null, H = 0, D = 0;
+  let res = null, appended = null, H = 0, D = 0, tied = false;
   for (D = 0; D <= MAX_DROPPED; D++) {
     const cut = A.length - D;
     if (cut < 0 || cut > P.length) continue;
@@ -205,7 +297,16 @@ for (const [gi, m] of [...byGi].sort()) {
     if (!app.every((p) => K.has(p.name))) continue;
     let h = 0; while (h < cand.length && K.has(cand[h].name)) h++;
     const r = align(A, cand.slice(h), cand.slice(0, h), D, allPropNames);
+    // A tie is an ambiguity at this structural hypothesis — STOP rather than
+    // escalate D past it: a higher drop count that happens to align is exactly
+    // the free parameter rationalising a wrong mapping.
+    if (r && r.status === "tie") { tied = true; break; }
     if (r) { res = r; appended = app; H = h; break; }
+  }
+  if (tied) {
+    report.push({ gi, status: "alignment_ambiguous", active: A.length, props: P.length,
+      note: "tied optimum — caption the hoisted key columns with the property names OData already reports to pin it" });
+    continue;
   }
   if (!res) { report.push({ gi, status: "alignment_rejected", active: A.length, props: P.length }); continue; }
 

@@ -9,7 +9,12 @@ import { cleanGiRows } from "../lib/gi-rows";
 import { checkGiGate, parameterizedGiNames } from "../lib/gi-registry";
 import { getGiRegistry } from "../lib/gi-registry-build";
 import { getCached, setCached } from "../lib/metadata-cache";
-import { classifyODataV4Error, buildODataV4Correction } from "../lib/odata-v4-errors";
+import {
+  classifyODataV4Error,
+  buildODataV4Correction,
+  filterReferencedColumns,
+  buildCalculatedColumnRefusal,
+} from "../lib/odata-v4-errors";
 import { AcumaticaApiError } from "../lib/acumatica-client";
 
 /** OData query response with value array */
@@ -84,6 +89,27 @@ export async function handleRunInquiry(
   // here (a bare boolean function is equally valid in v4) and because dropping it
   // would silently change behavior for filters already in use.
   const filterExpression = normalizeODataFilter(args.filterExpression);
+
+  // Pre-flight: a $filter that references a CALCULATED column (an `=…`
+  // expression in the GI design) makes Acumatica return HTTP 200 with an empty
+  // body — no error, no rows — which parseAcumaticaJson can only report as an
+  // anomaly after the fact. The registry knows which columns are expressions
+  // (flagged during the positional alignment), so refuse before calling
+  // Acumatica and hand the model the stored columns to rewrite against.
+  // Production logs attribute ~14% of tool errors to exactly this (279
+  // empty-body occurrences, 259 of them in run_inquiry).
+  if (filterExpression && gate.entry?.fields?.length) {
+    const calculated = gate.entry.fields.filter((f) => f.expression).map((f) => f.name);
+    const offending = filterReferencedColumns(filterExpression, calculated);
+    if (offending.length) {
+      return buildCalculatedColumnRefusal({
+        inquiryName: args.inquiryName,
+        filterExpression,
+        calculatedColumns: offending,
+        filterableFields: gate.entry.fields.filter((f) => !f.expression).map((f) => f.name),
+      });
+    }
+  }
 
   const query: Record<string, string> = {};
 

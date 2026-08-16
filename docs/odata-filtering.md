@@ -334,8 +334,13 @@ AgingFinPeriodID eq '092026' and Amount ne 0        -- HTTP 200, empty body
 ```
 
 Filter on stored columns (keys, dates, statuses, codes) and do the arithmetic on the returned rows.
-`acumatica_describe_inquiry` does not currently mark which columns are calculated, so if a filter
-that looks correct produces the empty-body error, suspect the numeric/derived column first.
+For curated GIs the server knows which columns are expressions (the GI registry flags them during
+its `$metadata` alignment): `acumatica_describe_inquiry` marks them `calculated: true`, and
+`acumatica_run_inquiry` refuses a filter that references one *before* calling Acumatica, returning
+an `invalid_filter` envelope that names the offending columns and lists the stored
+(`filterableFields`) alternatives. On an uncurated GI (gate inactive, or a GI whose column
+alignment was refused) no flags exist — there, if a filter that looks correct produces the
+empty-body error, suspect the numeric/derived column first.
 
 **Dropdown fields return display labels, not internal codes.** A GI projects the *label* Acumatica
 shows on screen, and the filter is matched against that label:
