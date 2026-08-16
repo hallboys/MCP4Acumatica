@@ -228,6 +228,23 @@ for (const [gi, m] of [...byGi].sort()) {
   });
 }
 
+// Which hoists did the search actually have evidence for? A hoisted row with no
+// caption and no name resemblance was chosen arbitrarily — the alignment is
+// under-determined there and may be shifted, silently. This is the one failure
+// mode a clean run still hides, so say so loudly rather than implying success.
+for (const r of report) {
+  if (r.status !== "ok") continue;
+  r.unjustifiedHoists = out
+    .filter((c) => c.gi === r.gi && c.hoisted)
+    .filter((c) => {
+      const p = norm(stripSuffix(c.prop));
+      if (c.caption && norm(c.caption) === p) return false;
+      const f = norm(String(c.field).replace(/_description$/i, "").replace(/^cury/i, ""));
+      return !(f && (f === p || (f.length > 3 && p.length > 3 && (f.includes(p) || p.includes(f)))));
+    })
+    .map((c) => `${c.lineNbr}:${c.prop}<-${c.field}`);
+}
+
 out.sort((a, b) => a.gi.localeCompare(b.gi) || a.lineNbr - b.lineNbr);
 const ok = report.filter((r) => r.status === "ok");
 const bad = report.filter((r) => r.status !== "ok");
@@ -236,6 +253,18 @@ for (const b of bad) console.error(`  FAIL  ${b.gi} — ${b.status}${b.note ? " 
 const totalAppended = ok.reduce((a, r) => a + r.appendedKeys.length, 0);
 const totalInactive = ok.reduce((a, r) => a + r.inactive, 0);
 console.error(`  ${totalInactive} inactive design row(s) excluded; ${totalAppended} appended key propert(ies) have no design row`);
+
+const shaky = ok.filter((r) => r.unjustifiedHoists.length);
+if (shaky.length) {
+  console.error(`\n  ${shaky.length} GI(s) have a hoisted column chosen with NO evidence — these alignments`);
+  console.error(`  are UNDER-DETERMINED and may be shifted. An aligned result is not a verified one:`);
+  console.error(`  query a few rows of each and confirm every property returns the kind of value its`);
+  console.error(`  design row implies BEFORE writing any description.`);
+  for (const r of shaky.slice(0, 12)) console.error(`     ${r.gi}  (${r.unjustifiedHoists.join(", ")})`);
+  if (shaky.length > 12) console.error(`     … and ${shaky.length - 12} more (see --report)`);
+  console.error(`  Note both directions of false positive: EmployeeId<-acctCD is fine, and`);
+  console.error(`  refNbr->ReferenceNbr is fine — this flags what to CHECK, not what is wrong.`);
+}
 
 if (opt("--report")) fs.writeFileSync(opt("--report"), JSON.stringify(report, null, 1));
 if (opt("--out")) fs.writeFileSync(opt("--out"), JSON.stringify(out, null, 1));

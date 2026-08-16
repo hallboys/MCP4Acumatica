@@ -5,9 +5,18 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
-## [0.48.0] - 2026-08-15
+## [0.48.1] - 2026-08-15
 ### Fixed
 - **`acumatica_clear_cache` now actually clears the GI registry.** The registry is memoized per isolate and `getGiRegistry()` checks that memo *before* it reads KV, so deleting the KV entry did nothing for the life of the isolate: the tool reported `cleared` and kept serving the stale registry. An operator who tagged a GI, edited a description, or re-imported a feed and then cleared the cache to check saw no change and reasonably concluded the Acumatica-side edit had not taken. `handleClearCache` now calls `resetGiRegistryMemo()` whenever the clear could cover the registry (no target, `gi`, or `gi_registry`); the function was previously exported as a test-only seam.
+
+### Added
+- `align_columns.mjs` (skill) now reports which GIs have a hoisted column chosen with **no evidence**. Alignment's only ambiguous step is which key columns are hoisted to the front; where those rows carry no caption nothing determines the choice, so the script previously reported plain success on an under-determined result. Verified failure on `AP-Bills and Adjustments`, where one wrong hoist shifted every uncaptioned column by one while the captioned columns still matched. The flag has false positives in both directions and is a check list, not a verdict — the reliable test is querying a few rows per GI.
+
+### Changed
+- `.gitignore` excludes `acumatica/gi-descriptions*.csv` and `.gi-work/`. Drafted descriptions and the instance metadata pulls behind them describe one tenant's inquiries and cannot ship in a public repo.
+
+## [0.48.0] - 2026-08-15
+### Fixed
 - **Curated GI column descriptions now actually reach the model.** `resolveFields` (`src/lib/gi-registry.ts`) matched `MCPGIFields` design rows to `$metadata` properties by *predicting* the property name from `Caption` → `Usr`-stripped `SchemaField`. Verified live on 25R2 (2026-08-15), neither input supports that: `GIResult.Caption` is only an **override** — 1 079 of 1 907 result columns across the 115 curated GIs have a NULL caption, and 16 GIs (`CS-ReasonCode`, `GL-Journal Transactions`, `IN-NonStock`, `FA-Fixed Assets`, …) have none at all — while `GIResult.SchemaField` is NULL for most rows and **DAC-qualified** where present (`INTran.RefNbr`), which can never equal the bare property `RefNbr`. A row that predicted nothing was skipped, so the majority of column descriptions were silently dropped: `acumatica_describe_inquiry` on `CS-ReasonCode` returned the GI-level description but every field as bare `{fieldName, dataType}`.
 - The join is now **positional**, reproducing Acumatica's actual projection: `[result columns that are also entity keys, hoisted to the FRONT in key order] ++ [remaining ACTIVE design rows in SortOrder order] ++ [keys that are not result columns, appended at the END with no design row]`. The order is **`SortOrder`, not `LineNbr`** (they diverge: in `PM-Projects`, `Builder` is LineNbr 4 but grid position 2), inactive rows are excluded (they never reach OData, so counting one shifts every later column), and key hoisting is the normal case (108 of 115 GIs). Ported from the tested `skills/acumatica-gi-descriptions/scripts/align_columns.mjs`.
 - **Rejects rather than mis-shifts.** Alignment is a DP in which a captioned row is a *hard constraint* — it must land on the property its caption names. If one captioned row can't be satisfied, or there are more active rows than properties, that GI's annotation is dropped wholesale: field names and declared types are still returned, but no caption or description is attached. Attaching a description to the wrong column is worse than attaching none.
