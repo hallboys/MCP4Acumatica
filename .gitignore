@@ -31,3 +31,9 @@ wrangler.jsonc.local-backup
 # business rules — and this repo is public. Keep them out of git entirely.
 acumatica/gi-descriptions*.csv
 acumatica/gi-column-descriptions*.csv
+
+# Working state for the GI description effort: instance metadata pulls, the
+# design->OData column mapping, and drafted description text. All of it is
+# tenant data and this repo is public. Regenerable from Acumatica, but keep it
+# out of git either way.
+.gi-work/
