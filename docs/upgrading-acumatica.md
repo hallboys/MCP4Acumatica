@@ -88,7 +88,11 @@ order, then non-result keys appended). Two things to check:
   (deliberate — a mis-shifted description is worse than none), which on a new release would suggest
   the projection rule itself changed. Re-run
   `skills/acumatica-gi-descriptions/scripts/align_columns.mjs --report` to see which GIs failed and
-  why before changing the algorithm.
+  why before changing the algorithm. Note the script is **behind** `resolveFields` as of 0.48.2 (it
+  lacks the declared-type constraint and tie refusal), so it can report success where the server
+  refuses. Before concluding the projection rule changed, try captioning the GI's hoisted key
+  columns with the property names OData already reports — most refusals are an under-determined
+  hoist, not a platform change. See `docs/generic-inquiries.md` → "How it behaves".
 
 ## 5. Re-run preflight
 

@@ -322,6 +322,38 @@ names, and they are case-sensitive. Use `acumatica_describe_inquiry` to get the 
 schema comes from the GI registry's `$metadata` resolution, so it is authoritative including any
 `_N` collision suffixes.
 
+**Calculated columns cannot be filtered — the inquiry fails with an empty body.** Many GI columns
+are expressions rather than stored fields (a sign-normalized `Amount`, a `Balance` computed from two
+history columns, a reformatted period). A `$filter` that references one makes Acumatica return
+HTTP 200 with an *empty response body* — not an error, and not an empty list. Verified on
+`Velixo-AP-Aging`:
+
+```
+AgingFinPeriodID eq '092026'                        -- works
+AgingFinPeriodID eq '092026' and Amount ne 0        -- HTTP 200, empty body
+```
+
+Filter on stored columns (keys, dates, statuses, codes) and do the arithmetic on the returned rows.
+`acumatica_describe_inquiry` does not currently mark which columns are calculated, so if a filter
+that looks correct produces the empty-body error, suspect the numeric/derived column first.
+
+**Dropdown fields return display labels, not internal codes.** A GI projects the *label* Acumatica
+shows on screen, and the filter is matched against that label:
+
+```
+DocType eq 'Bill'      -- matches
+DocType eq 'BIL'       -- returns [] with no error, even though BIL is the stored code
+```
+
+The same applies to `Status` (`'Open'`, `'Closed'`) and to document types like `'Debit Adj.'` and
+`'Credit Memo'`. When in doubt, run the inquiry once with no filter and read the actual values.
+
+**Don't filter on appended key columns.** The trailing key columns a GI exposes (`Ord`, `LineNbr`,
+`ReferenceNbr_2`, and similar) are internal join keys with no result column of their own. Filtering
+them can return rows that do not exist in the unfiltered result: on `Velixo-AP-Aging`, a document
+appears once per aging period with `Ord = 1`, yet `Ord eq 0` returns a parallel set of rows for the
+same documents. Treat these columns as read-only output.
+
 When a filter is rejected for one of these reasons, the tool no longer returns the bare Acumatica
 message: it returns a structured `{ error: "invalid_filter", problem, useInstead, supportedFunctions
 | availableFields, actionRequired }` envelope naming the correct syntax or the real column names, so

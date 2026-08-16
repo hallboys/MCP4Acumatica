@@ -130,6 +130,20 @@ Until at least one GI is tagged and the feeds are readable, the gate stays inact
   description; a tagged GI with no `AIDescription` still works via inferred schema.
 - **Fixed-width keys trimmed.** Acumatica returns padded key values (`"GARES     "`) that
   break equality filters; all GI output is trimmed before it reaches the model.
+- **If your column descriptions don't appear, caption the GI's key columns.** When
+  `acumatica_describe_inquiry` returns field names and types but **no** `description` text,
+  the server rejected that GI's column alignment on purpose — a mis-shifted description is
+  worse than none. The usual cause is that the columns Acumatica hoists to the front of the
+  OData output (the ones that are entity keys) carry no caption, so nothing determines which
+  design row each one came from. The fix needs no code and no redeploy: on SM208000, set the
+  **Caption** of each hoisted key column to *exactly the property name OData already reports*
+  for it (e.g. `Type`, `ReferenceNbr`, `Customer`). Because a property name is derived from
+  its caption, setting the caption to the name it already has is a no-op rename that pins the
+  alignment permanently. Then run `acumatica_clear_cache` (`target=gi`) and re-check.
+  Verified on three production GIs: the OData property lists came back byte-identical
+  afterwards, and 91 previously-withheld column descriptions began delivering. **Do compare
+  `$metadata` before and after** — a caption that does *not* match the current property name
+  renames a live API field and will break existing queries.
 - **Caching / refresh.** The registry is KV-cached (`cache:gi_registry`) with ~1-hour
   freshness and rebuilt lazily on the next request when stale. Force an immediate rebuild
   with `acumatica_clear_cache` (no argument, or `target=gi`). Registry edits take effect on
