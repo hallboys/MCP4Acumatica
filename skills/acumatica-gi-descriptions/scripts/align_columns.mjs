@@ -144,7 +144,10 @@ function score(row, prop, propType) {
   const base = norm(stripSuffix(prop));
   // Compare against both the stripped and the full property name: a `_2` may be
   // a collision suffix the platform added OR part of a caption someone typed
-  // literally (seen in the wild as `ItemStatus_2`).
+  // literally (seen in the wild as `ItemStatus_2`). Do NOT rank exact above
+  // stripped: collision suffixes are POSITIONAL (earlier row takes the bare
+  // name), so a captioned row after an uncaptioned same-name row correctly
+  // owns `X_2` — see the server's columnScore for the verified counterexample.
   if (cap) return norm(cap) === base || norm(cap) === norm(prop) ? 100 : VIOLATION;
   // Uncaptioned: a declared-type contradiction is a hard reject; otherwise fall
   // back to weak field-name similarity purely as a tiebreak.
@@ -219,27 +222,46 @@ function align(A, rest, hoistedProps, D, allPropNames) {
     else if (mv === "drop") { droppedRows.push(A[i]); d++; }
     else alignedRows.push([A[i], rest[i - h - d]]);
   }
-  // Assign hoisted rows to hoisted props (H is small; greedy on best score).
+  // Assign hoisted rows to hoisted props: globally OPTIMAL assignment with a
+  // uniqueness check (bitmask DP; H is small) — in sync with the server's
+  // alignRows (0.49.1). Replaced greedy best-pair-first, whose local ambiguity
+  // test refused even when a sibling captioned row's hard constraint forced
+  // the choice (SubCrewMaterial's DocumentType/_2 collision family). A tied
+  // global optimum still refuses.
   const pairs = [];
-  const propsLeft = [...hoistedProps], rowsLeft = [...hoistedRows];
-  while (propsLeft.length && rowsLeft.length) {
-    let bi = 0, bj = 0, bs = -Infinity;
-    for (let i = 0; i < rowsLeft.length; i++)
-      for (let j = 0; j < propsLeft.length; j++) {
-        const s = sc(rowsLeft[i], propsLeft[j]);
-        if (s > bs) { bs = s; bi = i; bj = j; }
+  {
+    const m = hoistedProps.length;
+    if (hoistedRows.length !== m) return null;
+    if (m > 0) {
+      const size = 1 << m;
+      let dpM = new Array(size).fill(-Infinity);
+      let ways = new Array(size).fill(0);
+      const from = new Array(m);
+      dpM[0] = 0; ways[0] = 1;
+      for (let i = 0; i < m; i++) {
+        const ndp = new Array(size).fill(-Infinity);
+        const nways = new Array(size).fill(0);
+        const nfrom = new Int32Array(size).fill(-1);
+        for (let mask = 0; mask < size; mask++) {
+          if (!ways[mask]) continue;
+          for (let j = 0; j < m; j++) {
+            if (mask & (1 << j)) continue;
+            const v = dpM[mask] + sc(hoistedRows[i], hoistedProps[j]);
+            const nm = mask | (1 << j);
+            if (v > ndp[nm]) { ndp[nm] = v; nways[nm] = ways[mask]; nfrom[nm] = j; }
+            else if (v === ndp[nm]) nways[nm] = Math.min(2, nways[nm] + ways[mask]);
+          }
+        }
+        dpM = ndp; ways = nways; from[i] = nfrom;
       }
-    if (bs <= VIOLATION / 2) return null;
-    // Ambiguity is NOT "several pairs share the best score" — four captioned
-    // rows each scoring 100 on their own property tie at 100 and resolve
-    // perfectly. It is the chosen row being equally happy on another property,
-    // or the chosen property equally happy with another row: nothing in the
-    // data picks, so refuse rather than swap two key columns' descriptions.
-    const rowAmbiguous = propsLeft.some((p, j) => j !== bj && sc(rowsLeft[bi], p) === bs);
-    const propAmbiguous = rowsLeft.some((r, i) => i !== bi && sc(r, propsLeft[bj]) === bs);
-    if (rowAmbiguous || propAmbiguous) return { status: "tie" };
-    pairs.push([rowsLeft[bi], propsLeft[bj]]);
-    rowsLeft.splice(bi, 1); propsLeft.splice(bj, 1);
+      const full = size - 1;
+      if (dpM[full] <= VIOLATION / 2) return null;
+      if (ways[full] > 1) return { status: "tie" };
+      let mask = full;
+      const chosen = new Array(m);
+      for (let i = m - 1; i >= 0; i--) { chosen[i] = from[i][mask]; mask &= ~(1 << chosen[i]); }
+      for (let i = 0; i < m; i++) pairs.push([hoistedRows[i], hoistedProps[chosen[i]]]);
+    }
   }
   // Final sweep: no captioned row on a property it doesn't name, and no row on
   // a property whose declared type its source field contradicts.

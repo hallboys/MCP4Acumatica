@@ -565,3 +565,43 @@ test("a refused alignment withholds expression flags along with annotations", ()
   );
   assert.equal(byName.OnlyOne.expression, undefined);
 });
+
+test("a sibling caption's hard constraint forces an otherwise-tied collision family", () => {
+  // Production SubCrewMaterial pattern: a row captioned "DocumentType" ties at
+  // 100 on both `DocumentType` and `DocumentType_2` — but the sibling captioned
+  // literally "DocumentType_2" can ONLY take `_2`, forcing the first onto the
+  // bare name. The greedy matcher refused this (local tie); the global
+  // assignment must accept it.
+  const { byName } = fieldsOf(
+    `<EntityType Name="GI">
+       <Key><PropertyRef Name="DocumentType"/><PropertyRef Name="DocumentType_2"/></Key>
+       <Property Name="DocumentType" Type="Edm.String"/>
+       <Property Name="DocumentType_2" Type="Edm.String"/>
+       <Property Name="Qty" Type="Edm.Decimal"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Field: "DocType", Caption: "DocumentType", AIDescription: "issue doc type" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Field: "docType", Caption: "DocumentType_2", AIDescription: "transfer doc type" },
+      { Name: "GI", LineNbr: 3, SortOrder: 3, IsActive: true, Field: "qty", AIDescription: "quantity" },
+    ]
+  );
+  assert.equal(byName.DocumentType.description, "issue doc type");
+  assert.equal(byName.DocumentType_2.description, "transfer doc type");
+  assert.equal(byName.Qty.description, "quantity");
+});
+
+test("a genuinely tied collision family (no sibling constraint) still refuses", () => {
+  const { byName } = fieldsOf(
+    `<EntityType Name="GI">
+       <Key><PropertyRef Name="DocumentType"/><PropertyRef Name="DocumentType_2"/></Key>
+       <Property Name="DocumentType" Type="Edm.String"/>
+       <Property Name="DocumentType_2" Type="Edm.String"/>
+     </EntityType>`,
+    [
+      { Name: "GI", LineNbr: 1, SortOrder: 1, IsActive: true, Field: "DocType", Caption: "DocumentType", AIDescription: "a" },
+      { Name: "GI", LineNbr: 2, SortOrder: 2, IsActive: true, Field: "docType", AIDescription: "b" },
+    ]
+  );
+  assert.equal(byName.DocumentType.description, undefined);
+  assert.equal(byName.DocumentType_2.description, undefined);
+});

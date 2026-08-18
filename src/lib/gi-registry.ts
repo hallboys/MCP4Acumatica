@@ -475,6 +475,16 @@ function columnScore(row: FeedFieldRow, prop: string, simpleType?: string): numb
   // Compare against the stripped *and* the full property name: a trailing `_N`
   // may be a collision suffix the platform added, or part of a caption someone
   // typed literally (seen in production as `ItemStatus_2`).
+  //
+  // Do NOT be tempted to rank an exact match above a stripped one so a caption
+  // "X" pins the exact property `X` when `X_2` also exists. Collision suffixes
+  // are POSITIONAL: the earlier row in the grid takes the bare name, so a
+  // captioned row sitting after an uncaptioned same-name row correctly owns
+  // `X_2`, not `X` — verified on production HPL-ProjectForecast_JobLevel,
+  // where exact-preference stole `CostCode` from the stored costCodeID row and
+  // handed it to the later captioned expression row. A caption colliding with
+  // its family therefore ties (and refuses) on purpose; the operator resolves
+  // it by captioning the sibling with its literal suffixed name (e.g. "X_2").
   if (caption) {
     const c = normalizeName(caption);
     return c === base || c === normalizeName(prop) ? 100 : VIOLATION;
@@ -568,38 +578,69 @@ function alignRows(
     }
   }
 
-  // Assign the hoisted rows to the hoisted properties (H is small — greedy on
-  // best score). Rejects outright if a captioned row can't be placed, and also if
-  // the best score is achieved by more than one (row, property) pair: a tie here
-  // swaps two key columns' descriptions with nothing to justify the choice.
-  const propsLeft = [...hoisted];
-  const rowsLeft = [...hoistedRows];
-  while (propsLeft.length && rowsLeft.length) {
-    let bi = 0;
-    let bj = 0;
-    let bs = -Infinity;
-    for (let i = 0; i < rowsLeft.length; i++) {
-      for (let j = 0; j < propsLeft.length; j++) {
-        const s = score(rowsLeft[i], propsLeft[j]);
-        if (s > bs) {
-          bs = s;
-          bi = i;
-          bj = j;
+  // Assign the hoisted rows to the hoisted properties: globally OPTIMAL
+  // assignment with a uniqueness check (bitmask DP — H is small). Refuses when
+  // the optimum is not unique, or when it requires an impossible pairing.
+  //
+  // This replaced a greedy best-pair-first matcher (0.49.1). Greedy's local
+  // ambiguity test refused whenever the chosen row scored equally on another
+  // property — even when a *different* captioned row's hard constraint forced
+  // the choice. Production case: SubCrewMaterial's `DocumentType` collision
+  // family, where a row captioned "DocumentType" ties at 100 on `DocumentType`
+  // and `DocumentType_2`, but the sibling captioned "DocumentType_2" can ONLY
+  // take `_2`, forcing the first onto the bare name. A global optimum sees the
+  // constraint; greedy could not, so no caption edit could ever satisfy it.
+  // Genuine ambiguity (two equal-total assignments) still refuses: an optimum
+  // achieved two ways means nothing in the data picks between them.
+  {
+    const m = hoisted.length;
+    if (hoistedRows.length !== m) return null; // structural mismatch — refuse
+    if (m > 0) {
+      const size = 1 << m;
+      // dp[mask] = best total assigning the first popcount(mask) rows to the
+      // property set `mask`; ways saturate at 2. from[mask] = chosen property
+      // bit for the last row on the (unique) optimal path.
+      let dpMask = new Array<number>(size).fill(-Infinity);
+      let ways = new Array<number>(size).fill(0);
+      const from = new Array<Int32Array>(m).fill(new Int32Array(0));
+      dpMask[0] = 0;
+      ways[0] = 1;
+      for (let i = 0; i < m; i++) {
+        const ndp = new Array<number>(size).fill(-Infinity);
+        const nways = new Array<number>(size).fill(0);
+        const nfrom = new Int32Array(size).fill(-1);
+        for (let mask = 0; mask < size; mask++) {
+          if (ways[mask] === 0) continue;
+          for (let j = 0; j < m; j++) {
+            if (mask & (1 << j)) continue;
+            const v = dpMask[mask] + score(hoistedRows[i], hoisted[j]);
+            const nm = mask | (1 << j);
+            if (v > ndp[nm]) {
+              ndp[nm] = v;
+              nways[nm] = ways[mask];
+              nfrom[nm] = j;
+            } else if (v === ndp[nm]) {
+              nways[nm] = Math.min(2, nways[nm] + ways[mask]);
+            }
+          }
         }
+        dpMask = ndp;
+        ways = nways;
+        from[i] = nfrom;
       }
+      const full = size - 1;
+      if (dpMask[full] <= VIOLATION / 2) return null; // impossible pairing required
+      if (ways[full] > 1) return null; // tied optimum — under-determined
+      // Reconstruct the unique optimal assignment backwards.
+      let mask = full;
+      const chosen = new Array<number>(m);
+      for (let i = m - 1; i >= 0; i--) {
+        const j = from[i][mask];
+        chosen[i] = j;
+        mask &= ~(1 << j);
+      }
+      for (let i = 0; i < m; i++) pairs.push([hoistedRows[i], hoisted[chosen[i]]]);
     }
-    if (bs <= VIOLATION / 2) return null;
-    // Ambiguity is NOT "several pairs share the best score" — four captioned rows
-    // each scoring 100 on their own property tie at 100 and resolve perfectly.
-    // It is the chosen row being equally happy on another property, or the chosen
-    // property being equally happy with another row. Either way nothing in the
-    // data picks, so refuse rather than swap two key columns' descriptions.
-    const rowAmbiguous = propsLeft.some((p, j) => j !== bj && score(rowsLeft[bi], p) === bs);
-    const propAmbiguous = rowsLeft.some((r, i) => i !== bi && score(r, propsLeft[bj]) === bs);
-    if (rowAmbiguous || propAmbiguous) return null;
-    pairs.push([rowsLeft[bi], propsLeft[bj]]);
-    rowsLeft.splice(bi, 1);
-    propsLeft.splice(bj, 1);
   }
 
   // Final sweep: no captioned row may sit on a property it doesn't name, and no
