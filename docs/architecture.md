@@ -515,6 +515,7 @@ src/
 │   ├── generic-inquiries.ts       # acumatica_run_inquiry
 │   ├── generic-inquiry-discovery.ts # acumatica_list_generic_inquiries, _describe_inquiry
 │   ├── clear-cache.ts             # acumatica_clear_cache
+│   ├── clear-cache-match.ts       # matchesClearTarget() — bulk-clear key matching (leaf)
 │   ├── schema-discovery.ts        # acumatica_search_schema, _get_schema_entity, _list_schema_entities
 │   └── gi-explain.ts              # acumatica_explain_gi_xml
 └── types/

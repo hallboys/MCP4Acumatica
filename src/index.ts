@@ -38,7 +38,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.49.1",
+    version: "0.49.2",
   });
 
   private redactPatterns?: string;
@@ -297,7 +297,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
             "What to clear. Accepted values:\n" +
               "  - omitted        → clear everything\n" +
               "  - 'schemas'      → clear all entity schemas (bulk)\n" +
-              "  - 'gi'           → clear the GI list + OData $metadata + GI tool registry (bulk)\n" +
+              "  - 'gi'           → clear the GI list + OData $metadata + GI tool registry + all per-GI inferred field schemas (bulk)\n" +
               "  - 'schema:<EntityName>'    → clear one entity schema (e.g. 'schema:Customer')\n" +
               "  - 'gi_schema:<InquiryName>' → clear one GI's inferred field schema (e.g. 'gi_schema:ProjectBudgetSummary')\n" +
               "Other strings are rejected. Note 'schemas' (plural, bulk) vs 'schema:Foo' (singular, specific)."

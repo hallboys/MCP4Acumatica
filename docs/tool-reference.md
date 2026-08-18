@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 49 tools available in the MCP4Acumatica (v0.49.1).
+Complete specification for all 49 tools available in the MCP4Acumatica (v0.49.2).
 
 > The `**Endpoint:**` paths below show the default deployment values — the `Default` endpoint
 > name and contract version `25.200.001`. The base `/entity/{name}/{version}` is governed by
@@ -126,7 +126,7 @@ Clear cached metadata (entity schemas, GI lists, GI field schemas). Use when Acu
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `target` | string | No | What to clear. Accepted values: omitted → clear everything; `schemas` → all entity schemas (bulk); `gi` → GI list + OData `$metadata` (bulk); `schema:<EntityName>` → one entity schema (e.g. `schema:Customer`); `gi_schema:<InquiryName>` → one GI's inferred field schema. Other strings are rejected. Note `schemas` (plural, bulk) vs `schema:Foo` (singular, specific). |
+| `target` | string | No | What to clear. Accepted values: omitted → clear everything; `schemas` → all entity schemas (bulk); `gi` → GI list + OData `$metadata` + GI tool registry + all per-GI inferred field schemas (bulk); `schema:<EntityName>` → one entity schema (e.g. `schema:Customer`); `gi_schema:<InquiryName>` → one GI's inferred field schema. Other strings are rejected. Note `schemas` (plural, bulk) vs `schema:Foo` (singular, specific). |
 
 **Caching details:** Entity schemas are cached for 24 hours. GI lists, GI metadata, and GI field schemas are cached for 1 hour. Cache is stored in KV with `cache:` key prefix.
 

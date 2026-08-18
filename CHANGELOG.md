@@ -5,6 +5,10 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.49.2] - 2026-08-18
+### Fixed
+- **`acumatica_clear_cache` with `target=gi` now also clears the per-GI inferred sample caches (`gi_schema:*`).** The `gi` bulk target cleared `gi_list`, `gi_metadata`, and the GI registry, but not the per-GI schema/sample caches written by `acumatica_describe_inquiry` (`cache:gi_schema:{InquiryName}`, 1 h TTL). Observed live 2026-08-18: after a GI's design changed (columns deactivated), a `target=gi` clear left `describe_inquiry` returning the fresh curated field list alongside a stale `sampleRow` that still contained the removed columns — internally inconsistent output. The bulk-target key matching is extracted to `matchesClearTarget()` (`src/tools/clear-cache-match.ts`, import-free leaf, unit-tested); the clear-everything path was unaffected (it already sweeps every `cache:*` key by prefix). Tool description and docs updated to state that `target=gi` covers the per-GI schemas.
+
 ## [0.49.1] - 2026-08-18
 ### Fixed
 - **The hoist-assignment step now finds the globally optimal row→property assignment (bitmask DP) with a uniqueness check, replacing greedy best-pair-first.** Greedy's local ambiguity test refused whenever the chosen row scored equally on another property — even when a *different* captioned row's hard constraint forced the choice. Production case: `SubCrewMaterial`'s `DocumentType`/`DocumentType_2` collision family, where a row captioned `DocumentType` ties at 100 on both properties, but the sibling captioned `DocumentType_2` can only take `_2`, forcing the first onto the bare name — greedy refused this no matter what the operator captioned. A genuinely tied optimum (two equal-total assignments) still refuses. Verified: zero mapping or status changes across the 112-GI production feed; the change only accepts previously-refused constraint-forced cases. Ported to `align_columns.mjs` (kept in sync) and unit-tested (147 tests).

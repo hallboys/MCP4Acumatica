@@ -3,14 +3,9 @@
 
 import type { AppEnv } from "../types/acumatica";
 import { resetGiRegistryMemo } from "../lib/gi-registry-build";
+import { BULK_TARGETS, matchesClearTarget } from "./clear-cache-match";
 
 const CACHE_PREFIX = "cache:";
-
-// Recognized top-level targets for bulk clearing. Anything else must be a
-// specific key of the form `<namespace>:<name>` (e.g. `schema:Customer`,
-// `gi_schema:MyInquiry`) — we reject bare typos like `gi_schemas` so users
-// don't get a silent no-op that looks like success.
-const BULK_TARGETS = new Set(["schemas", "gi"]);
 
 export async function handleClearCache(
   env: AppEnv,
@@ -48,16 +43,7 @@ export async function handleClearCache(
     const list = await kv.list({ prefix: CACHE_PREFIX, cursor });
     for (const key of list.keys) {
       const shortKey = key.name.slice(CACHE_PREFIX.length);
-
-      if (!target) {
-        // No target — clear everything
-        keysToDelete.push(key.name);
-      } else if (target === "schemas" && shortKey.startsWith("schema:")) {
-        keysToDelete.push(key.name);
-      } else if (
-        target === "gi" &&
-        (shortKey === "gi_list" || shortKey === "gi_metadata" || shortKey === "gi_registry")
-      ) {
+      if (matchesClearTarget(shortKey, target)) {
         keysToDelete.push(key.name);
       }
     }
