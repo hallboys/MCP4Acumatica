@@ -54,11 +54,19 @@ export interface GetterToolSpec {
   expand?: string;
 }
 
-/** Build the Zod schema shape the MCP server registers for a tool. */
-export function paramsShape(specs: GetterParamSpec[]): Record<string, z.ZodTypeAny> {
-  const shape: Record<string, z.ZodTypeAny> = {};
+/**
+ * Build the Zod schema shape the MCP server registers for a tool.
+ * The value type is `ZodType<string | undefined>` (not `ZodTypeAny`) so
+ * the MCP SDK infers the handler args as `Record<string, string |
+ * undefined>` — with zod 4 a bare `ZodTypeAny` shape infers `unknown`
+ * values, which no longer matches the shared runGetter signature.
+ */
+export function paramsShape(
+  specs: GetterParamSpec[]
+): Record<string, z.ZodType<string | undefined>> {
+  const shape: Record<string, z.ZodType<string | undefined>> = {};
   for (const p of specs) {
-    let s: z.ZodTypeAny;
+    let s: z.ZodType<string | undefined>;
     if (p.default !== undefined) s = z.string().default(p.default);
     else if (p.optional) s = z.string().optional();
     else s = z.string();

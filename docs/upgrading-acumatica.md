@@ -197,7 +197,7 @@ shared `runGetter()` handler. To add one:
 3. **Keep Zod simple.** Parameter schemas may only use `z.string()` / `.optional()` / `.default()`
    — the registry builds these for you. Numeric or complex Zod types break MCP JSON-Schema
    serialization (the tool silently won't appear in client discovery).
-4. **Update the tool count.** The docs say "48 tools" in several places — bump them if you add a
+4. **Update the tool count.** The docs say "49 tools" in several places — bump them if you add a
    tool: `docs/tool-reference.md`, `src/docs/docs-handler.ts` nav brand, the architecture diagram
    in `CLAUDE.md`, and this guide's tool tallies. Add a `CHANGELOG.md` entry.
 5. **Type-check and smoke test.** `npx tsc --noEmit`, deploy, then call the new tool once and

@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.49.2`
+- **Current tag:** `25R2-0.50.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -60,7 +60,7 @@ Acumatica is the sole identity provider. Users log in with their Acumatica crede
 
 3. **Sensitive field redaction:** Tool responses are automatically scanned for sensitive field names (SSN, bank accounts, salary, credit card, etc.) using pattern matching. Matched values are replaced with `[REDACTED]`. Patterns are configurable via `REDACT_PATTERNS` (add) and `REDACT_SKIP` (whitelist) env vars. See `src/lib/redact.ts`.
 
-4. **Enhanced audit logging:** All tool invocations include the Acumatica username, tool parameters (what was queried), duration, and success/error status. Auth events (login success, access denied, consent accepted) are logged separately in the Worker handler. Tool invocation and field redaction logs are written directly to R2 from the Durable Object (Cloudflare Logpush only captures Worker-level traces, not DO traces). The `writeLogsToR2()` function in `src/lib/logger.ts` writes NDJSON entries to `do-logs/{date}/{timestamp}-{random}.ndjson` keys in R2 and returns a boolean success flag. To minimize R2 file count, the DO buffers log entries (`logBuffer` in `AcumaticaMcpServer`) and flushes them when the buffer reaches 25 entries OR a DO alarm fires 15 seconds after the last buffered entry. The buffer is mirrored to persistent DO storage (`ctx.storage` key `log_buffer`) on every append, because the alarm handler runs on a **fresh DO instance** after eviction — in-memory state is gone by then. `flushLogs()` calls `hydrateBuffer()` first so the alarm path reads the persisted entries from storage before writing to R2. Without this, short sessions (<25 entries) would be dropped whenever the DO was evicted between the tool call and the alarm firing. Flushes are serialized via a `flushing` mutex so the threshold path and alarm path cannot race over the buffer. If an R2 put fails, `flushLogs()` re-enqueues the snapshot at the head of the buffer, re-persists it, and schedules a retry alarm (30 s); previously a failed put silently dropped the batch. Alarms are registered via `this.ctx.storage.setAlarm(...)` and handled in the class's `alarm()` method, which Cloudflare wakes the DO specifically to run even if it has gone idle. Console.log is preserved for `wrangler tail` live debugging. The admin console at `/docs/admin` reads both Logpush-written and DO-written logs from R2 using streaming server-side pagination (prefix-scoped R2 listing, parallel batched reads, incremental filtering, early-exit once one page of results is collected) to keep load times fast even for multi-day queries.
+4. **Enhanced audit logging:** All tool invocations include the Acumatica username, tool parameters (what was queried), duration, and success/error status. Auth events (login success, access denied, consent accepted) are logged separately in the Worker handler. Tool invocation and field redaction logs are written directly to R2 from the Durable Object (Cloudflare Logpush only captures Worker-level traces, not DO traces). The `writeLogsToR2()` function in `src/lib/logger.ts` writes NDJSON entries to `do-logs/{date}/{timestamp}-{random}.ndjson` keys in R2 and returns a boolean success flag. To minimize R2 file count, the DO buffers log entries (`logBuffer` in `AcumaticaMcpServer`) and flushes them when the buffer reaches 25 entries OR a scheduled flush fires 15 seconds after the last buffered entry. The buffer is mirrored to persistent DO storage (`ctx.storage` key `log_buffer`) on every append, because the scheduled flush runs on a **fresh DO instance** after eviction — in-memory state is gone by then. `flushLogs()` calls `hydrateBuffer()` first so the scheduled path reads the persisted entries from storage before writing to R2. Without this, short sessions (<25 entries) would be dropped whenever the DO was evicted between the tool call and the flush firing. Flushes are serialized via a `flushing` mutex so the threshold path and scheduled path cannot race over the buffer. If an R2 put fails, `flushLogs()` re-enqueues the snapshot at the head of the buffer, re-persists it, and schedules a retry flush (30 s); previously a failed put silently dropped the batch. **Flushes are scheduled via the Agent `schedule()` API** (`this.schedule(seconds, "flushLogsScheduled")`), NOT a raw `ctx.storage.setAlarm()` + `alarm()` override: since agents 0.21.0 the base `Agent` class owns the DO's single alarm slot — its scheduler re-arms the alarm and calls `deleteAlarm()` when it finds no schedule rows — so a raw `setAlarm` would be silently cancelled and an `alarm()` override would shadow the base dispatcher. The scheduler wakes the DO to run the callback even if it has gone idle. Console.log is preserved for `wrangler tail` live debugging. The admin console at `/docs/admin` reads both Logpush-written and DO-written logs from R2 using streaming server-side pagination (prefix-scoped R2 listing, parallel batched reads, incremental filtering, early-exit once one page of results is collected) to keep load times fast even for multi-day queries.
 
 5. **Pagination refusal semantics:** The list/query tools (`acumatica_list_entities`, `acumatica_run_inquiry`, `acumatica_list_generic_inquiries`) hard-cap results at `ACUMATICA_MAX_RECORDS` (default 1000, runtime-overridable via the admin console → KV `config:acumatica_max_records`). When a response hits the cap, the tool returns a structured envelope `{ results, truncated: true, mayBeComplete: true, paginationSupported: false, actionRequired: "..." }` instructing the model to stop calling and ask the user to refine `filterExpression`/`titleFilter`. The envelope explicitly states that the result *may* be complete — Acumatica's contract API and OData GI endpoints don't report a total count, so a response exactly at the cap is indistinguishable from a larger underlying result set. No server-side cooldown — the semantic response is the mechanism. The numeric cap is validated at write time by the admin console (positive integer, ≤ 10 000) via `validateConfigValue()` in `src/lib/config.ts`; downstream readers additionally use `parsePositiveIntConfig()` to defend against bad env-var values.
 
@@ -297,11 +297,11 @@ Each entry in `CONFIG_KEYS` (`src/lib/config.ts`) may carry a `defaultValue`, wh
 ## Tech Stack
 
 - **Runtime:** Cloudflare Workers + Durable Objects
-- **MCP:** `agents` SDK (McpAgent), `@modelcontextprotocol/sdk`
+- **MCP:** `agents` SDK 0.21.0 (McpAgent), `@modelcontextprotocol/sdk` 1.30.0
 - **Auth:** `@cloudflare/workers-oauth-provider`
 - **HTTP routing:** Hono
 - **Language:** TypeScript
-- **Validation:** Zod (tool parameter schemas)
+- **Validation:** Zod 4 (tool parameter schemas)
 - **Markdown rendering:** marked (docs site)
 
 ## Common Commands
@@ -369,6 +369,15 @@ When the user says **"close session"**, perform all of the following:
 
 ## Known Issues / Tech Debt
 
+- **The base `Agent` owns the DO's alarm slot (agents 0.21.0+).** Do **not** call
+  `ctx.storage.setAlarm()` or override `alarm()` in a class extending `McpAgent`. The base
+  `Agent`'s scheduler treats the single DO alarm as its own: it re-arms it from its schedule
+  table and calls `deleteAlarm()` whenever it finds no rows due, so a hand-rolled alarm is
+  silently cancelled (no error, the callback simply never fires) and an `alarm()` override
+  shadows the base dispatcher, breaking the SDK's own scheduling. Use
+  `this.schedule(seconds, "methodName")` and a public callback method instead — this is what
+  the audit-log flush does (`flushLogsScheduled`). Cost us a silent-drop hazard when
+  upgrading from 0.0.98, where the raw-alarm pattern was correct.
 - **User identity retrieval:** The OIDC `/identity/connect/userinfo` endpoint (with `openid profile email` scopes) is the primary method. Falls back to `/entity/auth/25.200.001/UserSecurityInfo` which may not exist on all instances. If both fail, username defaults to a UUID-based key (breaks token reuse across sessions).
 - **Acumatica system entities not available via contract API:** `User`, `UserRole`, and screen-based API (`/entity/Default/.../screen/SM201010`) all return 404 on SaaS instances. The canary GI approach for the access gate was adopted because of this limitation (there's no API to query role membership).
 - **`$select` on some entities causes Acumatica 500:** Some entities (e.g., Payment) return internal server errors when `$select` is used with certain field names. The `acumatica_list_entities` tool auto-retries without `$select` when this occurs.
@@ -480,6 +489,67 @@ When the user says **"close session"**, perform all of the following:
 - [ ] Remove old Entra ID secrets from Cloudflare (`wrangler secret delete`)
 - [~] Add unit tests — `test/` harness added (`npm test`, node --test); covers filter normalization + complex-entity detection. Broader coverage still pending.
 - [ ] Add CI/CD pipeline
+
+### Deferred — `createMcpHandler` migration (assessed 2026-08-18)
+
+`McpAgent` is marked **deprecated / feature-frozen** in agents 0.21.0, pointing at
+`createMcpHandler` from `agents/mcp/server`. Assessed and **deferred** — there is no
+forcing function (`McpAgent` has no announced removal), and the cost is concentrated
+in the DO-resident machinery, not the tools.
+
+**The name hides two migrations.** `createMcpHandler` is an alias for
+`createStatelessMcpHandler`: it takes an **MCP SDK v2** server factory
+(`@modelcontextprotocol/server`, already installed as a peer) and runs
+**stateless — no Durable Object anywhere in the path**. The factory
+(`(ctx: McpRequestContext) => McpServer`) is invoked **per request**. A third option
+exists: `createLegacyMcpHandler` keeps SDK v1 *and* sessionful behavior while dropping
+`McpAgent` (its `storage?: MCPStorageApi` adapter is optional) — the real intermediate
+step. The overloaded `createMcpHandler` in `agents/mcp` that accepts a v1 server is
+deprecated and slated for removal in the next major; do not migrate onto it.
+
+**Cheap:**
+- Tool registration is mechanical: `server.tool(name, desc, shape, cb)` →
+  `server.registerTool(name, { description, inputSchema: z.object(shape) }, cb)`. The
+  raw-shape form still works (deprecated, auto-wrapped). Registry-driven design means
+  the 38 getters + writers are a couple of lines inside the existing loops; only the 12
+  hand-written blocks need individual edits. **zod 4 is the prerequisite and is already paid** (0.50.0).
+- **OAuthProvider needs no change.** The stateless handler resolves auth from
+  `workerCtx.props` automatically (`handler-stateless`, `resolvedAuthContext`), which is
+  exactly what OAuthProvider injects. The 13 `this.props.acumaticaUsername` sites become
+  `getMcpAuthContext()` — an async-local-storage accessor, so tools read the user at call
+  time and one server instance can serve every user in an isolate.
+- Rate limiter unaffected (already per-user keyed, durable cap in KV). `TokenManager` DO untouched.
+
+**Expensive — the stateful machinery:**
+1. **The audit-log buffer is the bulk of the work.** The buffer + `ctx.storage` mirror +
+   scheduled flush + hydrate-on-eviction exist *because Logpush doesn't capture DO traces*.
+   Stateless removes the DO, so the subsystem loses both its home and its reason to exist —
+   Worker-level `console.log` **is** captured by Logpush. Encouragingly the admin console
+   already reads both the `do-logs/` and Logpush `YYYYMMDD/` prefixes, so the viewer likely
+   needs no change. But in-isolate buffering is **unsafe** (isolate eviction silently drops
+   audit entries), so the choice is Logpush-only or one R2 object per request via
+   `waitUntil` (~3x object growth; today ≈4 700 objects / 13 300 invocations).
+2. **Per-session `init()` becomes per-request** — 3 KV reads + an R2 `head` for the
+   conditional schema-tool registration. Needs a TTL'd per-isolate memo (the `loadIndex()`
+   pattern already in the codebase), and it changes the documented "config applies on the
+   next DO instance" semantics.
+3. Removing the `MCP_OBJECT` binding needs a `deleted_classes` migration and drops live
+   sessions at cutover; `docs/architecture.md`, `docs/self-hosting-guide.md` and this file
+   describe the DO design at length.
+
+**One-way doors:** stateless forecloses server-initiated messages (elicitation, progress,
+push — none used today), and needs validation that Claude.ai / Desktop / ChatGPT tolerate a
+server issuing no `mcp-session-id`.
+
+**The prize:** stateless **structurally eliminates** the concurrent-response-crossing bug
+class — there is no cross-request correlation map because there are no cross-request
+responses. That is a stronger guarantee than 0.21.0's fix, which is a correct implementation
+of a mechanism that can still be gotten wrong.
+
+**Recommended sequencing:** let 0.21.0 bake in production → settle the logging question on
+its own (it is the majority of the effort, separable from the handler choice, and moving to
+Logpush may be worth doing regardless) → then the handler swap becomes a modest change
+instead of a rewrite.
 
 ## MCP Client Compatibility (as of April 2026)
 

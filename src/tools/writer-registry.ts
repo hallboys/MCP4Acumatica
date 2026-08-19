@@ -94,8 +94,12 @@ export const WRITER_TOOLS: readonly WriterToolSpec[] = [
 
 // ── Shared param shape ────────────────────────────────────────────────────────
 
-/** Build the Zod parameter shape for a writer tool. */
-export function writerParamsShape(_spec: WriterToolSpec): Record<string, z.ZodTypeAny> {
+/**
+ * Build the Zod parameter shape for a writer tool. Typed as
+ * `ZodType<string | undefined>` (not `ZodTypeAny`) for the same
+ * zod-4 handler-arg inference reason as `paramsShape()`.
+ */
+export function writerParamsShape(_spec: WriterToolSpec): Record<string, z.ZodType<string | undefined>> {
   return {
     payload: z
       .string()

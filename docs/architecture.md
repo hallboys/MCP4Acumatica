@@ -39,8 +39,8 @@ The MCP4Acumatica is a remote [Model Context Protocol](https://modelcontextproto
 │  │  McpAgent Durable Object       │  apiHandler.           │
 │  │  AcumaticaMcpServer            │  One instance          │
 │  │  (binding MCP_OBJECT)          │  per MCP session.      │
-│  │  /mcp  /sse                    │  48 tools reg'd in     │
-│  │                                │  init(); alarm-based   │
+│  │  /mcp  /sse                    │  49 tools reg'd in     │
+│  │                                │  init(); scheduled     │
 │  │                                │  log buffer → R2.      │
 │  └───┬───────────────────────┬────┘                        │
 │      │ token get/refresh      │                            │
@@ -101,7 +101,7 @@ A [Hono](https://hono.dev) application that handles the Acumatica OAuth 2.0 auth
 
 A [Durable Object](https://developers.cloudflare.com/durable-objects/) that extends `McpAgent` from the `agents` SDK. Each MCP session gets its own DO instance with:
 
-- **`init()`** -- Registers all 48 tools with the MCP server
+- **`init()`** -- Registers all 49 tools with the MCP server
 - **`callTool()`** -- Wrapper that catches errors and returns MCP-formatted responses
 - **`this.props.acumaticaUsername`** -- The authenticated user's Acumatica username, set during the OAuth callback
 
@@ -415,7 +415,7 @@ The per-user rate limiter (see **Rate Limiting** above) caps each user at **3 co
 
 ### Tool Registration
 
-All 48 tools are registered in the `init()` method of `AcumaticaMcpServer`. Each tool has:
+All 49 tools are registered in the `init()` method of `AcumaticaMcpServer`. Each tool has:
 
 1. **Name** -- e.g., `acumatica_get_customer`
 2. **Description** -- Human-readable description for the MCP client
@@ -622,8 +622,8 @@ Write operations require careful validation, conflict handling, and business rul
 The honest answer: **remote MCP is a stateful, session-scoped protocol, and a Durable Object is Cloudflare's only stateful, consistently-addressable compute primitive — so the `agents` SDK's `McpAgent` *is* a Durable Object.** Putting the MCP server in a DO is not an à-la-carte choice; it's how `McpAgent.serve("/mcp")` is built (which is also why the binding must be named `MCP_OBJECT`). The reason the SDK is built that way:
 
 1. **The transport is stateful.** An MCP connection over streamable-http/SSE is a *session*: an `initialize` handshake, then a long-lived SSE stream plus follow-up POSTs that must be correlated to that same stream. Plain Workers are stateless and ephemeral — consecutive requests can land on different, short-lived isolates. A DO has a **stable address** (its ID), so every message in one logical session reaches the same instance.
-2. **There's live per-session state to hold.** `init()` registers all 48 tools once, and the instance carries the authenticated user (`this.props.acumaticaUsername`), the `McpServer` object, and the log buffer — none of which you'd want to rebuild per request.
-3. **It needs durable storage + alarms.** The audit-log buffer is persisted to `ctx.storage` and flushed on a DO **alarm** — a mechanism only Durable Objects provide.
+2. **There's live per-session state to hold.** `init()` registers all 49 tools once, and the instance carries the authenticated user (`this.props.acumaticaUsername`), the `McpServer` object, and the log buffer — none of which you'd want to rebuild per request.
+3. **It needs durable storage + scheduling.** The audit-log buffer is persisted to `ctx.storage` and flushed by a scheduled callback armed through the Agent `schedule()` API (which owns the DO's alarm slot) — a mechanism only Durable Objects provide.
 
 The per-session isolation, cached tool registry, and consistent routing are welcome consequences, not the primary reason. Note the contrast with the **`TokenManager`** DO, which uses the *same* primitive for a different property: it is keyed per-**user** (`idFromName(username)`), not per-session, specifically to serialize refresh-token rotation across a user's concurrent sessions.
 
@@ -635,6 +635,6 @@ Acumatica's contract-based REST API wraps every field value as `{value: X}`. Thi
 
 Rather than abstracting the entire Worker infrastructure (OAuth provider, Durable Objects, auth flow), only the storage layer is abstracted via `IKeyValueStore` + `AppEnv`. This is because:
 
-1. **Tools are the reusable part.** All 48 tools and the Acumatica client only need config strings and a key-value store. They never touch OAuth, DOs, or R2.
+1. **Tools are the reusable part.** All 49 tools and the Acumatica client only need config strings and a key-value store. They never touch OAuth, DOs, or R2.
 2. **Auth varies fundamentally by platform.** A Node.js self-host would use Express + Passport or skip auth entirely. Abstracting the auth handler would create an interface that no two implementations share.
 3. **Minimal disruption.** Tool handler changes were limited to import swaps (`Env` -> `AppEnv`). No function bodies changed.

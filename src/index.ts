@@ -38,8 +38,15 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.49.2",
+    version: "0.50.0",
   });
+
+  // agents 0.21.0 types `props` as optional (`props?: Props`), but on this
+  // server every /mcp request passes OAuthProvider bearer validation first,
+  // which injects the auth props before the DO ever runs a tool. Re-narrow
+  // to the 0.0.98-era non-optional type; `declare` emits no field, so the
+  // base class keeps ownership of the actual value.
+  declare props: AuthProps;
 
   private redactPatterns?: string;
   private redactSkip?: string;
@@ -49,14 +56,21 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
   // ── Log buffering ──────────────────────────────────────────────
   // Buffer entries and flush to R2 when the buffer hits a size
-  // threshold OR a DO alarm fires. The buffer is persisted to
+  // threshold OR a scheduled flush fires. The buffer is persisted to
   // `ctx.storage` on every append, so eviction between the tool call
-  // and the alarm firing can't drop the batch — the alarm handler
-  // runs on a fresh DO instance with empty memory and hydrates the
-  // buffer from storage before flushing.
+  // and the scheduled flush can't drop the batch — the schedule runs
+  // on a fresh DO instance with empty memory and hydrates the buffer
+  // from storage before flushing.
+  //
+  // Scheduling goes through the Agent `schedule()` API, NOT a raw
+  // `ctx.storage.setAlarm()` + `alarm()` override: since agents 0.21.0
+  // the base Agent owns the DO's single alarm slot (its scheduler
+  // re-arms and even deletes the alarm as it sees fit), so a raw
+  // setAlarm would be silently cancelled and an alarm() override would
+  // shadow the base dispatcher.
   private logBuffer: Record<string, unknown>[] = [];
   private bufferHydrated = false;
-  private alarmScheduled = false;
+  private flushScheduled = false;
   private flushing = false;
   private static readonly LOG_FLUSH_THRESHOLD = 25;  // entries
   private static readonly LOG_FLUSH_DELAY_MS = 15_000;
@@ -411,10 +425,10 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
   /**
    * Hydrate the in-memory buffer from persistent storage. Runs once per
-   * DO instance lifetime. This is the piece that lets the alarm path
-   * survive DO eviction: when the runtime spins up a fresh instance to
-   * run `alarm()`, `this.logBuffer` starts empty, and without hydration
-   * the flush would be a no-op.
+   * DO instance lifetime. This is the piece that lets the scheduled
+   * flush survive DO eviction: when the runtime spins up a fresh
+   * instance to run the schedule callback, `this.logBuffer` starts
+   * empty, and without hydration the flush would be a no-op.
    */
   private async hydrateBuffer(): Promise<void> {
     if (this.bufferHydrated) return;
@@ -440,9 +454,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
   /**
    * Flush buffered log entries to R2. Serialized via `flushing` so the
-   * threshold path and alarm path can't race. On R2 failure the snapshot
-   * is re-enqueued at the head of the buffer and a retry alarm is
-   * scheduled — previously this silently dropped the batch.
+   * threshold path and scheduled path can't race. On R2 failure the
+   * snapshot is re-enqueued at the head of the buffer and a retry
+   * flush is scheduled — previously this silently dropped the batch.
    */
   private async flushLogs(): Promise<void> {
     if (this.flushing) return;
@@ -456,10 +470,10 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       const ok = await writeLogsToR2(this.env.mcp4acumatica_logs, entries);
       if (!ok) {
         // Re-enqueue at the head so ordering is preserved, and schedule
-        // a retry alarm. Any entries buffered during the await go after.
+        // a retry flush. Any entries buffered during the await go after.
         this.logBuffer = [...entries, ...this.logBuffer];
         await this.persistBuffer();
-        await this.scheduleAlarm(AcumaticaMcpServer.LOG_RETRY_DELAY_MS);
+        await this.scheduleFlush(AcumaticaMcpServer.LOG_RETRY_DELAY_MS);
       }
     } finally {
       this.flushing = false;
@@ -468,9 +482,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
   /**
    * Add log entries to the buffer. Flush immediately if the size
-   * threshold is reached; otherwise ensure a DO alarm is scheduled
-   * so an idle buffer still lands in R2. The buffer is mirrored to
-   * DO storage so eviction before the alarm fires can't drop it.
+   * threshold is reached; otherwise ensure a flush is scheduled so an
+   * idle buffer still lands in R2. The buffer is mirrored to DO
+   * storage so eviction before the schedule fires can't drop it.
    */
   private async bufferLogs(entries: Record<string, unknown>[]): Promise<void> {
     await this.hydrateBuffer();
@@ -480,22 +494,30 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       await this.flushLogs();
       return;
     }
-    await this.scheduleAlarm(AcumaticaMcpServer.LOG_FLUSH_DELAY_MS);
-  }
-
-  private async scheduleAlarm(delayMs: number): Promise<void> {
-    if (this.alarmScheduled) return;
-    await this.ctx.storage.setAlarm(Date.now() + delayMs);
-    this.alarmScheduled = true;
+    await this.scheduleFlush(AcumaticaMcpServer.LOG_FLUSH_DELAY_MS);
   }
 
   /**
-   * DO alarm handler — fires after LOG_FLUSH_DELAY_MS of idle to drain
-   * the buffer. Runs on a fresh DO instance after eviction, so
-   * `flushLogs()` must hydrate from storage before flushing to R2.
+   * Arm a one-shot scheduled flush via the Agent scheduler. The
+   * in-memory dedup flag resets on eviction while the schedule row
+   * persists; a duplicate row is harmless (flushLogs is mutex'd and
+   * no-ops on an empty buffer), so per-instance dedup is enough.
    */
-  async alarm(): Promise<void> {
-    this.alarmScheduled = false;
+  private async scheduleFlush(delayMs: number): Promise<void> {
+    if (this.flushScheduled) return;
+    this.flushScheduled = true;
+    await this.schedule(Math.ceil(delayMs / 1000), "flushLogsScheduled");
+  }
+
+  /**
+   * Scheduled-flush callback — fires after LOG_FLUSH_DELAY_MS of idle
+   * to drain the buffer. May run on a fresh DO instance after
+   * eviction, so `flushLogs()` hydrates from storage before flushing
+   * to R2. Public because the Agent scheduler dispatches to it by
+   * method name.
+   */
+  async flushLogsScheduled(): Promise<void> {
+    this.flushScheduled = false;
     await this.flushLogs();
   }
 
