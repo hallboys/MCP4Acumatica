@@ -44,7 +44,10 @@ stock `Default` contract endpoint. Reaching them needs either a GI built over
 them, or a custom Web Service Endpoint exposing `GenericInquiry`.
 
 **`[UNIVERSAL]` HTTP 200 ≠ persisted.** Verify by reading back. See the rule in
-SKILL.md.
+SKILL.md. Verified concrete case: a `ResultGrid` PUT issued right after the GI
+design was saved (in the UI or by API) returned 200 and persisted **nothing** —
+every read-back came back empty. Re-GET the record for fresh detail ids and
+rewrite; the second attempt persisted. Nothing in the 200 distinguishes the two.
 
 **`[UNIVERSAL]` Check the cardinality of the result-grid detail.** If the endpoint
 maps it as a single nested entity rather than a collection:
@@ -64,7 +67,16 @@ inquiry name.
 another GI raises an interactive "overwrite or save a copy?" dialog on save; the
 contract API cannot answer it, so the save rolls back with an opaque 500. A GI
 carrying an invalid mass-update field row fails validation with a 422 naming the
-field. Both need the UI.
+field (a column edit can orphan a Mass Update Fields entry — deleting the stale
+row on that tab is the fix). Both need the UI.
+
+**`[UNIVERSAL]` Blocked saves breed numbered copies — sweep for them.** Save
+attempts routed through the copy dialog leave full duplicates named `Name-1`,
+`Name-2`, … that **inherit the exposure flags**, so they land on the AI's menu as
+near-identical junk. One production episode accumulated 34 across three GIs
+before anyone noticed. After any blocked-save episode, sweep for numbered
+variants; they are plain GI records, so back each up (GET with the result grid)
+and DELETE by id — the un-numbered originals are untouched by the copies.
 
 ## Sessions and tokens
 
@@ -135,7 +147,7 @@ them the vendor code. Getting that single hoist wrong shifted every uncaptioned
 column by one — `Amount` was attributed to the row holding the vendor's invoice
 number, `Vendor` to the currency row — while the captioned columns near the end
 still matched, so the alignment looked valid. A live sample settled it in one
-query: `Vendor` returns `P-SANCHE9` and `Amount` returns `487.5`.
+query: `Vendor` returns `V-ACME001` and `Amount` returns `487.5`.
 
 Name-similarity heuristics do **not** settle it. They produce false positives in
 both directions: `EmployeeId ← acctCD` scores zero and is correct, while
@@ -146,6 +158,21 @@ string matching because the source field is abbreviated.
 property's values match what its design row implies** — a code where you expect a
 code, an amount where you expect an amount. One query per GI, and it is the only
 check that reliably catches a shifted hoist.
+
+**`[UNIVERSAL]` Caption-pinning makes an ambiguous hoist determinate — and the
+check is self-verifying.** Setting `GIResult.Caption` on a hoisted key column to
+**exactly the property name OData already reports** is a no-op rename that pins
+the alignment permanently. Gate every caption edit on a before/after `$metadata`
+diff: a byte-identical property list proves the pick was right, while a changed
+list means the caption named a property the row does not actually own — the
+platform renamed it live — so revert and pick again. The diff catches a wrong
+guess automatically; that is what makes pinning safe on rows nothing else
+determines. To find the *minimal* caption set, enumerate the equally-optimal
+assignments (an aligner should refuse on a tie; the enumeration shows exactly
+which rows swap between optima — caption those and only those). Mind twin rows:
+grids often carry two `username` or two `acctCD` rows from different join
+aliases, and a caption placed on the wrong twin both misaligns and renames —
+identify the row by its OBJECT column, never by field name alone.
 
 **`[UNIVERSAL]` An active result column can silently produce no property at all.**
 Where two result columns resolve to the same property name — the same DAC field

@@ -120,7 +120,9 @@ there is no REST write path by default. Options, best first:
    many rows rather than pasting distinct values.
 
 Then verify by reading every record back and comparing to intent. A run log of
-successful responses is not evidence.
+successful responses is not evidence — that includes 200s: a write issued right
+after the GI design was saved can persist nothing at all (see platform.md);
+the read-back is the only truth.
 
 Expect a residue that cannot be written by API `[TENANT]`: a GI referenced by
 another GI raises a save-time dialog the contract API cannot answer, and a GI
@@ -135,3 +137,26 @@ operator with the text ready to paste.
   descriptions are actually being served.
 - Record which GIs need fixing rather than describing (see the closing note in
   SKILL.md).
+
+## 9. Re-verify when anything changes
+
+Descriptions rot silently when the instance moves under them. Three triggers
+warrant a verification pass over *existing* text, not new drafting:
+
+- **Access was granted.** Any GI drafted design-only (403 or zero rows at
+  drafting time) should be re-audited the day it becomes readable — sample it,
+  test one filterability claim, and strip the now-false "never sampled" hedges.
+  Writing those hedges into the descriptions in the first place is what makes
+  this pass cheap: grep for them.
+- **A join changed.** An INNER→LEFT change rewrites a GI's grain (rows appear
+  that the old text says are excluded; joined columns go null instead of
+  dropping the row). Grain claims are the first casualties.
+- **Columns were added, removed or deactivated.** The alignment recomputes fine,
+  but sample-derived claims ("null on every row", value ranges) may no longer
+  hold, and the write path's detail ids may be stale (see the silent-no-op 200
+  in platform.md — rebuild your id index from a fresh GET before rewriting).
+
+Correct only what observation contradicts; confirmed-accurate text stays
+untouched. In one production pass, two-thirds of audited descriptions survived
+unchanged and the rest were mostly hedge removals — cheap, and the alternative
+is a catalog that slowly stops being true.

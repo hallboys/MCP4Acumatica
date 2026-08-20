@@ -5,6 +5,10 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.50.2] - 2026-08-20
+### Changed
+- **`acumatica-gi-descriptions` skill: four hard-won lessons added to the reference docs.** (1) The silent-no-op 200: a `ResultGrid` PUT issued right after a GI design save can return 200 while persisting nothing — read-back is the only truth, and the fix is re-GETting the record for fresh detail ids. (2) Caption-pinning as a self-verifying procedure: pin an ambiguous hoist by captioning the key column with the property name OData already reports, gated on a before/after `$metadata` diff (byte-identical = correct no-op; changed = wrong pick, revert). (3) Blocked saves breed numbered GI copies that inherit exposure flags and pollute the AI menu — sweep, back up, and delete them after any blocked-save episode. (4) A new "Re-verify when anything changes" workflow step: access grants, join changes (INNER→LEFT rewrites a grain), and column edits silently invalidate existing descriptions; audit and correct only what observation contradicts. Also replaced one residual real vendor code in an example with a neutral placeholder.
+
 ## [0.50.1] - 2026-08-20
 ### Changed
 - **Documentation hygiene: tenant-specific example identifiers removed.** Real inquiry names and warehouse codes from the reference deployment that had accumulated in docs, changelog entries, code comments, and test fixtures were replaced with neutral placeholders (e.g. `MAIN01`, "a production forecast GI"). No functional change — comments, docs, and test-fixture strings only; all 154 tests unchanged and passing.
