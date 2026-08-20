@@ -326,7 +326,7 @@ schema comes from the GI registry's `$metadata` resolution, so it is authoritati
 are expressions rather than stored fields (a sign-normalized `Amount`, a `Balance` computed from two
 history columns, a reformatted period). A `$filter` that references one makes Acumatica return
 HTTP 200 with an *empty response body* — not an error, and not an empty list. Verified on
-`Velixo-AP-Aging`:
+an AP aging GI:
 
 ```
 AgingFinPeriodID eq '092026'                        -- works
@@ -355,7 +355,7 @@ The same applies to `Status` (`'Open'`, `'Closed'`) and to document types like `
 
 **Don't filter on appended key columns.** The trailing key columns a GI exposes (`Ord`, `LineNbr`,
 `ReferenceNbr_2`, and similar) are internal join keys with no result column of their own. Filtering
-them can return rows that do not exist in the unfiltered result: on `Velixo-AP-Aging`, a document
+them can return rows that do not exist in the unfiltered result: on a production AP aging GI, a document
 appears once per aging period with `Ord = 1`, yet `Ord eq 0` returns a parallel set of rows for the
 same documents. Treat these columns as read-only output.
 

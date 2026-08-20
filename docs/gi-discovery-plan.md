@@ -76,7 +76,7 @@ per-GI tools. Hysteresis spans rebuilds.
 ### Phase 0 — Verify (mostly done)
 - [x] Type inference is unreliable — reproduced: whole-number decimal/qty columns infer as `integer`; null samples infer `unknown`.
 - [x] Serialization fidelity — wire returns native JSON numbers/booleans + ISO-8601 dates (not string-flattened) ⇒ **Path A (`$metadata` declared types) is viable.**
-- [x] Space-padded fixed-width keys returned untrimmed today (`"GARES     "`).
+- [x] Space-padded fixed-width keys returned untrimmed today (`"MAIN01    "`).
 - [x] Collision suffixes confirmed (`InventoryUsageMCP` → `InventoryID_2`, `Warehouse_2`).
 - [x] Feed GIs `MCPGIs`/`MCPGIFields` + canary `MCPAccess` currently OData-exposed; fail-closed hides them automatically (untagged).
 - [x] `client_credentials` is **disabled** on the Connected App (`unauthorized_client`). Resolved by the lazy-pull pivot — no app/service token needed; build uses the requesting user's token.

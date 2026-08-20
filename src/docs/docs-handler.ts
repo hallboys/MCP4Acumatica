@@ -237,7 +237,7 @@ function renderPage(slug: string, html: string): string {
     <nav>
       <div class="brand">
         <h1>MCP4Acumatica</h1>
-        <span>v0.50.0 &middot; 49 tools</span>
+        <span>v0.50.1 &middot; 49 tools</span>
       </div>
       ${renderNav(slug)}
       <div class="links">

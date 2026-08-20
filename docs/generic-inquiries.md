@@ -128,7 +128,7 @@ Until at least one GI is tagged and the feeds are readable, the gate stays inact
   the single-sample inference `describe_inquiry` uses on its own (which mislabels
   whole-number money/quantity columns as `integer`). Exposure is **never** gated on having a
   description; a tagged GI with no `AIDescription` still works via inferred schema.
-- **Fixed-width keys trimmed.** Acumatica returns padded key values (`"GARES     "`) that
+- **Fixed-width keys trimmed.** Acumatica returns padded key values (`"MAIN01    "`) that
   break equality filters; all GI output is trimmed before it reaches the model.
 - **Calculated columns are guarded (0.49.0).** A `$filter` referencing a **calculated** column
   (an `=…` expression in the GI design) makes Acumatica return HTTP 200 with an *empty body* —

@@ -75,7 +75,7 @@ test("gate trims the incoming name before matching", () => {
 test("cleanGiRow trims space-padded keys and drops @odata fields", () => {
   const cleaned = cleanGiRow({
     "@odata.etag": "W/123",
-    WarehouseID: "GARES     ",
+    WarehouseID: "MAIN01    ",
     InventoryID: "1212WHTACCESS                 ",
     Quantity: 3,
     GAStockedItem: true,
@@ -83,7 +83,7 @@ test("cleanGiRow trims space-padded keys and drops @odata fields", () => {
     ReasonCode: null,
   });
   assert.deepEqual(cleaned, {
-    WarehouseID: "GARES",
+    WarehouseID: "MAIN01",
     InventoryID: "1212WHTACCESS",
     Quantity: 3,
     GAStockedItem: true,
@@ -471,7 +471,7 @@ test("alignment: a genuinely tied hoist is refused rather than guessed", () => {
 test("alignment: every hoisted row captioned is NOT a tie — all four resolve", () => {
   // Regression guard. Four captioned rows each score identically on their own
   // property; treating equal scores as ambiguity refused production
-  // Velixo-ARByPeriod, which is fully determined by construction.
+  // a fully-captioned production GI, which is determined by construction.
   const { byName, annotated } = fieldsOf(
     `<EntityType Name="GI">
        <Key><PropertyRef Name="FinPeriodID"/><PropertyRef Name="BranchID"/></Key>
@@ -492,7 +492,7 @@ test("alignment: every hoisted row captioned is NOT a tie — all four resolve",
 });
 
 test("alignment: shared tokens break a tie the substring tiers cannot", () => {
-  // Production HPL-CostCodes: `costCodeCD` and `costCodeCD_description` both
+  // A production GI where `costCodeCD` and `costCodeCD_description` both
   // resemble the `CostCode` key equally, so the hoist was decided arbitrarily
   // and landed the description text on the code column. "description" is a
   // shared token with the `Description` property; "cd" is too short to count.

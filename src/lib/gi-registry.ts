@@ -480,7 +480,7 @@ function columnScore(row: FeedFieldRow, prop: string, simpleType?: string): numb
   // "X" pins the exact property `X` when `X_2` also exists. Collision suffixes
   // are POSITIONAL: the earlier row in the grid takes the bare name, so a
   // captioned row sitting after an uncaptioned same-name row correctly owns
-  // `X_2`, not `X` — verified on production HPL-ProjectForecast_JobLevel,
+  // `X_2`, not `X` — verified on a production forecast GI,
   // where exact-preference stole `CostCode` from the stored costCodeID row and
   // handed it to the later captioned expression row. A caption colliding with
   // its family therefore ties (and refuses) on purpose; the operator resolves
