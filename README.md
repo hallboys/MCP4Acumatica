@@ -341,6 +341,15 @@ Reusable Claude skills that ship with this repo, in [`skills/`](skills/):
 
 To use it, point Claude at the skill directory, or copy it into your own `.claude/skills/`.
 
+## Related
+
+- **[acumatica-claude-kit](https://github.com/hallboys/acumatica-claude-kit)** -- A Claude Code plugin of hard-won Acumatica integration gotchas for contract-based REST and OData Generic Inquiries: auth/session traps, GIQL pitfalls, silent no-op writes, and idempotency rules, each tagged UNIVERSAL vs TENANT. It pairs well with this server: MCP4Acumatica gives Claude live access to your instance, the kit gives it the platform knowledge to use that access correctly.
+
+  ```
+  /plugin marketplace add hallboys/acumatica-claude-kit
+  /plugin install acumatica-claude-kit@acumatica-claude-kit
+  ```
+
 ## Security
 
 - **No stored credentials.** The MCP server does not store Acumatica passwords. It uses OAuth 2.0 authorization code flow -- users authenticate directly with Acumatica.
