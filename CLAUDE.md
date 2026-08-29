@@ -365,7 +365,10 @@ When the user says **"close session"**, perform all of the following:
 5. **Commit** all changes with a descriptive message
 6. **Push** to `origin/main`
 7. **Tag** with `25R2-X.Y.Z` format
-8. **Deploy** with `npx wrangler deploy` and verify the deployment succeeds
+8. **Create the GitHub Release** from the tag (tags alone don't update the repo's
+   Releases page): `gh release create 25R2-X.Y.Z --verify-tag --latest --title 25R2-X.Y.Z --notes-file <changelog-section>`
+   (notes = that version's CHANGELOG section)
+9. **Deploy** with `npx wrangler deploy` and verify the deployment succeeds
 
 ## Known Issues / Tech Debt
 
