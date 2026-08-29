@@ -37,3 +37,8 @@ acumatica/gi-column-descriptions*.csv
 # tenant data and this repo is public. Regenerable from Acumatica, but keep it
 # out of git either way.
 .gi-work/
+
+# Acumatica documentation corpora — licensed material, never commit
+MarkdownDocumentation2025R2/
+MarkdownFormReportReference2025R2/
+MarkdownReleaseNotes2025R2/

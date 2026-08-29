@@ -1,0 +1,6 @@
+name: Release on tag
+on: { push: { tags: ["*"] } }
+permissions: { contents: write }
+jobs:
+  release:
+    uses: hallboys/.github/.github/workflows/release-on-tag.yml@main

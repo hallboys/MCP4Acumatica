@@ -5,6 +5,10 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.50.3] - 2026-08-28
+### Added
+- **Releases are now created by CI.** Pushing a version tag triggers `.github/workflows/release-on-tag.yml`, a thin caller of the org-wide reusable workflow (`hallboys/.github`), which creates the GitHub Release with that version's CHANGELOG section as notes (auto-generated notes as fallback), idempotently. Previously tags were pushed without Release objects, leaving the repo's Releases page stale (stuck at 0.47.0 while main was at 0.50.2 — twelve releases were backfilled by hand). The close-session checklist now verifies the CI-created release instead of prescribing a manual `gh release create`.
+
 ## [0.50.2] - 2026-08-20
 ### Changed
 - **`acumatica-gi-descriptions` skill: four hard-won lessons added to the reference docs.** (1) The silent-no-op 200: a `ResultGrid` PUT issued right after a GI design save can return 200 while persisting nothing — read-back is the only truth, and the fix is re-GETting the record for fresh detail ids. (2) Caption-pinning as a self-verifying procedure: pin an ambiguous hoist by captioning the key column with the property name OData already reports, gated on a before/after `$metadata` diff (byte-identical = correct no-op; changed = wrong pick, revert). (3) Blocked saves breed numbered GI copies that inherit exposure flags and pollute the AI menu — sweep, back up, and delete them after any blocked-save episode. (4) A new "Re-verify when anything changes" workflow step: access grants, join changes (INNER→LEFT rewrites a grain), and column edits silently invalidate existing descriptions; audit and correct only what observation contradicts. Also replaced one residual real vendor code in an example with a neutral placeholder.

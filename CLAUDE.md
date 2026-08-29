@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.50.2`
+- **Current tag:** `25R2-0.50.3`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -365,9 +365,11 @@ When the user says **"close session"**, perform all of the following:
 5. **Commit** all changes with a descriptive message
 6. **Push** to `origin/main`
 7. **Tag** with `25R2-X.Y.Z` format
-8. **Create the GitHub Release** from the tag (tags alone don't update the repo's
-   Releases page): `gh release create 25R2-X.Y.Z --verify-tag --latest --title 25R2-X.Y.Z --notes-file <changelog-section>`
-   (notes = that version's CHANGELOG section)
+8. **Verify CI created the GitHub Release** — pushing the tag triggers
+   `.github/workflows/release-on-tag.yml` (caller of the org-wide reusable
+   workflow in `hallboys/.github`), which creates the Release with that
+   version's CHANGELOG section as notes. Check with `gh release view 25R2-X.Y.Z`;
+   only create manually if CI failed.
 9. **Deploy** with `npx wrangler deploy` and verify the deployment succeeds
 
 ## Known Issues / Tech Debt
