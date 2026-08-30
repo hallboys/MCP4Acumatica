@@ -19,6 +19,7 @@ import {
   handleListSchemaEntities,
 } from "./tools/schema-discovery";
 import { handleExplainGiXml } from "./tools/gi-explain";
+import { handleSearchDocs, handleGetDocSection } from "./tools/docs-tools";
 import { indexExists, INDEX_KEYS } from "./lib/index-store";
 import { AcumaticaApiError } from "./lib/acumatica-client";
 import { RateLimitError, rateLimitEnvelope } from "./lib/rate-limiter";
@@ -38,7 +39,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.50.3",
+    version: "0.51.0",
   });
 
   // agents 0.21.0 types `props` as optional (`props?: Props`), but on this
@@ -404,6 +405,69 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       );
     }
 
+    // ── Documentation-knowledge tools ─────────────────────────
+    // Offline search + retrieval over the official Acumatica documentation
+    // set (scripts/build-docs-index.mjs → INDEX_STORE R2). The content is
+    // licensed material the operator downloads with their own portal login;
+    // it is served only to this server's authenticated users. Registered
+    // only when the docs index is present. Both tools skip field redaction
+    // (vendor documentation, not tenant data — see callTool).
+    if (await indexExists(this.appEnv, INDEX_KEYS.docs)) {
+      this.server.tool(
+        "acumatica_search_docs",
+        "Search the official Acumatica documentation (user guides, form/screen reference, release notes) for this instance's release. Use this for 'how do I...' / 'what does this screen or field do' / 'what changed in this release' questions — it answers from the vendor's official docs with no tenant data access. IMPORTANT: search matches SECTION HEADINGS and Form IDs, not body text — query with feature/section terminology (e.g. 'expense reclassification', 'release AP retainage'), not full sentences. For questions about a specific screen, pass its Form ID (e.g. formId='AP301000') — or just call acumatica_get_doc_section with the Form ID directly. Follow up with acumatica_get_doc_section to read a result's text.",
+        {
+          query: z
+            .string()
+            .optional()
+            .describe("Feature/section keywords as the documentation would title them (e.g. 'dunning letters', 'physical inventory count'). Not full questions — headings are matched, not body text."),
+          formId: z
+            .string()
+            .optional()
+            .describe("A screen's Form ID (two letters + six digits, e.g. 'AP301000', 'SO301000') to find that screen's reference sections."),
+          guide: z
+            .string()
+            .optional()
+            .describe("Optional guide filter by name (e.g. 'projects', 'form-reference', 'release-notes'). Omit to search all guides."),
+          topN: z
+            .coerce.number()
+            .int()
+            .min(1)
+            .max(100)
+            .default(20)
+            .describe("Maximum number of matching sections to return (default 20)."),
+        },
+        async ({ query, formId, guide, topN }) => {
+          return this.callTool(
+            () => handleSearchDocs(this.appEnv, { query, formId, guide, topN }),
+            "acumatica_search_docs",
+            { query, formId, guide, topN },
+            undefined,
+            true
+          );
+        }
+      );
+
+      this.server.tool(
+        "acumatica_get_doc_section",
+        "Read a section of the official Acumatica documentation. Pass either a chunkId from acumatica_search_docs (e.g. 'projects:214') to get that section's text plus prev/next neighbors for browsing, or a Form ID (e.g. 'AP301000') to get the screen's reference documentation (purpose, toolbar commands, tabs and fields) — large screens return the first sections plus a list of the remaining ones to fetch individually. Content is the vendor's official documentation for this instance's release; it contains no tenant data.",
+        {
+          ref: z
+            .string()
+            .describe("A chunkId ('{guide}:{number}') from acumatica_search_docs, or a Form ID like 'AP301000'."),
+        },
+        async ({ ref }) => {
+          return this.callTool(
+            () => handleGetDocSection(this.appEnv, { ref }),
+            "acumatica_get_doc_section",
+            { ref },
+            undefined,
+            true
+          );
+        }
+      );
+    }
+
     // Stateless GI XML explainer — no index, no tenant call, always available.
     this.server.tool(
       "acumatica_explain_gi_xml",
@@ -561,7 +625,12 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
     fn: () => Promise<unknown>,
     toolName?: string,
     params?: Record<string, unknown>,
-    extraR2Entries?: Record<string, unknown>[]
+    extraR2Entries?: Record<string, unknown>[],
+    // The docs tools set this: their payload is vendor documentation, not
+    // business data, and the payroll/1099/AP guides legitimately discuss
+    // fields NAMED "SSN" etc. — pattern redaction would mangle the prose.
+    // Never set it on a tool that can return tenant records.
+    skipRedaction = false
   ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
     const start = Date.now();
     const r2Entries: Record<string, unknown>[] = [];
@@ -575,11 +644,9 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       const result = await fn();
 
       // Apply sensitive field redaction (uses KV config with env var fallback)
-      const { data, redactedFields: redacted } = redactFields(
-        result,
-        this.redactPatterns,
-        this.redactSkip
-      );
+      const { data, redactedFields: redacted } = skipRedaction
+        ? { data: result, redactedFields: [] as string[] }
+        : redactFields(result, this.redactPatterns, this.redactSkip);
 
       if (redacted.length > 0) {
         logRedaction(

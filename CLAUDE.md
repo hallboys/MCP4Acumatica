@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.50.3`
+- **Current tag:** `25R2-0.51.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -25,9 +25,10 @@ Claude (claude.ai / Desktop / API)
 │    ├─ /token, /register (DCR+CIMD) │
 │    ├─ /docs → Documentation site │
 │    └─ /mcp → McpAgent DO        │
-│       ├─ 49 tools (38 read-only  │
+│       ├─ 51 tools (38 read-only  │
 │       │   + 6 utility/discovery  │
 │       │   + 4 schema-knowledge   │
+│       │   + 2 documentation      │
 │       │   + 1 write)             │
 └──────────────┬──────────────────┘
                │  Bearer token (per-user)
@@ -156,6 +157,7 @@ src/
 │   ├── blob-store.ts              # IBlobStore interface (platform-agnostic read of large index blobs)
 │   ├── index-store.ts             # loadIndex()/indexExists() — per-isolate-cached read of schema-knowledge indexes
 │   ├── schema-search.ts           # ISchemaSearch + KeywordSchemaSearch (seam for future Vectorize impl)
+│   ├── docs-search.ts             # docs-catalog search + chunk resolution (import-free leaf, unit-tested)
 │   ├── rate-limiter.ts            # per-user concurrency + per-minute limits (configurable; runtime-import-free)
 │   ├── logger.ts                  # Structured JSON audit logging (tool, auth, redaction events)
 │   ├── preflight.ts               # Config diagnostics — admin page + /callback error mapping
@@ -176,13 +178,15 @@ src/
 │   ├── clear-cache.ts             # acumatica_clear_cache (Utility)
 │   ├── clear-cache-match.ts       # matchesClearTarget() — bulk-clear key matching (import-free leaf, unit-tested)
 │   ├── schema-discovery.ts        # acumatica_search_schema, _get_schema_entity, _list_schema_entities (offline schema index)
+│   ├── docs-tools.ts              # acumatica_search_docs, _get_doc_section (offline docs index; bounded part cache)
 │   └── gi-explain.ts              # acumatica_explain_gi_xml (stateless GI XML structural summary)
 └── types/
     └── acumatica.ts               # All TypeScript types, AppEnv, Env, AuthProps
 
 scripts/                           # OSS ingestion scripts (Apache-2.0); generated indexes stay private (.index/, gitignored)
 ├── build-schema-index.mjs         # swagger.json → .index/schema-index.json
-└── upload-indexes.mjs             # uploads present .index/*.json to the mcp4acumatica-index R2 bucket
+├── build-docs-index.mjs           # official Markdown docs set → .index/docs-index.json + docs-chunks/* parts
+└── upload-indexes.mjs             # uploads present .index/* to the mcp4acumatica-index R2 bucket (chunk parts before the docs catalog)
 
 test/                              # Node built-in test runner (node --test, TS type-stripping) — `npm test`
 ├── odata-filter.test.ts           # normalizeODataFilter regression (substringof eq true)
@@ -195,6 +199,8 @@ test/                              # Node built-in test runner (node --test, TS 
 ├── preflight-authed.test.ts       # interpretTenantAuthed/EndpointAuthed (a 404 never becomes a pass)
 ├── response-parse.test.ts         # parseAcumaticaJson (empty body ≠ no records; write path forbids retry; non-JSON snippet)
 ├── clear-cache-match.test.ts      # matchesClearTarget (target=gi sweeps gi_schema:*; typo targets match nothing)
+├── docs-search.test.ts            # docs search scoring, Form ID normalization, part-boundary resolution
+├── docs-ingest.test.ts            # build-docs-index.mjs cleanup/chunking/Form-ID scoping (synthetic fixture)
 └── odata-v4-errors.test.ts        # GI v4 filter corrections (substringof→contains, captions, ISO dates)
 
 acumatica/                         # Acumatica-side setup package (Apache-2.0) for the GI exposure gate
@@ -210,7 +216,18 @@ Four tools help power users build *against* Acumatica (discover entities/fields/
 - **Source.** `acumatica_search_schema` / `_get_schema_entity` / `_list_schema_entities` read `schema-index.json`, built from the instance's own `swagger.json` (contract API description, incl. customizations — no third-party IP). They answer offline (no tenant round-trip), complementing the *live* `acumatica_describe_entity` (`$adHocSchema`). `acumatica_explain_gi_xml` is **stateless** — it summarizes a pasted GI definition XML and needs no index, so it always registers.
 - **Storage abstraction.** `IBlobStore` (`src/lib/blob-store.ts`; CF impl `CloudflareR2BlobStore`) on `AppEnv.indexStore`, backed by the `INDEX_STORE` R2 bucket (`mcp4acumatica-index`). `loadIndex()` (`src/lib/index-store.ts`) memoizes the parsed index per isolate; `indexExists()` is a cheap `R2.head` used at `init()` for **conditional registration** — the three index-backed tools register only when the index is present, so a deploy without a built index never advertises tools that would error.
 - **Search.** Keyword + structured today, behind `ISchemaSearch` (`src/lib/schema-search.ts`) so a `VectorSchemaSearch` (Vectorize + Workers AI) can be added later without touching handlers.
-- **Out of scope (by design):** Acumatica *documentation* lookups — the public Help Wiki (`help.acumatica.com`) is reachable via the AI client's own web search, so we don't vectorize/redistribute it. **DAC-layer metadata is intentionally NOT a tool** for the same reason: stock DACs are covered by Acumatica's public DAC Schema Browser (`help.acumatica.com/dacBrowser`, web-readable by the client), and the only gap — *custom* DACs/extensions — is best answered from the customization source the developer already has (API-exposed custom fields are already covered by the schema tools). A DAC-via-GI customization was prototyped and dropped (see `git log`) once this redundancy was clear. A GI XML *example* library remains a possible future workstream.
+- **Scope evolution — documentation lookups were scoped out, then scoped back IN (0.51.0).** The original rationale — "the public Help Wiki (`help.acumatica.com`) is reachable via the AI client's own web search, so we don't vectorize/redistribute it" — proved false in practice: the Help Wiki intermittently bot-blocks browsers and AI fetch ("refused for this browser"; Acumatica support couldn't fix it, verified through 2026-08). The docs tools (see "Documentation Knowledge Tools" below) now serve the official docs from a private per-operator index. **DAC-layer metadata remains intentionally NOT a tool**: stock DACs are covered by Acumatica's DAC Schema Browser, and the only gap — *custom* DACs/extensions — is best answered from the customization source the developer already has (API-exposed custom fields are already covered by the schema tools). A DAC-via-GI customization was prototyped and dropped (see `git log`) once this redundancy was clear. Note the DAC browser lives on the same unreliable host — if that bites, the same docs-index pattern applies. A GI XML *example* library remains a possible future workstream.
+
+## Documentation Knowledge Tools (0.51.0)
+
+`acumatica_search_docs` + `acumatica_get_doc_section` answer "how do I / what does this screen or field do / what changed" questions from the **official Acumatica documentation** — same OSS-script → private-R2-index → conditionally-registered-tools architecture as the schema tools. Exists because `help.acumatica.com` bot-blocks unreliably (see "Scope evolution" above); the operator downloads the official Markdown documentation set from Acumatica's Beacon Portal (`https://beacon.acumatica.com/`, customer-portal login required) (licensed content — never committed, never redistributed; Hall Boys' copy lives in the private `hallboys/acumatica-docs` repo, one folder per release).
+
+- **Ingestion:** `scripts/build-docs-index.mjs` (exports pure functions, unit-tested via `test/docs-ingest.test.ts`; `main` runs only when executed directly). Cleans PDF-conversion artifacts (PAGE_BREAK markers, running headers, dot-leader TOC lines, title-page noise headings), chunks by heading with full breadcrumbs, splits >7 KB sections at paragraph boundaries, drops <80-char stubs, and tags Form Reference chunks with their Form ID (a `Form ID: (XX000000)` definition tags its whole H2 scope; body *mentions* of other forms deliberately don't).
+- **Memory design (the load-bearing decision):** the corpus is ~40 MB and must never be held in worker memory. The catalog (`docs-index.json`, ~3.5 MB) holds ONLY heading breadcrumbs + Form IDs — no body text — and is the one thing `loadIndex()` memoizes; section text lives in ~700 KB `docs-chunks/{slug}-{n}.json` R2 parts fetched on demand through a 4-entry FIFO cache in `docs-tools.ts` (deliberately NOT via `loadIndex()`, whose memo never evicts). Consequence: **search matches section headings + Form IDs, not body text** — the tool descriptions steer the model to feature terminology, and `ISchemaSearch`-style seam thinking applies (a Vectorize semantic search can replace `searchDocs()` without touching handlers).
+- **Form ID as a first-class key:** `acumatica_get_doc_section` accepts a bare Form ID (`AP301000`) and returns the screen's reference sections (purpose → toolbar commands → tabs/fields) in document order with a truncation envelope + `remainingSections` list; chunkId mode returns `prev`/`next` neighbors for browsing. 916 forms tagged in the 2025R2 build.
+- **Redaction bypass:** both tools pass `skipRedaction` to `callTool` — the payload is vendor documentation, and the payroll/1099/AP guides legitimately *discuss* fields named SSN etc.; pattern redaction would mangle the prose. Only valid for tools that cannot return tenant records.
+- **Upload ordering:** `upload-indexes.mjs` puts `docs-chunks/*` parts BEFORE `docs-index.json` — a live worker resolving a new catalog against old parts would misalign section text.
+- **Upgrades:** the index describes one release; rebuild from the new release's markdown set (upgrading guide §3b). 2025R2-build quirk: guide title pages read "2025 R1" (release notes genuinely R2) — title-page headings are stripped by ingestion, so this affects provenance only.
 
 ## GI Tool Gating & Registry (0.37.0)
 
@@ -269,7 +286,7 @@ Opt-in gate + curated enrichment for Generic-Inquiry tools, layered on the exist
 
 ### R2 Buckets:
 - `mcp4acumatica_logs` — long-term log storage via Logpush (requires Workers Paid plan for Logpush; R2 free tier: 10 GB)
-- `mcp4acumatica-index` (binding `INDEX_STORE`) — schema-knowledge indexes (`schema-index.json`, future `dac-index.json`/`gi-examples-index.json`). Built offline by `scripts/` and uploaded with `npm run upload-index` (or auto by `setup.sh` post-deploy). Optional — the schema-knowledge tools degrade gracefully when the bucket is unbound or empty.
+- `mcp4acumatica-index` (binding `INDEX_STORE`) — schema-knowledge + documentation indexes (`schema-index.json`, `docs-index.json` + `docs-chunks/*` parts, future `dac-index.json`/`gi-examples-index.json`). Built offline by `scripts/` and uploaded with `npm run upload-index` (or auto by `setup.sh` post-deploy). Optional — the index-backed tools degrade gracefully when the bucket is unbound or empty.
 
 ### Runtime Config (KV-backed):
 Settings can be changed at runtime via the admin console at `/docs/admin/settings` without redeploying. KV overrides take precedence over env vars. Changes take effect when the next DO instance starts (DOs recycle within minutes on idle). Config keys stored in KV with `config:` prefix:
@@ -344,7 +361,7 @@ Before every commit, push, or tag:
 3. **Update version strings in documentation** — if the tag is changing, update the version in:
    - `CLAUDE.md` → `Current tag` field in Project Overview
    - `docs/tool-reference.md` → version in the opening paragraph
-   - `src/docs/docs-handler.ts` → `<span>v... &middot; 49 tools</span>` in the nav brand
+   - `src/docs/docs-handler.ts` → `<span>v... &middot; 51 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
    - `package.json` → `version` field
 4. **Update the upgrade guide if relevant** — if the change adds/alters anything version-coupled (a new instance-derived index, a hardcoded endpoint/entity, a cached artifact, the targeted-release prefix), update `docs/upgrading-acumatica.md` accordingly.
@@ -358,7 +375,7 @@ When the user says **"close session"**, perform all of the following:
 3. **Update version strings** in:
    - `CLAUDE.md` → `Current tag` field in Project Overview
    - `docs/tool-reference.md` → version in the opening paragraph
-   - `src/docs/docs-handler.ts` → `<span>v... &middot; 49 tools</span>` in the nav brand
+   - `src/docs/docs-handler.ts` → `<span>v... &middot; 51 tools</span>` in the nav brand
    - `src/index.ts` → McpServer version string
    - `package.json` → `version` field
 4. **Update `CHANGELOG.md`** — prepend an entry for the new version (newest first; shown at `/docs/changelog`)

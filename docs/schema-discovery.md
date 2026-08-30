@@ -8,9 +8,9 @@ from XML you paste.
 
 > These tools derive schema knowledge from **your own instance** (its `swagger.json` and live
 > `$adHocSchema`), so results are always current and include your customizations — no static
-> snapshots, no third-party data. Acumatica **documentation** questions are deliberately
-> *not* a tool here — your AI client's web search already reaches the public Help Wiki at
-> <https://help.acumatica.com/>.
+> snapshots, no third-party data. Acumatica **documentation** questions are handled by the
+> separate, optional [documentation tools](documentation-tools) (the public Help Wiki at
+> <https://help.acumatica.com/> proved too unreliable to rely on the client's web search).
 
 ## Tools
 

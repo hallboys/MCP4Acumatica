@@ -48,6 +48,11 @@ export const INDEX_KEYS = {
   schema: "schema-index.json",
   dac: "dac-index.json",
   giExamples: "gi-examples-index.json",
+  // Docs catalog only — the companion docs-chunks/* part blobs are fetched
+  // directly (bounded cache in tools/docs-tools.ts), NOT via loadIndex():
+  // its per-isolate memo never evicts, and caching every part would
+  // accumulate the entire ~40 MB documentation corpus in memory.
+  docs: "docs-index.json",
 } as const;
 
 // The GI registry is deliberately absent from INDEX_KEYS: unlike these

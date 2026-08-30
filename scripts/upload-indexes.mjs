@@ -14,22 +14,43 @@
  * Usage: node scripts/upload-indexes.mjs
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const BUCKET = "mcp4acumatica-index";
 const INDEXES = ["schema-index.json", "dac-index.json", "gi-examples-index.json"];
 
+function putObject(key, file) {
+  console.log(`Uploading ${file} → ${BUCKET}/${key} ...`);
+  execFileSync(
+    "npx",
+    ["wrangler", "r2", "object", "put", `${BUCKET}/${key}`, "--file", file, "--remote"],
+    { stdio: "inherit" }
+  );
+}
+
 let uploaded = 0;
 for (const name of INDEXES) {
   const file = `./.index/${name}`;
   if (!existsSync(file)) continue;
-  console.log(`Uploading ${file} → ${BUCKET}/${name} ...`);
-  execFileSync(
-    "npx",
-    ["wrangler", "r2", "object", "put", `${BUCKET}/${name}`, "--file", file, "--remote"],
-    { stdio: "inherit" }
-  );
+  putObject(name, file);
+  uploaded++;
+}
+
+// Docs index: the chunk-text parts go up FIRST, the catalog LAST. The catalog
+// records each part's key + chunk-ordinal boundaries, so a worker that reads
+// a new catalog against old parts would misalign section text; a worker
+// reading an old catalog against new parts is only wrong for guides whose
+// chunking changed, and the window closes when the catalog lands.
+const chunkDir = "./.index/docs-chunks";
+if (existsSync(chunkDir)) {
+  for (const name of readdirSync(chunkDir).filter((n) => n.endsWith(".json")).sort()) {
+    putObject(`docs-chunks/${name}`, `${chunkDir}/${name}`);
+    uploaded++;
+  }
+}
+if (existsSync("./.index/docs-index.json")) {
+  putObject("docs-index.json", "./.index/docs-index.json");
   uploaded++;
 }
 

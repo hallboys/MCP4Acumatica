@@ -13,6 +13,7 @@ import examplePromptsContent from "../../docs/example-prompts.md";
 import odataContent from "../../docs/odata-filtering.md";
 import genericInquiriesContent from "../../docs/generic-inquiries.md";
 import schemaDiscoveryContent from "../../docs/schema-discovery.md";
+import documentationToolsContent from "../../docs/documentation-tools.md";
 import architectureContent from "../../docs/architecture.md";
 import selfHostingContent from "../../docs/self-hosting-guide.md";
 import upgradingContent from "../../docs/upgrading-acumatica.md";
@@ -31,6 +32,7 @@ const pages: DocPage[] = [
   { slug: "odata-filtering", title: "OData Filtering", content: odataContent },
   { slug: "generic-inquiries", title: "Generic Inquiries", content: genericInquiriesContent },
   { slug: "schema-discovery", title: "Schema Knowledge", content: schemaDiscoveryContent },
+  { slug: "documentation-tools", title: "Documentation Tools", content: documentationToolsContent },
   { slug: "architecture", title: "Architecture", content: architectureContent },
   { slug: "self-hosting-guide", title: "Self-Hosting", content: selfHostingContent },
   { slug: "upgrading-acumatica", title: "Upgrading Acumatica", content: upgradingContent },
@@ -237,7 +239,7 @@ function renderPage(slug: string, html: string): string {
     <nav>
       <div class="brand">
         <h1>MCP4Acumatica</h1>
-        <span>v0.50.3 &middot; 49 tools</span>
+        <span>v0.51.0 &middot; 51 tools</span>
       </div>
       ${renderNav(slug)}
       <div class="links">

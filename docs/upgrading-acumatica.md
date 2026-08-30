@@ -58,6 +58,23 @@ lands). No redeploy is needed for an index refresh — the next Durable Object i
 up the new R2 object (the parsed index is memoized per isolate, so reconnect/allow idle
 recycle to force a fresh read).
 
+### 3b. Rebuild the documentation index (if you use the documentation tools)
+
+`acumatica_search_docs` / `acumatica_get_doc_section` answer from a docs index built from
+one release's official Markdown documentation set. After an upgrade they describe the OLD
+release until rebuilt — release-note lookups in particular will be wrong.
+
+```bash
+# Download the new release's Markdown documentation set from Acumatica's
+# Beacon Portal (https://beacon.acumatica.com/ — sign in with your customer
+# portal credentials), then:
+npm run build-docs-index -- path/to/new-release-docs-folder
+npm run upload-index
+```
+
+Same no-redeploy semantics as the schema index. See
+[Documentation Tools](documentation-tools) for details.
+
 ## 4. Clear the runtime metadata cache
 
 Live schema (`$adHocSchema`), the GI list, inferred GI field schemas, **and the GI tool

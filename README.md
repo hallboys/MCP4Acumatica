@@ -8,7 +8,7 @@ Each user authenticates with their own Acumatica credentials. Their Acumatica ro
 
 ## Features
 
-- **49 tools** -- 38 read-only lookups + 6 utility/discovery + 4 schema-knowledge + 1 write tool (Customer create/update, disabled by default) (see [Available Tools](#available-tools))
+- **51 tools** -- 38 read-only lookups + 6 utility/discovery + 4 schema-knowledge + 2 documentation + 1 write tool (Customer create/update, disabled by default) (see [Available Tools](#available-tools))
 - **Per-user OAuth** -- users log in with their Acumatica credentials (or SSO)
 - **Role-based access** -- Acumatica's security model governs what each user sees
 - **Access gate** -- only users who can read a designated canary Generic Inquiry can connect (restrict it however you like; a marker role such as `MCP Access` is the recommended way)
@@ -34,7 +34,7 @@ Claude (claude.ai / Desktop / API)
 |    (access gate + OIDC userinfo) |
 |    /consent   -> AI data consent |
 |    /token, /register (DCR)       |
-|    /mcp -> McpAgent DO (49 tools)|
+|    /mcp -> McpAgent DO (51 tools)|
 +---------------+------------------+
                 |  Bearer token (per-user)
                 v
@@ -216,7 +216,7 @@ If you change hostnames, remember to add the new `https://<host>/callback` to yo
 2. Click **Add Connector** and enter the URL: `https://<your-worker-url>/mcp`
 3. On first use, you'll be redirected to your Acumatica login page
 4. If your account can read the canary GI (i.e. you've been granted access), you'll see a consent page explaining AI data processing
-5. After acknowledging consent, Claude will have access to all 49 tools
+5. After acknowledging consent, Claude will have access to all 51 tools
 
 ### Claude Code (CLI)
 
@@ -318,17 +318,24 @@ When using the Anthropic API with MCP, point the MCP client to `https://<your-wo
 | `acumatica_describe_inquiry` | Infer field schema for a GI before running it |
 | `acumatica_clear_cache` | Clear cached metadata when schemas change |
 
+### Documentation (optional — requires the docs index, see [Documentation Tools](docs/documentation-tools.md))
+| Tool | Description |
+|------|-------------|
+| `acumatica_search_docs` | Search the official Acumatica documentation by section heading / Form ID |
+| `acumatica_get_doc_section` | Read documentation sections — a screen's full reference by Form ID (e.g. `AP301000`) |
+
 > **Tip:** Use `acumatica_describe_entity` first to discover available fields, then `acumatica_list_entities` to search/filter. For Generic Inquiries, use `acumatica_list_generic_inquiries` to find GI names and `acumatica_describe_inquiry` to see available fields. See [docs/example-prompts.md](docs/example-prompts.md) for usage patterns.
 
 ## Documentation
 
 Detailed documentation is available in the [`docs/`](docs/) folder:
 
-- **[Tool Reference](docs/tool-reference.md)** -- Complete specification for all 49 tools with parameters and endpoints
+- **[Tool Reference](docs/tool-reference.md)** -- Complete specification for all 51 tools with parameters and endpoints
 - **[Example Prompts](docs/example-prompts.md)** -- Example prompts for Claude and other MCP clients organized by use case
 - **[OData Filtering Guide](docs/odata-filtering.md)** -- Guide to `$filter`, `$orderby`, `$select`, `$expand`, and `$top` query parameters
 - **[Generic Inquiries](docs/generic-inquiries.md)** -- Why GIs are gated for AI use, which GIs to expose, and how to enable the opt-in registry
 - **[Schema Knowledge](docs/schema-discovery.md)** -- Offline schema-discovery tools for building integrations/customizations, and how the schema index is built
+- **[Documentation Tools](docs/documentation-tools.md)** -- Optional search/reading of the official Acumatica documentation (built from the operator's own licensed download; content is never committed or redistributed)
 - **[Architecture](docs/architecture.md)** -- Detailed architecture, OAuth flow, security model, and design decisions
 - **[Self-Hosting Guide](docs/self-hosting-guide.md)** -- How to run the MCP server on Node.js or other platforms outside Cloudflare
 - **[Upgrading Acumatica](docs/upgrading-acumatica.md)** -- Steps to take when changing or upgrading the connected Acumatica version

@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 49 tools available in the MCP4Acumatica (v0.50.3).
+Complete specification for all 51 tools available in the MCP4Acumatica (v0.51.0).
 
 > The `**Endpoint:**` paths below show the default deployment values — the `Default` endpoint
 > name and contract version `25.200.001`. The base `/entity/{name}/{version}` is governed by
@@ -12,6 +12,7 @@ Complete specification for all 49 tools available in the MCP4Acumatica (v0.50.3)
 - [Utility / Discovery Tools](#utility--discovery-tools)
 - [Write Tools](#write-tools)
 - [Schema Knowledge Tools](#schema-knowledge-tools)
+- [Documentation Tools](#documentation-tools)
 - [Core](#core)
 - [Financial / Accounting](#financial--accounting)
 - [Inventory & Warehouse](#inventory--warehouse)
@@ -230,6 +231,47 @@ aid that parses the XML you provide — it does not query Acumatica.
 | `xml` | string | Yes | The GI definition XML to summarize (paste the full export). |
 
 **Returns:** `{ root, title?, sections, otherElements, note }`.
+
+---
+
+## Documentation Tools
+
+Search + retrieval over the **official Acumatica documentation** (user guides,
+form/screen reference, release notes) for your instance's release — answered from an
+index the operator builds from their own licensed documentation download, with no
+tenant data access. See [Documentation Tools](documentation-tools) for setup. Both
+tools appear only when the documentation index is present, and their output bypasses
+sensitive-field redaction (vendor documentation, not tenant records).
+
+### `acumatica_search_docs`
+
+Search the documentation by **section heading and Form ID** (not body text — query
+with feature terminology as the docs would title it, not full sentences).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | No* | Feature/section keywords (e.g. `expense reclassification`, `dunning letters`). |
+| `formId` | string | No* | A screen's Form ID (e.g. `AP301000`) to find that screen's reference sections. |
+| `guide` | string | No | Guide filter by name (e.g. `projects`, `form-reference`). Omit to search all. |
+| `topN` | number | No | Max matching sections (default 20, max 100). |
+
+\* Provide at least one of `query` / `formId`.
+
+**Returns:** `{ results: [{ chunkId, guide, path, formId?, matchedOn }], resultCount, release, note }`.
+
+### `acumatica_get_doc_section`
+
+Read documentation text — one section by `chunkId`, or a screen's full reference by
+Form ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `ref` | string | Yes | A `chunkId` from `acumatica_search_docs` (e.g. `projects:214`), or a Form ID (e.g. `AP301000`). |
+
+**Returns (chunkId):** `{ chunkId, guide, path, formId?, text, prev?, next?, release }` —
+`prev`/`next` allow browsing adjacent sections. **Returns (Form ID):**
+`{ formId, sectionCount, sections: [{ chunkId, path, text }], release }` plus
+`truncated`/`remainingSections` when a large screen exceeds the size cap.
 
 ---
 

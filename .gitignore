@@ -38,7 +38,8 @@ acumatica/gi-column-descriptions*.csv
 # out of git either way.
 .gi-work/
 
-# Acumatica documentation corpora — licensed material, never commit
-MarkdownDocumentation2025R2/
-MarkdownFormReportReference2025R2/
-MarkdownReleaseNotes2025R2/
+# Acumatica documentation corpora — licensed material, never commit. The
+# canonical copy lives in the private hallboys/acumatica-docs repo;
+# .docs-source/ is the local staging folder the docs-index ingestion reads.
+Markdown*/
+.docs-source/
