@@ -220,7 +220,7 @@ Four tools help power users build *against* Acumatica (discover entities/fields/
 
 ## Documentation Knowledge Tools (0.51.0)
 
-`acumatica_search_docs` + `acumatica_get_doc_section` answer "how do I / what does this screen or field do / what changed" questions from the **official Acumatica documentation** — same OSS-script → private-R2-index → conditionally-registered-tools architecture as the schema tools. Exists because `help.acumatica.com` bot-blocks unreliably (see "Scope evolution" above); the operator downloads the official Markdown documentation set from Acumatica's Beacon Portal (`https://beacon.acumatica.com/`, customer-portal login required) (licensed content — never committed, never redistributed; Hall Boys' copy lives in the private `hallboys/acumatica-docs` repo, one folder per release).
+`acumatica_search_docs` + `acumatica_get_doc_section` answer "how do I / what does this screen or field do / what changed" questions from the **official Acumatica documentation** — same OSS-script → private-R2-index → conditionally-registered-tools architecture as the schema tools. Exists because `help.acumatica.com` bot-blocks unreliably (see "Scope evolution" above); the operator supplies the official Markdown documentation set, from either Acumatica's **public GitHub repo** (`github.com/Acumatica/Acumatica-AI-Resources`, `Documentation/`, one **branch per release** — DITA-converted, so no PDF-artifact cleanup needed and Form IDs are recoverable from filenames; 2026 R1 and later only) or the **Beacon Portal** (`https://beacon.acumatica.com/`, customer-portal login required — PDF-converted; the only source for pre-2026 R1 releases). **Either way it is licensed content — never committed, never redistributed:** the GitHub repo's `Documentation/` is explicitly excluded from that repo's GPLv3 and is all-rights-reserved, so public readability is not redistribution rights. (The rest of that repo is GPL-3.0-only — do not copy its skill text into this Apache-2.0 project.) Hall Boys' copy lives in the private `hallboys/acumatica-docs` repo, one folder per release.
 
 - **Ingestion:** `scripts/build-docs-index.mjs` (exports pure functions, unit-tested via `test/docs-ingest.test.ts`; `main` runs only when executed directly). Cleans PDF-conversion artifacts (PAGE_BREAK markers, running headers, dot-leader TOC lines, title-page noise headings), chunks by heading with full breadcrumbs, splits >7 KB sections at paragraph boundaries, drops <80-char stubs, and tags Form Reference chunks with their Form ID (a `Form ID: (XX000000)` definition tags its whole H2 scope; body *mentions* of other forms deliberately don't).
 - **Memory design (the load-bearing decision):** the corpus is ~40 MB and must never be held in worker memory. The catalog (`docs-index.json`, ~3.5 MB) holds ONLY heading breadcrumbs + Form IDs — no body text — and is the one thing `loadIndex()` memoizes; section text lives in ~700 KB `docs-chunks/{slug}-{n}.json` R2 parts fetched on demand through a 4-entry FIFO cache in `docs-tools.ts` (deliberately NOT via `loadIndex()`, whose memo never evicts). Consequence: **search matches section headings + Form IDs, not body text** — the tool descriptions steer the model to feature terminology, and `ISchemaSearch`-style seam thinking applies (a Vectorize semantic search can replace `searchDocs()` without touching handlers).
@@ -511,6 +511,18 @@ When the user says **"close session"**, perform all of the following:
 - [ ] Remove old Entra ID secrets from Cloudflare (`wrangler secret delete`)
 - [~] Add unit tests — `test/` harness added (`npm test`, node --test); covers filter normalization + complex-entity detection. Broader coverage still pending.
 - [ ] Add CI/CD pipeline
+- [ ] **Docs-ingestion adapter for the DITA/topic-per-file corpus — do this when moving to 26R1.**
+  Acumatica now publishes the official docs as Markdown at `github.com/Acumatica/Acumatica-AI-Resources`
+  (branch per release; `2026R1` is the first, no `2025R2`), which becomes the preferred source at our
+  26R1 move. `scripts/build-docs-index.mjs` is calibrated for the PDF-converted, guide-per-file Beacon
+  corpus and degrades **silently** on the new shape: (1) DITA element IDs surface as Pandoc heading
+  attributes on every heading, and `chunkGuide()`'s `(.+)` swallows them into the breadcrumb — which is
+  what search matches; (2) a topic-per-file corpus makes a form an `#` rather than `##`, so
+  `currentH2()`'s "nearest heading at level ≤ 2" resolves a tab's form scope to the tab itself and Form
+  IDs never reach the tabs/field tables — `get_doc_section(formId)` returns only the intro. Escaped
+  parens are already handled (`FORM_ID_DEF_RE` + `test/docs-ingest.test.ts`). Neither issue is a defect
+  in Acumatica's conversion; both are correct DITA→Markdown output meeting our wrong-shaped assumptions.
+  Full detail + fixes in `docs/upgrading-acumatica.md` §3b.
 
 ### Deferred — `createMcpHandler` migration (assessed 2026-08-18)
 

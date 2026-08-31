@@ -64,6 +64,56 @@ recycle to force a fresh read).
 one release's official Markdown documentation set. After an upgrade they describe the OLD
 release until rebuilt — release-note lookups in particular will be wrong.
 
+There are two places to get that Markdown set. Either works — the ingestion script
+walks a folder of `.md` files and does not care which one produced it.
+
+**Option A — Acumatica's public GitHub repo (2026 R1 and later).** Acumatica publishes
+the official documentation as Markdown at
+[`Acumatica/Acumatica-AI-Resources`](https://github.com/Acumatica/Acumatica-AI-Resources),
+**versioned by branch** (`2026R1`, …) with no tags or releases. Check out the branch
+matching your target release and point the script at `Documentation/`:
+
+```bash
+git clone --depth 1 --branch 2026R1 \
+  https://github.com/Acumatica/Acumatica-AI-Resources.git acumatica-docs-2026R1
+npm run build-docs-index -- acumatica-docs-2026R1/Documentation 2026R1
+npm run upload-index
+```
+
+This set is DITA-converted rather than PDF-converted, which makes it the better input:
+no page-break/dot-leader artifacts, clean Markdown field tables, one file per help
+topic, and a Form ID recoverable from most filenames (`SM_20_40_07.md` → `SM204007`).
+Only releases Acumatica has published a branch for are available — there is no branch
+for releases predating the repo's first publication (August 2026).
+
+> **TODO before using Option A: `build-docs-index.mjs` needs an ingestion adapter.**
+> The script is calibrated for the PDF-converted, guide-per-file Beacon corpus. Verified
+> against real files from the `2026R1` branch, two things break on a topic-per-file DITA
+> corpus and both are silent — no error, just degraded output:
+>
+> 1. **Heading attribute blocks leak into breadcrumbs.** The DITA element IDs surface as
+>    Pandoc-style attributes on *every* heading (78/78 in a sample):
+>    `# Action Executions {#_1fe5f9f7-… .reference}`. `chunkGuide()`'s `/^(#{1,6})\s+(.+)$/`
+>    swallows the block into the heading text, so every catalog path carries GUID noise.
+>    Since search matches heading breadcrumbs, this degrades search directly and bloats
+>    the catalog. Fix: strip a trailing `{...}` from heading text (optionally keep the id
+>    as a stable anchor for deep links).
+> 2. **Form IDs stop propagating to a form's tabs.** In the Beacon corpus a form is an
+>    `##` with its tabs as `###`; here each topic is its own file, so the form is `#` and
+>    its tabs are `##`. `currentH2()`'s "nearest heading at level ≤ 2" then resolves a
+>    tab's form scope to *the tab itself*, so only the form's intro section gets tagged
+>    and `acumatica_get_doc_section(formId: …)` returns no tabs or field tables — the
+>    tool's main use case. Fix: derive the form scope from the file's top heading when
+>    the corpus is topic-per-file, rather than assuming guide-per-file depth.
+>
+> Escaped parens (`Form ID: \(AP301000\)`) are already handled — `FORM_ID_DEF_RE` accepts
+> both flavors and `test/docs-ingest.test.ts` covers it. Note that none of this is a defect
+> in Acumatica's conversion: escaping literal parens and emitting element IDs are both
+> correct for a direct DITA→Markdown render. It is our ingester that assumes the other
+> corpus shape.
+
+**Option B — the Beacon Portal (any release, incl. pre-2026 R1).**
+
 ```bash
 # Download the new release's Markdown documentation set from Acumatica's
 # Beacon Portal (https://beacon.acumatica.com/ — sign in with your customer
@@ -71,6 +121,17 @@ release until rebuilt — release-note lookups in particular will be wrong.
 npm run build-docs-index -- path/to/new-release-docs-folder
 npm run upload-index
 ```
+
+> **Licensing (both options).** The documentation is licensed, not open content. In the
+> GitHub repo the `Documentation/` directory is explicitly **excluded** from that repo's
+> GPLv3 and carries an all-rights-reserved notice; being publicly readable does not make
+> it redistributable. Keep the built index private (that is what the `INDEX_STORE` R2
+> bucket and the gitignored `.index/` folder are for) and never commit the source corpus
+> or the index to a public repository.
+
+> **Release skew.** Index the release your *instance* runs, not the newest one published.
+> A 2026 R1 index served against a 2025 R2 tenant will describe screens and fields the
+> instance does not have.
 
 Same no-redeploy semantics as the schema index. See
 [Documentation Tools](documentation-tools) for details.

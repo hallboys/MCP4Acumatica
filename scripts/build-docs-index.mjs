@@ -5,13 +5,21 @@
  * build-docs-index.mjs — produce the documentation-knowledge index consumed by
  * the acumatica_search_docs / acumatica_get_doc_section tools.
  *
- * Input:  a folder of official Acumatica documentation in Markdown, as
- *         downloaded from Acumatica's Beacon Portal
- *         (https://beacon.acumatica.com/ — sign in with your Acumatica
- *         customer portal credentials; the content is licensed to YOUR
- *         organization, is never committed to this repo, and is never
- *         redistributed). Any layout of .md files works; subfolders are
- *         walked recursively.
+ * Input:  a folder of official Acumatica documentation in Markdown, from
+ *         either source:
+ *           (a) Acumatica's public GitHub repo, Documentation/ directory of
+ *               github.com/Acumatica/Acumatica-AI-Resources (branch per
+ *               release: 2026R1, ...). DITA-converted, so it needs none of
+ *               the PDF-artifact cleanup below.
+ *           (b) Acumatica's Beacon Portal (https://beacon.acumatica.com/ —
+ *               customer-portal login required). PDF-converted. The only
+ *               source for releases predating the GitHub repo.
+ *         Either way the content is LICENSED to your organization: it is
+ *         never committed to this repo and never redistributed. (a) being
+ *         publicly readable does not make it redistributable — that
+ *         directory is excluded from the repo's GPLv3 and is all-rights-
+ *         reserved. Any layout of .md files works; subfolders are walked
+ *         recursively.
  * Output: ./.index/docs-index.json            — the search catalog (small):
  *                                               per-chunk heading path + Form
  *                                               IDs. Deliberately NO body
@@ -44,7 +52,12 @@ const MAX_CHUNK_CHARS = 7000; // split bigger sections at paragraph boundaries
 const MIN_BODY_CHARS = 80; // heading-only / stub sections are not chunks
 const PART_BUDGET_CHARS = 700_000; // ~700 KB of text per docs-chunks part file
 
-const FORM_ID_DEF_RE = /^\s*Form ID:?\s*\(?([A-Z]{2}\.?\d{2}\.?\d{2}\.?\d{2})\)?/m;
+// Tolerate both corpus flavors: the PDF-converted Beacon set writes bare
+// "Form ID: (AP301000)", while the DITA-converted set Acumatica publishes on
+// GitHub escapes the parens as "Form ID: \(AP301000\)". Without the optional
+// backslashes the latter silently yields ZERO Form IDs rather than erroring.
+const FORM_ID_DEF_RE =
+  /^\s*Form ID:?\s*\\?\(?([A-Z]{2}\.?\d{2}\.?\d{2}\.?\d{2})\\?\)?/m;
 
 /** Normalize a doc filename to a stable slug: strip vendor prefixes, kebab-case. */
 export function guideSlug(fileName) {
@@ -207,7 +220,7 @@ function main() {
   if (files.length === 0) {
     console.error(`No .md files found under ${inputDir}.`);
     console.error(
-      "Download the Markdown documentation set for your release from Acumatica's Beacon Portal (https://beacon.acumatica.com/, customer portal login required) and point this script at it."
+      "Get the Markdown documentation set for your release either from github.com/Acumatica/Acumatica-AI-Resources (Documentation/, branch per release) or from Acumatica's Beacon Portal (https://beacon.acumatica.com/, customer portal login required), then point this script at it."
     );
     process.exit(1);
   }

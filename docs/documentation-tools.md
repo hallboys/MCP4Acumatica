@@ -58,12 +58,25 @@ Acumatica credentials. The content is licensed material: it never ships with
 this repo, is never redistributed, and is served only to users who
 authenticate against your licensed instance.
 
-1. **Download the Markdown documentation set** for your Acumatica release
-   from Acumatica's **Beacon Portal** at <https://beacon.acumatica.com/> —
-   sign in with your Acumatica customer portal credentials (the downloads are
-   only visible after login). You want the guide set (per-module + developer
-   guides), the Form/Report Reference, and the release notes. Put the folders
-   anywhere — `.docs-source/` in this repo is gitignored for the purpose.
+1. **Get the Markdown documentation set** for your Acumatica release, from
+   either source. Put it anywhere — `.docs-source/` in this repo is
+   gitignored for the purpose.
+
+   - **Acumatica's public GitHub repo** (2026 R1 and later):
+     [`Acumatica/Acumatica-AI-Resources`](https://github.com/Acumatica/Acumatica-AI-Resources),
+     versioned by branch. Clone the branch for your release and use its
+     `Documentation/` directory. This set is DITA-converted, so it needs none
+     of the PDF cleanup described below and carries cleaner field tables.
+   - **Acumatica's Beacon Portal** at <https://beacon.acumatica.com/> — sign
+     in with your Acumatica customer portal credentials (the downloads are
+     only visible after login). You want the guide set (per-module +
+     developer guides), the Form/Report Reference, and the release notes.
+     This is the only source for releases predating the GitHub repo
+     (published August 2026).
+
+   Either way the documentation is **licensed material, not open content** —
+   the GitHub repo excludes `Documentation/` from its GPLv3 and marks it
+   all rights reserved. Public readability is not redistribution rights.
 2. **Build the index:**
 
    ```bash

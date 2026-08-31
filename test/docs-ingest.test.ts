@@ -97,6 +97,22 @@ test("a Form ID definition tags every section in its H2 scope, and resets at the
   assert.equal(byPath.get("Accounts Payable Forms > Vendors > Form Toolbar"), "AP303000");
 });
 
+test("escaped-paren Form IDs are recognized (DITA-converted corpus)", () => {
+  // Acumatica's publicly published Markdown set (Acumatica-AI-Resources, branch
+  // 2026R1) is DITA-converted and escapes the parens. A regex that only accepts
+  // the bare form yields ZERO Form IDs on that corpus without erroring.
+  const doc = [
+    "## Action Executions",
+    pad(" Form ID: \\(SM204007\\) You use this form to configure an action execution."),
+    "### Summary Area",
+    pad("Subscriber ID and Event Screen ID live here."),
+  ].join("\n");
+  const sections = chunkGuide(cleanMarkdown(doc));
+  const byPath = new Map(sections.map((s: { path: string; formId?: string }) => [s.path, s.formId]));
+  assert.equal(byPath.get("Action Executions"), "SM204007");
+  assert.equal(byPath.get("Action Executions > Summary Area"), "SM204007");
+});
+
 test("body mentions of other forms do NOT tag a chunk", () => {
   const doc = [
     "## Some Topic",
