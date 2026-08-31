@@ -5,7 +5,7 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
-## [Unreleased]
+## [0.51.1] - 2026-08-31
 ### Fixed
 - **`FORM_ID_DEF_RE` now accepts escaped parentheses, so Form IDs resolve on a DITA-converted docs corpus.** Acumatica published the official documentation as Markdown at `github.com/Acumatica/Acumatica-AI-Resources` (branch per release, `2026R1` first) on 2026-08-26. That set is converted directly from DITA rather than from PDF, and escapes literal parens in prose — `Form ID: \(AP301000\)` — which the previous pattern could not match. The failure was silent: zero Form IDs and no error, i.e. the whole Form-ID lookup path for `acumatica_get_doc_section` would quietly return nothing. Covered by a new regression test. Note this is correct converter behavior, not an Acumatica defect; the assumption of unescaped parens was ours.
 
@@ -14,6 +14,7 @@ prefix tracks the targeted Acumatica release, 2025 R2).
 - Recorded that the rest of that repo is `GPL-3.0-only` and therefore cannot be copied into this Apache-2.0 project.
 
 ### Notes
+- **GI column-description alignment: the "resolve names from the display name" avenue is closed.** Acumatica documents that OData property names are generated from the field's **display name** (*Preparation of an Inquiry for Exposure* → "Supporting the OData Specification"), which suggests replacing the positional aligner with direct name resolution. Tested and disproven: `GIResult.fieldName` is a **virtual (unbound) field** — Acumatica reports `Filter on '{0}' is not allowed because it is a virtual field` — so it is never projected into the GI's SQL and is NULL over OData (null in 1 000 of 1 000 active exposed result columns across 60 GIs). Because a virtual field is uniformly null, no per-GI investigation can change this and the GIs that currently refuse alignment cannot be rescued this way; `resolveFields` and `align_columns.mjs` stay positional. Recorded in CLAUDE.md so the avenue isn't retried. Also confirmed documented, and now cited where relevant: keys always appear in the EntityType even when absent from the Results Grid; the `_WithParameters` FunctionImport is the supported way to bind GI parameters (validating the existing parameterized-GI refusal); and formula-calculated columns cannot be sorted or filtered (validating the 0.49.0 calculated-column pre-flight). Column **order**, the `_N` collision-suffix rule, and `Caption`'s effect on property names remain undocumented.
 - **Known work before the GitHub corpus can actually be used: an ingestion adapter.** Verified against real `2026R1` files, `build-docs-index.mjs` degrades silently on a topic-per-file DITA corpus in two ways — heading attribute blocks (`{#id .class}`, present on 78/78 sampled headings) leak into the breadcrumbs that search matches, and the form heading shifting from `##` to `#` stops Form IDs propagating to a form's tabs, so a Form ID lookup returns the intro and no field tables. Tracked as a TODO for the 26R1 move; detail and fixes in `docs/upgrading-acumatica.md` §3b.
 
 ## [0.51.0] - 2026-08-30
