@@ -318,11 +318,24 @@ When using the Anthropic API with MCP, point the MCP client to `https://<your-wo
 | `acumatica_describe_inquiry` | Infer field schema for a GI before running it |
 | `acumatica_clear_cache` | Clear cached metadata when schemas change |
 
+### Schema Knowledge (offline schema discovery, see [Schema Knowledge](docs/schema-discovery.md); the three index-backed tools require the schema index — `acumatica_explain_gi_xml` is always available)
+| Tool | Description |
+|------|-------------|
+| `acumatica_search_schema` | Find entities by name/keyword or locate which entities contain a given field |
+| `acumatica_get_schema_entity` | Full offline schema for one entity: fields, actions, `$expand` targets |
+| `acumatica_list_schema_entities` | Browse the entity catalog, optionally filtered by name/module prefix |
+| `acumatica_explain_gi_xml` | Summarize a pasted GI definition XML — tables, joins, parameters, output columns |
+
 ### Documentation (optional — requires the docs index, see [Documentation Tools](docs/documentation-tools.md))
 | Tool | Description |
 |------|-------------|
 | `acumatica_search_docs` | Search the official Acumatica documentation by section heading / Form ID |
 | `acumatica_get_doc_section` | Read documentation sections — a screen's full reference by Form ID (e.g. `AP301000`) |
+
+### Write (disabled by default; enable at `/docs/admin/settings`)
+| Tool | Description |
+|------|-------------|
+| `acumatica_create_or_update_customer` | Create or update a Customer via PUT-as-upsert, with dry-run preview and `confirm` gate |
 
 > **Tip:** Use `acumatica_describe_entity` first to discover available fields, then `acumatica_list_entities` to search/filter. For Generic Inquiries, use `acumatica_list_generic_inquiries` to find GI names and `acumatica_describe_inquiry` to see available fields. See [docs/example-prompts.md](docs/example-prompts.md) for usage patterns.
 
