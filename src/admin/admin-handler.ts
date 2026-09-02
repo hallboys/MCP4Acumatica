@@ -171,6 +171,7 @@ function renderAdminPage(title: string, activeTab: string, bodyHtml: string): st
     { slug: "logs", label: "Logs" },
     { slug: "settings", label: "Settings" },
     { slug: "preflight", label: "Preflight" },
+    { slug: "gi-alignment", label: "GI Alignment" },
   ];
 
   const navLinks = tabs
@@ -737,6 +738,104 @@ adminApp.post("/sessions/revoke-all", async (c) => {
   headers.append("Set-Cookie", sessionCookie);
   headers.append("Set-Cookie", csrfCookie);
   return new Response(JSON.stringify({ ok: true, deleted }), { status: 200, headers });
+});
+
+// ── GI alignment page ────────────────────────────────────────────
+//
+// Why it exists: resolveFields() refuses a GI's curated column annotations
+// WHOLESALE when the design-row -> OData-property mapping is not provably
+// unique, because a shifted mapping attributes each description to the wrong
+// column and nothing downstream can detect that. The cost of the refusal is
+// invisible to an operator — describe_inquiry simply returns bare names, and
+// the descriptions are still sitting correctly in Acumatica. This page is the
+// missing signal: which GIs were refused, why, and what it cost.
+//
+// Reads the CACHED registry from KV only. No Acumatica request, no borrowed
+// user token, nothing in Acumatica's audit trail.
+
+adminApp.get("/gi-alignment", (c) => {
+  const html = `
+    <h1>GI Alignment</h1>
+    <p>Curated column descriptions are attached to OData properties <strong>positionally</strong> &mdash; Acumatica exposes no field that maps a Results Grid row to the property it becomes (<code>GIResult.fieldName</code> is a virtual field and returns null). When that inference is not provably unique the whole GI's annotation is <strong>refused</strong> rather than risk shifting every later column. This page reports those refusals.</p>
+    <div id="gia-alert"></div>
+    <button class="btn btn-primary" onclick="loadAlignment()">Load report</button>
+    <div id="gia-results" style="margin-top:20px">
+      <div class="empty-state">Click "Load report" to read the cached registry.</div>
+    </div>
+    <script>
+      var REASONS = {
+        aligned: ["OK", "Descriptions attached."],
+        alignmentAmbiguous: ["Caption the ambiguous columns", "More than one row-to-property assignment scores equally, so nothing in the data picks. Fix: on SM208000, set <b>Caption</b> on this GI's hoisted key columns to exactly the property name $metadata already reports. It is a no-op rename that pins the mapping permanently."],
+        feedMissingActiveFlag: ["Re-import MCPGIFields.xml", "The feed emits no IsActive flag, so inactive rows cannot be told from active ones. Re-import the feed GI (it gained SortOrder + IsActive in 0.48.0), then clear the GI cache."],
+        feedRowsExceedProperties: ["Stale feed or cache", "The feed reports more active design rows than $metadata has properties &mdash; the two disagree about this GI (renamed, truncated feed, or a stale cache). Clear the GI cache; if it persists, re-check the GI is still exposed via OData."],
+        noMetadata: ["Not in $metadata", "No $metadata entity for this GI &mdash; names come from the feed and types from runtime inference. Check the GI is still exposed via OData."],
+        noFieldRows: ["No column rows", "The feed returned no column rows for this GI. Descriptions cannot be attached; harmless if you never described it."]
+      };
+      async function loadAlignment() {
+        var box = document.getElementById('gia-results');
+        box.innerHTML = '<div class="empty-state">Loading…</div>';
+        try {
+          var res = await fetch('/docs/admin/gi-alignment/api');
+          var data = await res.json();
+          if (!res.ok) { box.innerHTML = '<div class="alert alert-error">' + (data.error || 'Failed') + '</div>'; return; }
+          if (!data.builtAt) {
+            box.innerHTML = '<div class="alert alert-error">No GI registry is cached yet. It builds lazily on the next Generic-Inquiry tool call.</div>';
+            return;
+          }
+          if (!data.alignment) {
+            box.innerHTML = '<div class="alert alert-error">The cached registry predates this diagnostic (built ' + data.builtAt + ').<br>Run <code>acumatica_clear_cache</code> with <code>target=gi</code>, then make any GI tool call to force a rebuild.</div>';
+            return;
+          }
+          var rows = data.alignment.slice().sort(function (a, b) {
+            if ((a.status === 'aligned') !== (b.status === 'aligned')) return a.status === 'aligned' ? 1 : -1;
+            return b.described - a.described;
+          });
+          var refused = rows.filter(function (r) { return r.status !== 'aligned'; });
+          var lost = refused.reduce(function (n, r) { return n + r.described; }, 0);
+          var h = '<div class="alert ' + (refused.length ? 'alert-error' : 'alert-success') + '">' +
+            (refused.length
+              ? '<b>' + refused.length + ' of ' + rows.length + ' GIs refused</b>, hiding ' + lost + ' curated column description' + (lost === 1 ? '' : 's') + '.'
+              : '<b>All ' + rows.length + ' GIs aligned.</b>') +
+            ' Registry built ' + data.builtAt + '.</div>';
+          h += '<table><thead><tr><th>GI</th><th>Status</th><th style="text-align:right">Cols</th><th style="text-align:right">Props</th><th style="text-align:right">Capt</th><th style="text-align:right">Desc</th><th style="text-align:right">Hoist</th><th>What to do</th></tr></thead><tbody>';
+          rows.forEach(function (r) {
+            var meta = REASONS[r.status] || [r.status, ''];
+            var ok = r.status === 'aligned';
+            h += '<tr' + (ok ? '' : ' style="background:rgba(220,38,38,.04)"') + '>' +
+              '<td><code>' + r.giName + '</code></td>' +
+              '<td>' + (ok ? '<span style="color:#16a34a">&#10003; aligned</span>' : '<b style="color:#dc2626">' + meta[0] + '</b>') + '</td>' +
+              '<td style="text-align:right">' + r.activeRows + '</td>' +
+              '<td style="text-align:right">' + r.properties + '</td>' +
+              '<td style="text-align:right">' + r.captioned + '</td>' +
+              '<td style="text-align:right">' + (r.described || '') + '</td>' +
+              '<td style="text-align:right">' + r.hoisted + '</td>' +
+              '<td style="font-size:12px;color:var(--muted,#64748b)">' + (ok ? '' : meta[1]) + '</td>' +
+              '</tr>';
+          });
+          h += '</tbody></table>';
+          h += '<p style="font-size:12px;color:var(--muted,#64748b);margin-top:12px"><b>Cols</b> active design rows &middot; <b>Props</b> $metadata properties &middot; <b>Capt</b> rows with a Caption (the aligner\'s hard constraints) &middot; <b>Desc</b> rows with a curated description (what a refusal costs) &middot; <b>Hoist</b> leading properties that are entity keys. After fixing anything in Acumatica, clear the GI cache so the registry rebuilds.</p>';
+          box.innerHTML = h;
+        } catch (e) {
+          box.innerHTML = '<div class="alert alert-error">' + e.message + '</div>';
+        }
+      }
+    </script>
+  `;
+  return c.html(renderAdminPage("GI Alignment", "gi-alignment", html));
+});
+
+adminApp.get("/gi-alignment/api", async (c) => {
+  const raw = await c.env.TOKEN_STORE.get("cache:gi_registry");
+  if (!raw) return c.json({ builtAt: null });
+  try {
+    const wrapper = JSON.parse(raw) as { value?: unknown } | unknown;
+    // getCached stores {value, expiresAt}; tolerate a bare registry too.
+    const reg = (wrapper as { value?: unknown })?.value ?? wrapper;
+    const r = reg as { builtAt?: string; alignment?: unknown[] };
+    return c.json({ builtAt: r.builtAt ?? null, alignment: r.alignment ?? null });
+  } catch {
+    return c.json({ error: "Cached registry is not valid JSON." }, 500);
+  }
 });
 
 // ── Preflight page ───────────────────────────────────────────────

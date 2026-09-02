@@ -173,6 +173,58 @@ test("assembleRegistry: $metadata wins, collisions resolve by LineNbr order, Usr
   assert.equal(f.AIDescription.description, "the AI note");
 });
 
+test("assembleRegistry: alignment diagnostics record why a GI's annotations were dropped", () => {
+  // Aligned case: descriptions attach AND the diagnostic says so, with the
+  // counts an operator needs to act (how many descriptions a refusal would cost).
+  const ok = assembleRegistry({
+    giRows: [{ Name: "InventoryUsageMCP" }],
+    fieldRows: [
+      { Name: "InventoryUsageMCP", SchemaField: "inventoryID", Caption: "Inventory ID", AIDescription: "primary item", LineNbr: 1, IsActive: true },
+      { Name: "InventoryUsageMCP", SchemaField: "qty", Caption: "Quantity", AIDescription: "qty used", LineNbr: 2, IsActive: true },
+      { Name: "InventoryUsageMCP", SchemaField: "inventoryID", Caption: "Inventory ID", AIDescription: "component item", LineNbr: 3, IsActive: true },
+      { Name: "InventoryUsageMCP", SchemaField: "UsrAIDescription", AIDescription: "the AI note", LineNbr: 4, IsActive: true },
+    ],
+    edmxTypes: parseEdmxTypes(EDMX),
+    builtAt: "2026-06-20T00:00:00Z",
+  });
+  const d = (ok.alignment ?? []).find((x) => x.giName === "InventoryUsageMCP");
+  assert.equal(d?.status, "aligned");
+  assert.equal(d?.activeRows, 4);
+  assert.equal(d?.described, 4);
+  assert.equal(d?.captioned, 3);
+
+  // A feed with no IsActive flag anywhere is the refuse-outright path: inactive
+  // rows can't be told from active ones, so the mapping could silently shift.
+  const stale = assembleRegistry({
+    giRows: [{ Name: "InventoryUsageMCP" }],
+    fieldRows: [
+      { Name: "InventoryUsageMCP", SchemaField: "inventoryID", Caption: "Inventory ID", AIDescription: "primary item", LineNbr: 1 },
+      { Name: "InventoryUsageMCP", SchemaField: "qty", Caption: "Quantity", AIDescription: "qty used", LineNbr: 2 },
+    ],
+    edmxTypes: parseEdmxTypes(EDMX),
+    builtAt: "2026-06-20T00:00:00Z",
+  });
+  const sd = (stale.alignment ?? []).find((x) => x.giName === "InventoryUsageMCP");
+  assert.equal(sd?.status, "feedMissingActiveFlag");
+  assert.equal(sd?.described, 2, "the diagnostic reports what the refusal cost");
+  // and the refusal really did drop the annotations
+  assert.ok((stale.gis[0].fields ?? []).every((f) => !f.description));
+
+  // More active design rows than $metadata properties → feed/metadata disagree.
+  const tooMany = assembleRegistry({
+    giRows: [{ Name: "InventoryUsageMCP" }],
+    fieldRows: Array.from({ length: 9 }, (_, i) => ({
+      Name: "InventoryUsageMCP", SchemaField: `f${i}`, AIDescription: "d", LineNbr: i + 1, IsActive: true,
+    })),
+    edmxTypes: parseEdmxTypes(EDMX),
+    builtAt: "2026-06-20T00:00:00Z",
+  });
+  assert.equal(
+    (tooMany.alignment ?? []).find((x) => x.giName === "InventoryUsageMCP")?.status,
+    "feedRowsExceedProperties"
+  );
+});
+
 test("assembleRegistry: no EDMX for a GI → fields fall back to feed rows, no declared types", () => {
   const reg = assembleRegistry({
     giRows: [{ Name: "SomeGI" }],
@@ -414,6 +466,69 @@ test("expectedTypeFamily classifies only what Acumatica's naming makes certain",
   assert.equal(expectedTypeFamily("=[A.Qty]-[B.Qty]"), null);
   assert.equal(expectedTypeFamily("invoiceNbr"), null);
   assert.equal(expectedTypeFamily(undefined), null);
+});
+
+test("expectedTypeFamily: the is/has boolean prefix needs an uppercase boundary", () => {
+  // Regression (found on FS-Licenses, 2026-09-02). The prefix test used to run
+  // against the LOWERCASED field name, so `^is[a-z]` matched anything merely
+  // beginning with those letters. `issueDate` was classified boolean, which
+  // conflicted with its own Edm.DateTimeOffset property; the pairing scored as
+  // impossible and the whole GI's annotation was refused — and because the
+  // conflict was on an UNcaptioned row, no caption edit could ever fix it.
+  assert.equal(expectedTypeFamily("issueDate"), "datetime", "not boolean: 'is' + lowercase");
+  assert.equal(expectedTypeFamily("issuedBy"), null, "not boolean, and not otherwise classifiable");
+  assert.equal(expectedTypeFamily("hashValue"), null, "'has' + lowercase is not a boolean");
+  // Real camelCase booleans still classify.
+  assert.equal(expectedTypeFamily("isActive"), "boolean");
+  assert.equal(expectedTypeFamily("isTangible"), "boolean");
+  assert.equal(expectedTypeFamily("hasChildren"), "boolean");
+  // An all-lowercase field yields NO constraint rather than a wrong one — the
+  // safe direction, since a false positive silently drops a GI's annotations.
+  assert.equal(expectedTypeFamily("isactive"), null);
+});
+
+test("assembleRegistry: FS-Licenses shape — captioned hoist keys resolve the whole GI", () => {
+  // End-to-end guard for the bug above, using the real production shape: 8
+  // active rows, 3 hoisted entity keys captioned with their exact property
+  // names, and an uncaptioned `issueDate` row that used to poison the solve.
+  const edmx = parseEdmxTypes(`
+    <EntityType Name="FS-Licenses">
+      <Key><PropertyRef Name="LicenseNbr"/><PropertyRef Name="LicenseTypeID"/><PropertyRef Name="EmployeeID"/></Key>
+      <Property Name="LicenseNbr" Type="Edm.String"/>
+      <Property Name="LicenseTypeID" Type="Edm.String"/>
+      <Property Name="EmployeeID" Type="Edm.String"/>
+      <Property Name="Description" Type="Edm.String"/>
+      <Property Name="IssueDate" Type="Edm.DateTimeOffset"/>
+      <Property Name="NeverExpires" Type="Edm.Boolean"/>
+      <Property Name="ExpirationDate" Type="Edm.DateTimeOffset"/>
+      <Property Name="EmployeeName" Type="Edm.String"/>
+    </EntityType>`);
+  const row = (n: number, field: string, Caption: string | null) => ({
+    Name: "FS-Licenses", Field: field, Caption, LineNbr: n, SortOrder: n,
+    IsActive: true, AIDescription: `d${n}`,
+  });
+  const reg = assembleRegistry({
+    giRows: [{ Name: "FS-Licenses" }],
+    fieldRows: [
+      row(1, "refNbr", "LicenseNbr"),
+      row(2, "licenseTypeCD", "LicenseTypeID"),
+      row(3, "acctCD", "EmployeeID"),
+      row(4, "descr", null),
+      row(5, "issueDate", null),
+      row(6, "neverExpires", null),
+      row(7, "expirationDate", null),
+      row(8, "acctName", "EmployeeName"),
+    ],
+    edmxTypes: edmx,
+    builtAt: "2026-09-02T00:00:00Z",
+  });
+  assert.equal((reg.alignment ?? [])[0]?.status, "aligned");
+  const got = (reg.gis[0].fields ?? []).map((f) => [f.name, f.description]);
+  assert.deepEqual(got, [
+    ["LicenseNbr", "d1"], ["LicenseTypeID", "d2"], ["EmployeeID", "d3"],
+    ["Description", "d4"], ["IssueDate", "d5"], ["NeverExpires", "d6"],
+    ["ExpirationDate", "d7"], ["EmployeeName", "d8"],
+  ]);
 });
 
 test("typeConflicts treats integer as compatible with everything", () => {

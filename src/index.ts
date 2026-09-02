@@ -39,7 +39,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.51.1",
+    version: "0.52.0",
   });
 
   // agents 0.21.0 types `props` as optional (`props?: Props`), but on this

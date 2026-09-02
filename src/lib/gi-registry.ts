@@ -59,6 +59,39 @@ export interface GiRegistryEntry {
   fields?: GiFieldMeta[];
 }
 
+/**
+ * Why a GI's curated column annotations were not attached. `resolveFields`
+ * refuses wholesale rather than risk a shifted mapping, which means an operator
+ * sees *no* descriptions with no indication of why — this is that indication.
+ *
+ * `feedMissingActiveFlag` and `feedRowsExceedProperties` are fixed on the
+ * Acumatica side (re-import MCPGIFields / clear the registry cache);
+ * `alignmentAmbiguous` is fixed by captioning the ambiguous columns with the
+ * property names $metadata already reports.
+ */
+export type GiAlignmentStatus =
+  | "aligned"
+  | "noMetadata"
+  | "feedMissingActiveFlag"
+  | "feedRowsExceedProperties"
+  | "alignmentAmbiguous"
+  | "noFieldRows";
+
+export interface GiAlignmentDiagnostic {
+  giName: string;
+  status: GiAlignmentStatus;
+  /** Active design rows the feed reported for this GI. */
+  activeRows: number;
+  /** Properties $metadata reports for this GI (0 when absent). */
+  properties: number;
+  /** Active design rows carrying a Caption — the aligner's hard constraints. */
+  captioned: number;
+  /** Active design rows carrying a curated description — what a refusal costs. */
+  described: number;
+  /** Leading $metadata properties that are entity keys (the hoist window). */
+  hoisted: number;
+}
+
 /** The cached registry artifact. */
 export interface GiRegistry {
   /** ISO timestamp the build stamped — drives the freshness/rebuild decision. */
@@ -67,6 +100,11 @@ export interface GiRegistry {
   endpointVersion?: string;
   /** Exposed GIs. Never includes feed GIs or the canary (see EXCLUDED_GI_NAMES). */
   gis: GiRegistryEntry[];
+  /**
+   * Per-GI alignment outcome, for the admin console. Operator-facing only —
+   * never surfaced to the model, and absent on registries built before 0.52.0.
+   */
+  alignment?: GiAlignmentDiagnostic[];
 }
 
 /**
@@ -370,6 +408,7 @@ export function assembleRegistry(opts: {
   }
 
   const gis: GiRegistryEntry[] = [];
+  const alignment: GiAlignmentDiagnostic[] = [];
   for (const giRow of giRows) {
     const giName = giRow.Name?.trim();
     if (!giName || EXCLUDED_GI_NAMES.has(giName)) continue;
@@ -380,13 +419,16 @@ export function assembleRegistry(opts: {
     const desc = giRow.AIDescription?.trim();
     if (desc) entry.description = desc;
 
-    const fields = resolveFields(giName, fieldsByGi.get(giName) ?? [], edmxTypes);
+    const fields = resolveFields(giName, fieldsByGi.get(giName) ?? [], edmxTypes, (d) =>
+      alignment.push(d)
+    );
     if (fields.length) entry.fields = fields;
 
     gis.push(entry);
   }
 
   const registry: GiRegistry = { builtAt, gis };
+  if (alignment.length) registry.alignment = alignment;
   if (endpointVersion) registry.endpointVersion = endpointVersion;
   return registry;
 }
@@ -419,7 +461,17 @@ export function expectedTypeFamily(
   // and checked before the suffix rules below strip it.
   if (/_description$/i.test(raw)) return "text";
   const n = raw.toLowerCase();
-  if (/^(is|has)[a-z]/.test(n) || /^(released|voided|prebooked|opendoc|depreciable|active|approved|printed|emailed)$/.test(n)) {
+  // The `is`/`has` prefix must be tested in the ORIGINAL camelCase, against an
+  // uppercase boundary. Acumatica DAC booleans are `isActive`, `hasChildren`;
+  // matching the lowercased name instead made `^is[a-z]` swallow every field
+  // that merely STARTS with those letters — `issueDate` (`is` + `sueDate`) was
+  // classified boolean, so it conflicted with its own `Edm.DateTimeOffset`
+  // property and the pairing was rejected as impossible. That refused the whole
+  // GI's annotation (FS-Licenses, found 2026-09-02) even with every hoisted key
+  // correctly captioned, and no caption edit could ever have fixed it.
+  // A field that is genuinely all-lowercase (`isactive`) now yields no
+  // constraint rather than a wrong one, which is the safe direction here.
+  if (/^(is|has)[A-Z]/.test(raw) || /^(released|voided|prebooked|opendoc|depreciable|active|approved|printed|emailed)$/.test(n)) {
     return "boolean";
   }
   if (/(datetime|date)$/.test(n) && !/(update|dateid)$/.test(n)) return "datetime";
@@ -687,14 +739,34 @@ function alignRows(
 function resolveFields(
   giName: string,
   rows: FeedFieldRow[],
-  edmxTypes: Map<string, EdmxEntity>
+  edmxTypes: Map<string, EdmxEntity>,
+  /** Optional operator-facing diagnostic sink; does not affect the return value. */
+  diag?: (d: GiAlignmentDiagnostic) => void
 ): GiFieldMeta[] {
   const active = gridOrderedRows(rows);
   const edmx = edmxTypes.get(normalizeName(giName));
 
+  const report = (status: GiAlignmentStatus, hoisted = 0): void => {
+    diag?.({
+      giName,
+      status,
+      activeRows: active.length,
+      properties: edmx?.order.length ?? 0,
+      captioned: active.filter((r) => r.Caption?.trim()).length,
+      described: active.filter((r) => r.AIDescription?.trim()).length,
+      hoisted,
+    });
+  };
+
+  if (!active.length) {
+    report("noFieldRows");
+    return [];
+  }
+
   // Fallback path: no $metadata for this GI — emit fields from the feed rows by
   // guessed name, no declared types (runtime inference fills in types).
   if (!edmx || !edmx.order.length) {
+    report("noMetadata");
     return active.map((row) => {
       const meta: GiFieldMeta = { name: predictPropertyName(row) };
       const caption = row.Caption?.trim();
@@ -721,11 +793,17 @@ function resolveFields(
   // the one path that produces *wrong* annotations rather than none, so refuse
   // it outright: an operator on a pre-0.48.0 MCPGIFields keeps names and types
   // until they re-import.
-  if (!rows.some(hasActiveFlag)) return bare();
+  if (!rows.some(hasActiveFlag)) {
+    report("feedMissingActiveFlag");
+    return bare();
+  }
 
   // More active design rows than properties → the feed and $metadata disagree
   // about this GI (stale cache, truncated feed, renamed GI). Don't guess.
-  if (edmx.order.length < active.length) return bare();
+  if (edmx.order.length < active.length) {
+    report("feedRowsExceedProperties");
+    return bare();
+  }
 
   // Trailing properties beyond the active-row count are keys that aren't result
   // columns; they get no design row.
@@ -739,7 +817,11 @@ function resolveFields(
     return edm ? edmTypeToSimple(edm) : undefined;
   };
   const pairs = alignRows(active, head.slice(hoistCount), head.slice(0, hoistCount), typeOf);
-  if (!pairs) return bare();
+  if (!pairs) {
+    report("alignmentAmbiguous", hoistCount);
+    return bare();
+  }
+  report("aligned", hoistCount);
 
   const rowByProp = new Map(pairs.map(([row, prop]) => [prop, row]));
   return edmx.order.map((prop) => {
