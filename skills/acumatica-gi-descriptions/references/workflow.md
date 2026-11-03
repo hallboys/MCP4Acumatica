@@ -35,7 +35,9 @@ worked well:
 | Already tagged for AI | existing curation, worth honouring |
 
 Exclude by class, not one by one:
-- **Parameterized** — returns silently wrong data over OData. Non-negotiable.
+- **Parameterized, with parameters not fit for an agent** — anything required for correct
+  results must be **Is Required**, and defaults must be acceptable silently. (MCP4Acumatica
+  0.56.0+ supports parameterized GIs; older servers and other consumers must exclude them all.)
 - **Business-event triggers** — names ending `BE`, or containing `Notification`,
   `Auto-Send`, `Automatically Create`, `on Pending Approval`. These *fire
   automation*; they are not query targets.

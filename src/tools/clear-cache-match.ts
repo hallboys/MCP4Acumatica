@@ -25,6 +25,7 @@ export function matchesClearTarget(shortKey: string, target?: string): boolean {
     return (
       shortKey === "gi_list" ||
       shortKey === "gi_metadata" ||
+      shortKey.startsWith("gi_metadata:") ||
       shortKey === "gi_registry" ||
       shortKey.startsWith("gi_schema:")
     );

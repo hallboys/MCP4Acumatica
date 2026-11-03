@@ -8,6 +8,7 @@ This folder bundles everything the Acumatica side of the **GI exposure gate** ne
 | `MCP4Acumatica-AIDescription.zip` | Customization project: adds the custom fields + SM208000 form changes. |
 | `MCPGIs.xml` | The `MCPGIs` feed GI (one row per exposed GI). |
 | `MCPGIFields.xml` | The `MCPGIFields` feed GI (one row per exposed GI's output column). |
+| `MCPGIParams.xml` | Optional `MCPGIParams` feed GI (one row per parameter of an exposed GI — display names and default values). |
 | `MCPAccess.xml` | The `MCPAccess` canary GI used by the login **role gate** (see the README's Acumatica-side configuration). |
 | `MCPGIColumnsAll.xml` | Authoring aid: one row per (GI, result column) for **every** GI in the instance. |
 | `MCPGIJoinsAll.xml` | Authoring aid: one row per join condition — tables, aliases, join types. |
@@ -45,8 +46,10 @@ one generated SM208000 screen extension.)
 each OData property name from the **result-column caption**, so the captions below *are* the
 property names — they must match what `src/lib/gi-registry.ts` reads:
 
-**`MCPGIs`** — row filter: `UsrExposedToMCP = true` AND `ExposeViaOData = true` AND parameter-free
-(`GIFilter.LineNbr IS NULL`):
+**`MCPGIs`** — row filter: `UsrExposedToMCP = true` AND `ExposeViaOData = true`. (Before 0.56.0 it
+also required the GI to be parameter-free; parameterized GIs are now supported — see
+[docs/generic-inquiries.md](../docs/generic-inquiries.md#parameterized-gis). On re-import, any
+parameterized GI already tagged `ExposedToMCP` becomes visible to the assistant.)
 
 | OData column (caption) | Source field | Registry use |
 |------------------------|--------------|--------------|
@@ -79,6 +82,24 @@ inactive rows. See `resolveFields` in `src/lib/gi-registry.ts`.
 
 (`MCPGIFields` also emits `DesignID`, `ObjectName`, `FieldName` — present but not consumed by the
 registry. If you change a caption here, change the matching field in `gi-registry.ts`.)
+
+**`MCPGIParams`** (optional) — one row per parameter (`GIFilter` row) of each exposed GI; same row
+filter as `MCPGIFields`. The server reads parameter **names, types and required-ness from OData
+`$metadata`** (a parameter is required exactly when **Is Required** is checked), so this feed only
+adds what `$metadata` lacks. Without it, parameterized GIs still work; the model just doesn't see
+display names or default values.
+
+| OData column (caption) | Source field | Registry use |
+|------------------------|--------------|--------------|
+| `Name` | `GIDesign.name` | owning GI |
+| `ParamName` | `GIFilter.name` | matched to the `$metadata` parameter name (alphanumerics, case-insensitive) |
+| `DisplayName` | `GIFilter.displayName` | label shown to the model |
+| `DefaultValue` | `GIFilter.defaultValue` | shown to the model, so it can say which default applied (e.g. `@QuarterStart`) |
+| `IsActive` | `GIFilter.isActive` | an active row wins when two rows share a name |
+| `IsRequired` | `GIFilter.required` | informational — `$metadata` is authoritative |
+
+(`MCPGIParams` also emits `DesignID`, `SchemaField`, `LineNbr` — not consumed. The captions are the
+keys `FeedParamRow` in `src/lib/gi-parameters.ts` reads.)
 
 ## 3. Authoring aids — reading GI *designs* to write AI descriptions
 
@@ -146,9 +167,11 @@ that made the GIs in this folder import correctly the first time.
 1. **Customization Projects (SM204505)** → **Import** → upload `MCP4Acumatica-AIDescription.zip` →
    open it and **Publish**. Verify on **Generic Inquiry (SM208000)**: the **Exposed to MCP**
    checkbox + **AI Description** box on the header, and an **AI Description** column on Results.
-2. **Generic Inquiry (SM208000)** → import `MCPGIs.xml`, `MCPGIFields.xml`, and `MCPAccess.xml`
-   (these are SM208000 GI exports). Confirm all three are **Exposed via OData**.
-3. **Access Rights:** grant the `MCP Access` role **read access to `MCPGIs` + `MCPGIFields`**, and
+2. **Generic Inquiry (SM208000)** → import `MCPGIs.xml`, `MCPGIFields.xml`, `MCPAccess.xml` and
+   (optionally) `MCPGIParams.xml` (these are SM208000 GI exports). Confirm each is **Exposed via
+   OData**. `MCPGIParams` ships with screen ID `GI999559`; change it on import if that ID is taken.
+3. **Access Rights:** grant the `MCP Access` role **read access to `MCPGIs` + `MCPGIFields`** (and
+   `MCPGIParams` if imported), and
    assign the `MCPAccess` canary GI to the `MCP Access` role (role-gate prerequisite).
 4. **Tag the GIs** you want the assistant to see: set **Exposed to MCP** and write an **AI
    Description** on each (and per-column AI Descriptions as desired).

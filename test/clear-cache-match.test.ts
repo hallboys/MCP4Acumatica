@@ -31,6 +31,7 @@ test("target=schemas matches only entity schemas", () => {
 test("target=gi matches the shared GI artifacts", () => {
   assert.equal(matchesClearTarget("gi_list", "gi"), true);
   assert.equal(matchesClearTarget("gi_metadata", "gi"), true);
+  assert.equal(matchesClearTarget("gi_metadata:someuser", "gi"), true, "per-user $metadata copies (0.56.0)");
   assert.equal(matchesClearTarget("gi_registry", "gi"), true);
 });
 

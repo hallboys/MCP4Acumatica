@@ -184,6 +184,20 @@ order, then non-result keys appended). Two things to check:
   columns with the property names OData already reports — most refusals are an under-determined
   hoist, not a platform change. See `docs/generic-inquiries.md` → "How it behaves".
 
+**Re-verify parameterized GIs after an upgrade (0.56.0+).** A GI with parameters is called through
+its `{Name}_WithParameters` OData function, and the server takes each parameter's name, type and
+required-ness from the `<Function>` / `<FunctionImport>` elements of `$metadata` (`Nullable="false"`
+= **Is Required**). That shape is documented but release-coupled. After an upgrade, on one
+parameterized GI:
+
+- `acumatica_describe_inquiry` lists its parameters, with the required ones matching the GI's
+  **Is Required** checkboxes;
+- `acumatica_run_inquiry` with a valid `parameters` value returns filtered rows, and the response's
+  `parameters.defaulted` lists the optional ones left out;
+- if the `MCPGIParams` feed is imported, display names and default values appear. If they don't,
+  check that the feed's `GIFilter` columns still resolve (field names in
+  `acumatica/MCPGIParams.xml`).
+
 ## 5. Re-run preflight
 
 Visit `/docs/admin/preflight` and run the diagnostic (or `setup.sh` runs it automatically).
@@ -240,6 +254,14 @@ add/rename/deprecate entities or change field shapes:
   `possibleFalseNegative` warning. If a release renames one of these entities or its key field,
   or makes a previously-unfilterable field optimizable, update the list. The mode-A 500 classifier
   (`getFilterErrorKind`) is body-based and entity-agnostic, so it needs no per-release change.
+- **Parameterized Generic Inquiries (`ACUMATICA_GI_PARAMETERS`).** Off by default, so
+  parameterized GIs are refused. Verified on 2026 R2 and on 2025 R2 production (2026-11-03).
+  Note that 2025 R2 declares GI date parameters as `Edm.DateTimeOffset` and 2026 R2 as `Edm.Date`;
+  the server reads the type from live `$metadata`, so nothing needs changing at the upgrade. Before setting it to `"true"` for
+  an instance, verify on that release: one call through the function URL with a parameter value
+  must return rows filtered by it, and a misspelled parameter name must come back unfiltered
+  (that silent behaviour is what the server's name check exists for). Then set the variable,
+  redeploy, and run the checks in §4 ("Re-verify parameterized GIs").
 - **Exact totals for Generic Inquiries (`ACUMATICA_GI_COUNT`).** Off by default. The 2025 R2
   Reporting Tools guide lists `$count` as unsupported on the GI-based OData interface; on a
   2026 R2 sandbox it works (verified 2026-11-03: filtered and unfiltered totals returned, and the

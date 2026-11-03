@@ -17,7 +17,7 @@ gate, how to decide which GIs to expose, and how to turn it on.
 |------|--------------|
 | `acumatica_list_generic_inquiries` | Discover GI names (the model's menu of available inquiries). |
 | `acumatica_describe_inquiry` | Return a GI's field schema (names + types) so the model knows what it can filter/select. |
-| `acumatica_run_inquiry` | Execute a GI by name via OData and return rows. |
+| `acumatica_run_inquiry` | Execute a GI by name via OData and return rows. A GI with parameters takes them in a `parameters` argument — see [Parameterized GIs](#parameterized-gis). |
 
 These are **generic** — one set of tools that works for any GI — not one tool per GI.
 
@@ -38,19 +38,23 @@ them headlessly. Surfacing all of them to the model has two concrete costs:
    human-formatted values, space-padded fixed-width keys, or output whose meaning
    depends on the UI rendering it. That is poor structured input for an agent even
    when it *can* be fetched.
-3. **Silently wrong data — the dangerous one.** A GI with **parameters** exposed via OData
-   returns *incorrect* results when queried without those parameters, which is exactly how the
-   agent queries it: Acumatica computes the GI with empty/default parameters and returns
-   plausible-looking rows with **no error**. A parameterized sales GI might return every order
-   instead of one customer's; a date-bounded GI might return everything. The model cannot tell the
-   answer is wrong. This alone is reason enough never to expose GIs without curating.
+3. **Silently wrong data — the dangerous one.** A GI with **parameters**, queried through its
+   plain OData entity set, runs with no parameter values and returns plausible-looking rows with
+   **no error**. A parameterized sales GI might return every order instead of one customer's; a
+   date-bounded GI might return everything. The model cannot tell the answer is wrong.
 
-> ⚠️ **Curate — don't rely on the ungated state.** `run_inquiry` and `describe_inquiry` **refuse**
-> a parameterized GI outright (regardless of gate state) rather than return its silently-wrong rows, and discovery
-> excludes them — so the parameterized-GI case is guarded at the tool level. But the *other* risks
-> above (context overload, wrong-shape/UI-formatted output, exposing sensitive GIs) are only
-> addressed by curating. Expose only GIs you have vetted as parameter-free and correct for
-> headless querying.
+> ⚠️ **How the server handles parameterized GIs (0.56.0).** Unless `ACUMATICA_GI_PARAMETERS` is
+> `"true"`, it refuses them outright. When enabled, the server never queries a
+> parameterized GI through its plain entity set. It uses the GI's `_WithParameters` OData function,
+> and checks the model's parameter values *before* calling Acumatica: a call with no `parameters`
+> argument is refused (the refusal lists the parameters, so the model has seen them), a **required**
+> parameter must have a value, and an **unknown parameter name is refused** — Acumatica itself
+> silently ignores a misspelled name and returns unfiltered rows. An optional parameter left out
+> takes the GI's own default value, and the response says which defaults applied. If the server
+> cannot read OData `$metadata` — so it cannot tell whether a GI takes parameters — it refuses the
+> call and asks the model to retry, rather than assume the GI is parameter-free. See
+> [Parameterized GIs](#parameterized-gis) below. The *other* risks above (context overload,
+> wrong-shape output, exposing sensitive GIs) are only addressed by curating.
 
 The gate flips GI visibility from **opt-out to opt-in.** Instead of "every GI is
 exposed unless something hides it," a human deliberately marks the GIs that are
@@ -61,10 +65,10 @@ this without a person in the loop.* Everything else stays invisible to the model
 
 **Good candidates** — tag these `ExposedtoMCP`:
 
-- **Parameter-free.** A parameterized GI *can* be exposed via OData, but querying it without its
-  parameters returns wrong data (see the warning above) — so only expose GIs that need no
-  parameters. Discovery and the `MCPGIs` feed already filter parameterized GIs out, but treat that
-  as a backstop, not a license to OData-expose them.
+- **Parameter-free, or with parameters you have checked.** A parameterized GI is fine to expose
+  (see [Parameterized GIs](#parameterized-gis)), provided its parameters are set up for an agent:
+  anything that must be supplied for correct results is marked **Is Required**, defaults are ones
+  you would accept silently, and names/display names say what the parameter means.
 - **Focused, stable column set** with meaningful field names — not a 40-column screen dump.
 - **Answers a real question a user would ask the assistant** — e.g. "open sales orders
   by customer," "inventory usage by warehouse," "overdue projects."
@@ -90,13 +94,15 @@ The [`acumatica/`](../acumatica/) folder bundles everything to import — see
    `GIDesign.UsrAIDescription`, and `GIResult.UsrResAIDescription` — plus the SM208000 form changes.
    These live on **system DACs**, so a customization project is the only way to add them (not the GI
    form). Import via **Customization Projects (SM204505)** and **Publish**.
-2. **Import the feed GIs.** [`acumatica/MCPGIs.xml`](../acumatica/) (one row per exposed GI) and
-   [`acumatica/MCPGIFields.xml`](../acumatica/) (one row per output column) — import both on **Generic
-   Inquiry (SM208000)**, both **Exposed via OData**. They read the step-1 fields; the registry reads
-   their output columns (`Name`, `AIDescription`, `ScreenID`, `DesignID`; and `Name`, `SchemaField`,
-   `Caption`, `LineNbr`, `AIDescription`). `MCPGIs` already filters to `UsrExposedToMCP = true`,
-   `ExposeViaOData = true`, and parameter-free.
-3. **Grant the `MCP Access` role read access to `MCPGIs` + `MCPGIFields`.** The registry is built
+2. **Import the feed GIs.** [`acumatica/MCPGIs.xml`](../acumatica/) (one row per exposed GI),
+   [`acumatica/MCPGIFields.xml`](../acumatica/) (one row per output column) and, optionally,
+   [`acumatica/MCPGIParams.xml`](../acumatica/) (one row per parameter of an exposed GI — supplies
+   parameter display names and default values) — import them on **Generic Inquiry (SM208000)**, all
+   **Exposed via OData**. They read the step-1 fields; the registry reads their output columns (see
+   [`acumatica/README.md`](../acumatica/) for the column mapping). `MCPGIs` filters to
+   `UsrExposedToMCP = true` and `ExposeViaOData = true`.
+3. **Grant the `MCP Access` role read access to the feed GIs** (`MCPGIs`, `MCPGIFields`, and
+   `MCPGIParams` if imported). The registry is built
    lazily using whichever connected user's token is in hand (it holds only GI/field **metadata**,
    never business rows), so the feeds must be readable by the role. No service account, no scheduled
    job, no separate license.
@@ -115,7 +121,7 @@ Until at least one GI is tagged and the feeds are readable, the gate stays inact
 
 - **Inactive until configured.** No registry built yet → `list_generic_inquiries` returns **no
   GIs** (discovery is suppressed — the model isn't handed an uncurated menu). `run`/`describe` still
-  serve a GI named **explicitly** (with the parameterized-GI guard), so there's no hard dead period
+  serve a GI named **explicitly** (with the parameter checks), so there's no hard dead period
   for explicit use — but the assistant can't *discover* GIs until you curate.
 - **Fail-closed once active.** When a registry exists, **only** tagged GIs are reachable:
   `run_inquiry` and `describe_inquiry` reject anything else with a *"not exposed to the AI
@@ -156,6 +162,53 @@ Until at least one GI is tagged and the feeds are readable, the gate stays inact
   freshness and rebuilt lazily on the next request when stale. Force an immediate rebuild
   with `acumatica_clear_cache` (no argument, or `target=gi`). Registry edits take effect on
   the next Durable Object instance (minutes), like other runtime config.
+
+## Parameterized GIs
+
+> **Off by default.** Parameterized GIs are refused (and left out of the list) unless the server's
+> `ACUMATICA_GI_PARAMETERS` setting is `"true"`. Turn it on only after one parameterized call has been
+> verified on your Acumatica release — see [Upgrading Acumatica](upgrading-acumatica.md) §7. The
+> behaviour below was verified on 2026 R2.
+
+A GI with parameters (the **Parameters** tab on SM208000) is queried through its
+`_WithParameters` OData function — Acumatica's documented way to pass parameter values over
+OData — never through its plain entity set, which would run it with no values.
+
+**What the model sees.** `acumatica_list_generic_inquiries` lists a parameterized GI with its
+parameter names (required ones marked). `acumatica_describe_inquiry` returns each parameter's
+name, type, whether it is required, and — when the `MCPGIParams` feed is imported — its display
+name and default value. A GI with a required parameter is described without a sample row (field
+names and types come from `$metadata`), because no honest sample exists until the values are chosen.
+
+**What the server checks before calling Acumatica** (`acumatica_run_inquiry`):
+
+| Model's call | Result |
+|---|---|
+| No `parameters` argument | Refused, listing the parameters. `{}` is the explicit "run at defaults". |
+| Unknown parameter name | Refused, listing the valid names. Acumatica would ignore it and return unfiltered rows. |
+| Required parameter missing or blank | Refused, naming it. |
+| Value that doesn't fit the type | Refused (dates `YYYY-MM-DD` — also accepted for date-time parameters, which is how 2025 R2 declares GI dates — date-times ISO-8601 with offset, booleans `true`/`false`). |
+| Optional parameter left out | Runs; the parameter takes the GI's **Default Value**, and the response lists it under `parameters.defaulted` so the model can tell the user. |
+| `parameters` on a GI without parameters | Refused — the values would be ignored. |
+
+**Where the rules come from.** Names, types and required-ness are read from OData `$metadata`
+on every call: a parameter is required exactly when **Is Required** is checked on the GI's
+Parameters tab (`$metadata` marks it `Nullable="false"`). The optional `MCPGIParams` feed adds
+display names and default values; without it the checks still apply, the model just doesn't see
+labels or defaults.
+
+**Before tagging a parameterized GI `ExposedtoMCP`:**
+- Mark every parameter that must be supplied for correct results as **Is Required**. An
+  unrequired parameter can be left out, and then runs at its default — or blank.
+- Check the defaults are ones you would accept being applied silently (`@QuarterStart` is fine
+  for most reporting; a hard-coded branch may not be).
+- Give parameters meaningful names or display names — the model chooses values from them.
+
+`$filter`, `$select`, the row cap and `$count` all work on top of the parameters.
+
+> **Upgrading from an older setup package:** `MCPGIs` used to exclude parameterized GIs. After you
+> re-import it, any parameterized GI **already** tagged `ExposedtoMCP` becomes visible to the
+> assistant (the tag previously had no effect on it). Review those GIs' parameters first.
 
 ## See also
 

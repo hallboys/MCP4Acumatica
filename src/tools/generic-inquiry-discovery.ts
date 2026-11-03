@@ -6,11 +6,26 @@ import { AcumaticaClient, AcumaticaApiError } from "../lib/acumatica-client";
 import { getCached, setCached } from "../lib/metadata-cache";
 import { getConfig, parsePositiveIntConfig, validateStringArg } from "../lib/config";
 import { cleanGiRow } from "../lib/gi-rows";
-import { checkGiGate, EXCLUDED_GI_NAMES, parameterizedGiNames, type GiRegistryEntry } from "../lib/gi-registry";
+import {
+  checkGiGate,
+  EXCLUDED_GI_NAMES,
+  parseEdmxTypes,
+  edmTypeToSimple,
+  type GiRegistryEntry,
+} from "../lib/gi-registry";
+import {
+  parseEdmxFunctions,
+  findGiFunction,
+  resolveGiRouting,
+  overlayParams,
+  describeParam,
+  normalizeGiKey,
+  type GiParamMeta,
+} from "../lib/gi-parameters";
+import { loadGiMetadata } from "../lib/gi-metadata";
 import { getGiRegistry } from "../lib/gi-registry-build";
 
 const GI_LIST_TTL_SECONDS = 3600; // 1 hour
-const GI_METADATA_TTL_SECONDS = 3600; // 1 hour
 const GI_SCHEMA_TTL_SECONDS = 3600; // 1 hour
 
 /** OData service document entry */
@@ -63,63 +78,49 @@ export async function handleListGenericInquiries(
       registry.gis.filter((g) => g.description).map((g) => [g.giName, g.description!])
     );
 
-    // Try KV cache for both the service document and $metadata
-    const [cachedServiceDoc, cachedMetadata] = await Promise.all([
-      getCached<ODataServiceDocument>(env.store, "gi_list"),
-      getCached<string>(env.store, "gi_metadata"),
+    const client = new AcumaticaClient(env, acumaticaUsername);
+    const cachedServiceDoc = await getCached<ODataServiceDocument>(env.store, "gi_list");
+    const [serviceDoc, metadata] = await Promise.all([
+      cachedServiceDoc
+        ? Promise.resolve(cachedServiceDoc)
+        : client.getOData<ODataServiceDocument>(
+            "",
+            "acumatica_list_generic_inquiries",
+            { titleFilter: args.titleFilter, topN: effectiveTop }
+          ),
+      loadGiMetadata(env, client, acumaticaUsername, "acumatica_list_generic_inquiries"),
     ]);
+    if (!cachedServiceDoc) await setCached(env.store, "gi_list", serviceDoc, GI_LIST_TTL_SECONDS);
 
-    let serviceDoc: ODataServiceDocument;
-    let metadata: string;
+    // Parameterized GIs are listed with their parameters, so the model knows
+    // to supply them (run_inquiry refuses a parameterized GI called without a
+    // `parameters` argument).
+    // Without $metadata the list still works, just without parameter names;
+    // run/describe refuse a GI they can't classify, so nothing runs unchecked.
+    const functions = parseEdmxFunctions(metadata ?? "");
+    const paramsByName = new Map(registry.gis.map((g) => [g.giName, g.parameters]));
 
-    if (cachedServiceDoc && cachedMetadata !== null) {
-      // Full cache hit — skip both API calls
-      serviceDoc = cachedServiceDoc;
-      metadata = cachedMetadata;
-    } else {
-      // Fetch whichever is missing (or both)
-      const client = new AcumaticaClient(env, acumaticaUsername);
-
-      const [fetchedServiceDoc, fetchedMetadata] = await Promise.all([
-        cachedServiceDoc
-          ? Promise.resolve(cachedServiceDoc)
-          : client.getOData<ODataServiceDocument>(
-              "",
-              "acumatica_list_generic_inquiries",
-              { titleFilter: args.titleFilter, topN: effectiveTop }
-            ),
-        cachedMetadata !== null
-          ? Promise.resolve(cachedMetadata)
-          : client.getODataMetadata("acumatica_list_generic_inquiries").catch(() => ""),
-      ]);
-
-      serviceDoc = fetchedServiceDoc;
-      metadata = fetchedMetadata;
-
-      // Store any freshly fetched data in KV
-      const cacheWrites: Promise<void>[] = [];
-      if (!cachedServiceDoc) {
-        cacheWrites.push(setCached(env.store, "gi_list", serviceDoc, GI_LIST_TTL_SECONDS));
-      }
-      if (cachedMetadata === null) {
-        cacheWrites.push(setCached(env.store, "gi_metadata", metadata, GI_METADATA_TTL_SECONDS));
-      }
-      await Promise.all(cacheWrites);
-    }
-
-    // Exclude parameterized GIs (they return wrong data over OData) — see
-    // parameterizedGiNames in gi-registry.ts (shared with run_inquiry's guard).
-    const parameterizedNames = parameterizedGiNames(metadata);
+    // With ACUMATICA_GI_PARAMETERS off, parameterized GIs stay out of the menu
+    // altogether (run/describe refuse them), as before 0.56.0.
+    const parametersEnabled = env.ACUMATICA_GI_PARAMETERS === "true";
+    const isParameterized = (name: string) =>
+      findGiFunction(functions, name) !== undefined || !!paramsByName.get(name)?.length;
 
     let items = (serviceDoc.value || [])
-      .filter((entry) => !parameterizedNames.has(entry.name))
       .filter((entry) => !EXCLUDED_GI_NAMES.has(entry.name))
       .filter((entry) => gatedNames.has(entry.name))
+      .filter((entry) => parametersEnabled || !isParameterized(entry.name))
       .map((entry) => {
         const description = descByName.get(entry.name);
-        return description
-          ? { inquiryName: entry.name, url: entry.url, description }
-          : { inquiryName: entry.name, url: entry.url };
+        const found = findGiFunction(functions, entry.name);
+        const fn = found && found !== "ambiguous" && !found.unparsed ? found : undefined;
+        const params = fn ? overlayParams(fn.params, paramsByName.get(entry.name)) : undefined;
+        return {
+          inquiryName: entry.name,
+          url: entry.url,
+          ...(description ? { description } : {}),
+          ...(params ? { parameters: params.map((p) => (p.required ? `${p.name} (required)` : p.name)) } : {}),
+        };
       });
 
     // Client-side title filter (OData service document doesn't support $filter)
@@ -141,10 +142,6 @@ export async function handleListGenericInquiries(
       return { results: [], note: "No Generic Inquiries found matching the criteria." };
     }
 
-    const excludedNote = parameterizedNames.size > 0
-      ? `Excluded ${parameterizedNames.size} parameterized GI(s) that cannot be queried directly via OData.`
-      : undefined;
-
     if (truncated) {
       return {
         results: items,
@@ -157,11 +154,10 @@ export async function handleListGenericInquiries(
           `Do NOT call this tool again with a different topN to retrieve more records — no such mechanism exists. ` +
           `Instead, stop and ask the user to narrow their request by providing a more specific titleFilter ` +
           `so the result set fits within the limit.`,
-        ...(excludedNote ? { note: excludedNote } : {}),
       };
     }
 
-    return excludedNote ? { results: items, note: excludedNote } : items;
+    return items;
   } catch (error) {
     if (error instanceof AcumaticaApiError) {
       return {
@@ -248,16 +244,29 @@ function buildSchemaResponse(
 }
 
 /**
- * Cached OData `$metadata` fetch (shared `gi_metadata` key). Used to detect
- * parameterized GIs (mirrors the loader in generic-inquiries.ts). Returns "" on
- * failure so callers fail open — a metadata fetch error never blocks describe.
+ * Add a parameterized GI's parameters to a describe_inquiry response, with how
+ * to pass them and what the sample (if any) was run with.
  */
-async function loadGiMetadata(env: AppEnv, client: AcumaticaClient): Promise<string> {
-  const cached = await getCached<string>(env.store, "gi_metadata");
-  if (cached !== null) return cached;
-  const xml = await client.getODataMetadata("acumatica_describe_inquiry").catch(() => "");
-  if (xml) await setCached(env.store, "gi_metadata", xml, GI_METADATA_TTL_SECONDS);
-  return xml;
+function withParameters(
+  response: Record<string, unknown>,
+  params: GiParamMeta[] | undefined,
+  sampled: boolean
+): Record<string, unknown> {
+  if (!params) return response;
+  const required = params.some((p) => p.required);
+  return {
+    ...response,
+    parameters: params.map(describeParam),
+    parametersNote:
+      "This inquiry takes parameters. Pass them to acumatica_run_inquiry as `parameters`, a JSON object keyed by these names " +
+      '(e.g. {"Name":"value"}). Required parameters must have a value; an optional parameter left out takes the defaultValue ' +
+      "shown (or the inquiry's own default), which can narrow the results. Pass {} to run with every optional parameter at its default." +
+      (required
+        ? " No sample row is shown because a required parameter has no value yet; field names and types come from OData $metadata."
+        : sampled
+          ? " The sample row was taken with every parameter at its default."
+          : ""),
+  };
 }
 
 export async function handleDescribeInquiry(
@@ -272,35 +281,51 @@ export async function handleDescribeInquiry(
   if (!gate.allowed) return { error: gate.reason };
 
   const client = new AcumaticaClient(env, acumaticaUsername);
+  const entry = gate.entry;
 
-  // Guard (mirrors run_inquiry): a parameterized GI sampled over OData without
-  // its parameters returns default/unfiltered — i.e. wrong — rows, so a schema
-  // inferred from that sample would be misleading. Refuse rather than describe.
-  // Checked before the cache so a stale pre-guard schema isn't served; fails
-  // open if $metadata is unavailable.
-  if (parameterizedGiNames(await loadGiMetadata(env, client)).has(args.inquiryName.trim())) {
-    return {
-      error:
-        `Generic Inquiry '${args.inquiryName}' takes parameters and cannot be described correctly over OData — ` +
-        `without its parameters it returns default/unfiltered results (often wrong), so any inferred schema would be misleading. ` +
-        `Use a parameter-free Generic Inquiry, or open this inquiry in the Acumatica UI.`,
-      parameterized: true,
-    };
+  // Parameterized GI: report its parameters, and sample through its
+  // `_WithParameters` function — never the plain entity set, which runs it
+  // with no parameter values. With a required parameter there is no honest
+  // sample to take (the model hasn't chosen the values yet), so field names
+  // and types come from $metadata alone.
+  const metadata = await loadGiMetadata(env, client, acumaticaUsername, "acumatica_describe_inquiry");
+  const routing = resolveGiRouting(
+    metadata === null ? null : parseEdmxFunctions(metadata),
+    args.inquiryName,
+    entry?.parameters,
+    env.ACUMATICA_GI_PARAMETERS === "true"
+  );
+  if (routing.kind === "refuse") return routing.error;
+  const fn = routing.kind === "function" ? routing.fn : undefined;
+  const params = fn ? overlayParams(fn.params, entry?.parameters) : undefined;
+  const respond = (fields: InferredField[], sampleRow: Record<string, unknown> | null) =>
+    withParameters(buildSchemaResponse(args.inquiryName, fields, sampleRow, entry), params, sampleRow !== null);
+
+  if (fn && params?.some((p) => p.required)) {
+    const edmx = parseEdmxTypes(metadata ?? "").get(normalizeGiKey(args.inquiryName));
+    const declared = edmx
+      ? edmx.order.map((name) => ({ fieldName: name, dataType: edmTypeToSimple(edmx.types.get(name) ?? "") }))
+      : [];
+    const response = respond(declared, null);
+    return declared.length || entry?.fields?.length
+      ? response
+      : { ...response, note: "No field list: OData $metadata has no entity type matching this inquiry's name." };
   }
 
-  const entry = gate.allowed ? gate.entry : undefined;
   const cacheKey = `gi_schema:${args.inquiryName}`;
 
   // Check KV cache first (cache holds the raw inference; curated overlay is
   // applied at response time so registry edits take effect without a recache).
-  const cached = await getCached<CachedGiSchema>(env.store, cacheKey);
+  // A parameterized GI's sample is never cached: it ran at the GI's defaults,
+  // which can depend on the user or the date (@me, @Today).
+  const cached = fn ? null : await getCached<CachedGiSchema>(env.store, cacheKey);
   if (cached) {
-    return buildSchemaResponse(args.inquiryName, cached.fields, cached.sampleRow, entry);
+    return respond(cached.fields, cached.sampleRow);
   }
 
   try {
     const response = await client.getOData<ODataQueryResponse>(
-      args.inquiryName,
+      fn ? `${fn.functionImport}()` : args.inquiryName,
       "acumatica_describe_inquiry",
       { inquiryName: args.inquiryName },
       { $top: "1" }
@@ -312,15 +337,19 @@ export async function handleDescribeInquiry(
       // No sample to infer from. If the registry resolved this GI's fields, we
       // can still return the curated schema (it needs no live data).
       if (entry?.fields?.length) {
-        return buildSchemaResponse(args.inquiryName, [], null, entry);
+        return respond([], null);
       }
       // Don't cache empty results — the GI may just not have data right now
-      return {
-        inquiryName: args.inquiryName,
-        fields: [],
-        sampleRow: null,
-        note: "GI returned no data — field schema cannot be inferred. Try running it in the Acumatica UI first to confirm it returns data, or use acumatica_run_inquiry with a filter.",
-      };
+      return withParameters(
+        {
+          inquiryName: args.inquiryName,
+          fields: [],
+          sampleRow: null,
+          note: "GI returned no data — field schema cannot be inferred. Try running it in the Acumatica UI first to confirm it returns data, or use acumatica_run_inquiry with a filter.",
+        },
+        params,
+        false
+      );
     }
 
     // Strip OData control fields and trim space-padded values before inference.
@@ -332,9 +361,11 @@ export async function handleDescribeInquiry(
     }));
 
     // Cache the raw inference (not the curated overlay) for future calls.
-    await setCached(env.store, cacheKey, { inquiryName: args.inquiryName, fields, sampleRow }, GI_SCHEMA_TTL_SECONDS);
+    if (!fn) {
+      await setCached(env.store, cacheKey, { inquiryName: args.inquiryName, fields, sampleRow }, GI_SCHEMA_TTL_SECONDS);
+    }
 
-    return buildSchemaResponse(args.inquiryName, fields, sampleRow, entry);
+    return respond(fields, sampleRow);
   } catch (error) {
     if (error instanceof AcumaticaApiError) {
       return {

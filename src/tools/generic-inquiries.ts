@@ -6,9 +6,10 @@ import { AcumaticaClient } from "../lib/acumatica-client";
 import { getConfig, parsePositiveIntConfig, validateStringArg } from "../lib/config";
 import { normalizeODataFilter } from "../lib/odata-filter";
 import { cleanGiRows } from "../lib/gi-rows";
-import { checkGiGate, parameterizedGiNames } from "../lib/gi-registry";
+import { checkGiGate } from "../lib/gi-registry";
+import { parseEdmxFunctions, planGiRequest, describeParam } from "../lib/gi-parameters";
+import { loadGiMetadata, forgetGiMetadata } from "../lib/gi-metadata";
 import { getGiRegistry } from "../lib/gi-registry-build";
-import { getCached, setCached } from "../lib/metadata-cache";
 import {
   classifyODataV4Error,
   buildODataV4Correction,
@@ -24,21 +25,6 @@ interface ODataQueryResponse {
   "@odata.count"?: number;
 }
 
-const GI_METADATA_TTL_SECONDS = 3600; // 1 hour, shared "gi_metadata" cache
-
-/**
- * Cached OData `$metadata` fetch (shared `gi_metadata` key, same as the GI list
- * and registry build). Used to detect parameterized GIs. Returns "" on failure
- * so the caller fails open — a metadata fetch error never blocks a query.
- */
-async function loadGiMetadata(env: AppEnv, client: AcumaticaClient): Promise<string> {
-  const cached = await getCached<string>(env.store, "gi_metadata");
-  if (cached !== null) return cached;
-  const xml = await client.getODataMetadata("acumatica_run_inquiry").catch(() => "");
-  if (xml) await setCached(env.store, "gi_metadata", xml, GI_METADATA_TTL_SECONDS);
-  return xml;
-}
-
 export async function handleRunInquiry(
   env: AppEnv,
   acumaticaUsername: string,
@@ -47,12 +33,14 @@ export async function handleRunInquiry(
     filterExpression?: string;
     topN?: number;
     selectFields?: string;
+    parameters?: string;
   }
 ): Promise<unknown> {
   const lengthErr =
     validateStringArg(args.inquiryName, "inquiryName", 200) ||
     validateStringArg(args.filterExpression, "filterExpression", 2000) ||
-    validateStringArg(args.selectFields, "selectFields", 1000);
+    validateStringArg(args.selectFields, "selectFields", 1000) ||
+    validateStringArg(args.parameters, "parameters", 2000);
   if (lengthErr) return { error: lengthErr };
 
   // Opt-in gate: when a registry has been built, only GIs explicitly exposed
@@ -64,21 +52,45 @@ export async function handleRunInquiry(
 
   const client = new AcumaticaClient(env, acumaticaUsername);
 
-  // Guard: a parameterized GI queried over OData without its parameters returns
-  // default/unfiltered — i.e. wrong — rows with no error. Refuse rather than hand
-  // the model misleading data. An active gate already keeps parameterized GIs out
-  // of the registry (the MCPGIs feed filters parameter-free); this also closes the
-  // inactive-state hole, where run_inquiry could otherwise reach one. Fails open
-  // if $metadata is unavailable (empty set → no false refusals).
-  if (parameterizedGiNames(await loadGiMetadata(env, client)).has(args.inquiryName.trim())) {
-    return {
-      error:
-        `Generic Inquiry '${args.inquiryName}' takes parameters and cannot be queried correctly over OData — ` +
-        `without its parameters it returns default/unfiltered results (often wrong) with no error, so it was refused. ` +
-        `Use a parameter-free Generic Inquiry, or run this inquiry in the Acumatica UI where its parameters can be supplied.`,
-      parameterized: true,
-    };
-  }
+  // Parameterized GI: the plain entity set would run it with no parameter
+  // values and return plausible but unfiltered rows, with no error. So it is
+  // queried through its `_WithParameters` function instead, after the model's
+  // `parameters` are checked against live $metadata — including unknown names,
+  // which Acumatica silently ignores. planGiRequest fails closed: when the
+  // server can't be sure a GI is parameter-free ($metadata unavailable, an
+  // ambiguous name, unparsable definitions) it refuses. Labels/defaults come
+  // from the registry (MCPGIParams feed) when present.
+  const metadata = await loadGiMetadata(env, client, acumaticaUsername, "acumatica_run_inquiry");
+  const plan = planGiRequest(
+    metadata === null ? null : parseEdmxFunctions(metadata),
+    args.inquiryName,
+    args.parameters,
+    gate.entry?.parameters,
+    env.ACUMATICA_GI_PARAMETERS === "true"
+  );
+  if (plan.kind === "refuse") return plan.error;
+  const odataPath = plan.path;
+  const aliasQuery: Record<string, string> = plan.kind === "function" ? plan.aliases : {};
+  const paramBlock: Record<string, unknown> | undefined =
+    plan.kind === "function"
+      ? {
+          applied: plan.applied,
+          defaulted: plan.defaulted.map(describeParam),
+          ...(plan.defaulted.length
+            ? {
+                note:
+                  "Parameters under 'defaulted' were not supplied and took the inquiry's own default value, " +
+                  "which can narrow the results (a default date range, for example). Tell the user which defaults applied.",
+              }
+            : {}),
+        }
+      : undefined;
+  const withParams = (result: unknown): unknown =>
+    !paramBlock
+      ? result
+      : Array.isArray(result)
+        ? { results: result, parameters: paramBlock }
+        : { ...(result as Record<string, unknown>), parameters: paramBlock };
 
   const maxRecords = await getConfig(env.store, "acumatica_max_records", env.ACUMATICA_MAX_RECORDS);
   const MAX_TOP = parsePositiveIntConfig(maxRecords, 1000);
@@ -131,15 +143,39 @@ export async function handleRunInquiry(
     query.$count = "true";
   }
 
+  Object.assign(query, aliasQuery);
+
   let response: ODataQueryResponse;
   try {
     response = await client.getOData<ODataQueryResponse>(
-      args.inquiryName,
+      odataPath,
       "acumatica_run_inquiry",
-      { inquiryName: args.inquiryName, filter: filterExpression, topN: effectiveTop, select: args.selectFields },
+      {
+        inquiryName: args.inquiryName,
+        filter: filterExpression,
+        topN: effectiveTop,
+        select: args.selectFields,
+        ...(paramBlock ? { parameters: paramBlock.applied } : {}),
+      },
       query
     );
   } catch (err) {
+    // On the function URL a 404 means a required parameter did not reach
+    // Acumatica (validated above, so unexpected) — not "no such record".
+    if (plan.kind === "function" && err instanceof AcumaticaApiError && err.statusCode === 404) {
+      // Re-read $metadata on the retry: the parameter list may have changed.
+      await forgetGiMetadata(env, acumaticaUsername);
+      return {
+        error: "parameterized_inquiry_failed",
+        inquiryName: args.inquiryName,
+        problem:
+          "Acumatica rejected the parameterized call with HTTP 404, which on this endpoint means it did not receive a " +
+          "required parameter. The inquiry's parameter definitions may have changed since they were last read.",
+        parameters: plan.fn.params.map(describeParam),
+        actionRequired:
+          "The query was NOT executed — do not report 'no records'. Check the parameters with acumatica_describe_inquiry and retry once.",
+      };
+    }
     // Turn an OData v4 filter-parser rejection into a correction instead of a
     // dead end. The GI endpoint is v4 while acumatica_list_entities is v3, so
     // the most common cause is v3 syntax carried across (substringof,
@@ -167,8 +203,8 @@ export async function handleRunInquiry(
   // With an exact total, "at the cap" no longer has to be ambiguous.
   const totalCount = response["@odata.count"];
   if (typeof totalCount === "number") {
-    if (totalCount <= cleaned.length) return cleaned;
-    return {
+    if (totalCount <= cleaned.length) return withParams(cleaned);
+    return withParams({
       results: cleaned,
       truncated: true,
       mayBeComplete: false,
@@ -181,14 +217,14 @@ export async function handleRunInquiry(
         `This tool does NOT support pagination. Do NOT call this tool again with a different offset or topN to retrieve more records — no such mechanism exists. ` +
         `Report the total if that answers the question; otherwise ask the user to narrow their request with a more specific filterExpression ` +
         `(e.g., date range, status, or other criteria) so the result set fits under the limit.`,
-    };
+    });
   }
 
   // Without a total count (the default), "exactly at cap" is
   // indistinguishable from "more rows exist". See entity-list.ts for the
   // same reasoning.
   if (cleaned.length >= effectiveTop) {
-    return {
+    return withParams({
       results: cleaned,
       truncated: true,
       mayBeComplete: true,
@@ -200,8 +236,8 @@ export async function handleRunInquiry(
         `This tool does NOT support pagination. Do NOT call this tool again with a different offset or topN to retrieve more records — no such mechanism exists. ` +
         `If the user needs confidence the result is complete, stop and ask them to narrow their request with a more specific filterExpression ` +
         `(e.g., date range, status, or other criteria) so the result set fits comfortably under the limit.`,
-    };
+    });
   }
 
-  return cleaned;
+  return withParams(cleaned);
 }

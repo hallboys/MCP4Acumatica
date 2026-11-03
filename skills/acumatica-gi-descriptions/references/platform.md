@@ -91,8 +91,11 @@ Trigger a refresh through the normal path instead, then re-read the stored token
 
 ## Consuming side
 
-**`[UNIVERSAL]` Parameterized GIs must never reach an AI menu.** Queried without
-parameters they return default or unfiltered rows with no error.
+**`[UNIVERSAL]` Parameterized GIs must never be queried through their plain entity set.**
+Queried that way they run with no parameter values and return default or unfiltered rows
+with no error. Use the `{Name}_WithParameters(P=@p1)?@p1=…` function instead, and validate
+names first: a misspelled parameter name is silently ignored. MCP4Acumatica 0.56.0+ does both,
+so a parameterized GI may be exposed once its Is Required flags and defaults are right.
 
 **`[UNIVERSAL]` Caption → property name — but only when a caption exists.**
 `GIResult.Caption` is an *override*, not the displayed label. Where it is set, the

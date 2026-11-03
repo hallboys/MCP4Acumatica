@@ -13,6 +13,8 @@ import {
   type FeedGiRow,
   type FeedFieldRow,
 } from "./gi-registry";
+import { parseEdmxFunctions, enrichParams, findGiFunction, type FeedParamRow } from "./gi-parameters";
+import { loadGiMetadata } from "./gi-metadata";
 
 /**
  * Lazy, on-demand build of the GI registry using the *requesting user's* token
@@ -42,12 +44,15 @@ const REGISTRY_CACHE_KEY = "gi_registry";
 const FEED_MAX_PAGES = 10;
 const REGISTRY_FRESH_SECONDS = 3600; // rebuild when older than 1h
 const REGISTRY_DURABLE_TTL = 7 * 24 * 3600; // last-good survives 7 days of failed/absent rebuilds
-const GI_METADATA_TTL_SECONDS = 3600;
 
 // Feed GI names (the two registry inquiries). Kept here, not in the leaf gate
 // module, because only the build path queries them.
 const FEED_REGISTRY_GI = "MCPGIs";
 const FEED_FIELDS_GI = "MCPGIFields";
+// Optional third feed: labels + default values of parameterized GIs' parameters.
+// Absent on setups that predate it — the registry then carries parameters from
+// $metadata alone (names, types, required-ness), without labels or defaults.
+const FEED_PARAMS_GI = "MCPGIParams";
 
 interface ODataValue<T> {
   value: T[];
@@ -121,16 +126,33 @@ async function buildRegistry(env: AppEnv, acumaticaUsername: string): Promise<Gi
   const [giRows, fieldRows, metaXml] = await Promise.all([
     fetchFeed<FeedGiRow>(client, FEED_REGISTRY_GI, pageSize, "Name"),
     fetchFeed<FeedFieldRow>(client, FEED_FIELDS_GI, pageSize, "Name,LineNbr"),
-    loadMetadata(client, env),
+    loadGiMetadata(env, client, acumaticaUsername, "gi_registry_build").then((xml) => xml ?? ""),
   ]);
+  // Fetched after the others, not alongside them: three parallel requests is
+  // the default per-user concurrency cap, and a fourth would queue behind it.
+  const functions = parseEdmxFunctions(metaXml);
+  const paramRows = functions.size
+    ? await fetchFeed<FeedParamRow>(client, FEED_PARAMS_GI, pageSize, "Name,ParamName").catch((error) => {
+        logError("gi_registry_build", `${FEED_PARAMS_GI} unavailable — parameters carry no labels/defaults: ${error instanceof Error ? error.message : String(error)}`);
+        return [] as FeedParamRow[];
+      })
+    : [];
 
-  return assembleRegistry({
+  const registry = assembleRegistry({
     giRows,
     fieldRows,
     edmxTypes: parseEdmxTypes(metaXml),
     builtAt: new Date().toISOString(),
     endpointVersion: env.ACUMATICA_ENDPOINT_VERSION,
   });
+
+  for (const entry of registry.gis) {
+    const fn = findGiFunction(functions, entry.giName);
+    if (!fn || fn === "ambiguous" || fn.unparsed) continue;
+    const rows = paramRows.filter((r) => r.Name?.trim() === entry.giName);
+    entry.parameters = enrichParams(fn.params, rows);
+  }
+  return registry;
 }
 
 /**
@@ -186,12 +208,4 @@ async function fetchFeed<T>(
     `${giName}: hit the ${FEED_MAX_PAGES}-page cap at ${rows.length} rows; later GIs may lose their curated column descriptions.`
   );
   return rows;
-}
-
-async function loadMetadata(client: AcumaticaClient, env: AppEnv): Promise<string> {
-  const cached = await getCached<string>(env.store, "gi_metadata");
-  if (cached !== null) return cached;
-  const xml = await client.getODataMetadata("gi_registry_build").catch(() => "");
-  if (xml) await setCached(env.store, "gi_metadata", xml, GI_METADATA_TTL_SECONDS);
-  return xml;
 }

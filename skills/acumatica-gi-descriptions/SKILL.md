@@ -118,10 +118,12 @@ and caption typos are permanent parts of the surface. If a caption reads
 `AREHOUSE`, that is genuinely the property name — describe it as-is rather than
 correcting it silently.
 
-**`[UNIVERSAL]` Parameterized GIs return silently wrong data over OData.**
-Queried without their parameters — which is how an agent queries — they return
-default or unfiltered rows with no error. Exclude them from any AI-facing menu
-regardless of how useful they look.
+**`[UNIVERSAL]` Parameterized GIs return silently wrong data through their plain entity set.**
+Queried without their parameters they return default or unfiltered rows with no
+error. MCP4Acumatica 0.56.0+ queries them through their `_WithParameters` function with
+validated parameters, so they may be described and exposed — but only after checking that
+every parameter needed for correct results is marked **Is Required** and the defaults are
+acceptable. A consumer without that handling must exclude them.
 
 **`[UNIVERSAL]` One long request can wedge a whole session.** Under the plain
 `api` scope each token is a single Acumatica session, so a slow call blocks every

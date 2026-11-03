@@ -25,6 +25,8 @@
  * KV-cache orchestration lives in gi-registry-build.ts.
  */
 
+import type { GiParamMeta } from "./gi-parameters.ts";
+
 /** Per-column curated/resolved metadata for an exposed GI. */
 export interface GiFieldMeta {
   /** Authoritative OData $metadata property name (carries any `_N` collision suffix). */
@@ -57,6 +59,12 @@ export interface GiRegistryEntry {
   description?: string;
   /** Resolved field metadata. Empty/absent → pure runtime inference. */
   fields?: GiFieldMeta[];
+  /**
+   * Parameters, for a parameterized GI: names/types/required-ness from
+   * `$metadata`, labels and defaults from the MCPGIParams feed. Informational —
+   * run_inquiry re-reads live `$metadata` and overlays only labels/defaults.
+   */
+  parameters?: GiParamMeta[];
 }
 
 /**
@@ -116,24 +124,9 @@ export interface GiRegistry {
 export const EXCLUDED_GI_NAMES: ReadonlySet<string> = new Set([
   "MCPGIs",
   "MCPGIFields",
+  "MCPGIParams",
   "MCPAccess",
 ]);
-
-/**
- * Names of parameterized GIs found in an OData `$metadata` document. Acumatica
- * exposes a parameterized GI as a `{Name}_WithParameters` FunctionImport; the
- * base entity set, queried without those parameters (as the agent does), returns
- * default/unfiltered — i.e. *wrong* — rows with no error. Callers use this to
- * exclude such GIs from discovery and to refuse them in `run_inquiry`. Pure.
- */
-export function parameterizedGiNames(metadataXml: string): ReadonlySet<string> {
-  const names = new Set<string>();
-  if (!metadataXml) return names;
-  for (const m of metadataXml.matchAll(/FunctionImport\s+Name="([^"]+)_WithParameters"/g)) {
-    names.add(m[1]);
-  }
-  return names;
-}
 
 /** Result of a gate check, so callers can give the model a precise reason. */
 export type GateDecision =
@@ -409,9 +402,14 @@ export function assembleRegistry(opts: {
 
   const gis: GiRegistryEntry[] = [];
   const alignment: GiAlignmentDiagnostic[] = [];
+  const seen = new Set<string>();
   for (const giRow of giRows) {
     const giName = giRow.Name?.trim();
     if (!giName || EXCLUDED_GI_NAMES.has(giName)) continue;
+    // A feed that joins a detail table (as MCPGIs once joined GIFilter) repeats
+    // the GI row; the first one wins.
+    if (seen.has(giName)) continue;
+    seen.add(giName);
 
     const entry: GiRegistryEntry = { giName };
     if (giRow.DesignID) entry.designID = String(giRow.DesignID).trim();

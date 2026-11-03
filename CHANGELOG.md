@@ -5,6 +5,24 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.56.0] - 2026-11-03
+### Added
+- **Parameterized Generic Inquiries are supported instead of refused.** A GI with parameters is now queried through its `{Name}_WithParameters` OData function — Acumatica's documented way to pass parameter values — rather than refused. `acumatica_run_inquiry` takes a new `parameters` argument (a JSON object as a string) and checks it against OData `$metadata` before contacting Acumatica: a call without the argument is refused with the parameter list, a **required** parameter (**Is Required** on the GI, `Nullable="false"` in `$metadata`) must have a value, a value must fit the parameter's type, and an **unknown parameter name is refused** — Acumatica itself silently ignores a misspelled name and returns unfiltered rows. Optional parameters left out take the GI's default value, and the response lists them under `parameters.defaulted` so the model can say which defaults applied. Every value is sent as an OData parameter alias, which also keeps date-time values working (the server rejects a `:` in the URL path). `acumatica_describe_inquiry` and `acumatica_list_generic_inquiries` show each GI's parameters; a GI with a required parameter is described without a sample row. Verified on a 2026 R2 sandbox and on 2025 R2 production (text and date parameters filter; an out-of-range date returns nothing). Enabled only when `ACUMATICA_GI_PARAMETERS` is `"true"`. 2025 R2 declares GI date parameters as `Edm.DateTimeOffset` (2026 R2 as `Edm.Date`) and accepts a plain `YYYY-MM-DD` for them, so date-time parameters accept a plain date as well as a full date-time with offset.
+- **`ACUMATICA_GI_PARAMETERS` switch, off by default.** Off, parameterized GIs are refused and left out of the list, as before. Turn it on per instance after verifying one parameterized call on that Acumatica release (`docs/upgrading-acumatica.md` §7).
+- **`MCPGIParams` feed GI (optional, `acumatica/MCPGIParams.xml`)** supplies parameter display names and default values, which `$metadata` lacks. Without it the checks still apply.
+
+### Changed
+- **`MCPGIs` no longer excludes parameterized GIs.** Nothing changes until the feed is re-imported. On re-import, a parameterized GI that is already tagged `ExposedToMCP` becomes visible to the assistant — review its parameters first (`docs/generic-inquiries.md` → Parameterized GIs).
+- The registry de-duplicates repeated GI rows from the `MCPGIs` feed.
+- **GI `$metadata` is cached per user and never cached empty.** The run, describe and list tools and the registry build share one loader. Before, a failed fetch was cached as an empty document for an hour, which made every GI look parameter-free.
+- **GI routing fails closed.** `run_inquiry` and `describe_inquiry` now refuse a GI when they cannot be sure it is parameter-free: `$metadata` unavailable, a name matching two GIs once punctuation is ignored, a parameter definition that cannot be parsed, or a registry entry with parameters that the current `$metadata` does not list. They also refuse inquiry names containing URL path or query characters. Before, all of these fell through to the plain entity set.
+
+### Fixed
+- **Parameterized GIs whose names contain spaces or punctuation were not recognized as parameterized.** The old check compared the GI name against the `FunctionImport` name, which Acumatica strips of punctuation, so for such a GI the refusal never fired; only the `MCPGIs` feed's filter kept them out of an active gate. Detection now goes through the `Function` element, which carries the real GI name.
+
+### Documentation
+- `docs/generic-inquiries.md` (new "Parameterized GIs" section and setup steps), `docs/tool-reference.md`, `acumatica/README.md` (`MCPGIParams` column mapping), `docs/upgrading-acumatica.md` §4 (re-verify after an upgrade), and the design record `docs/gi-parameters-plan.md`.
+
 ## [0.55.0] - 2026-11-03
 ### Added
 - **Exact totals for Generic Inquiries, opt-in (`ACUMATICA_GI_COUNT`).** When set to `"true"`, `acumatica_run_inquiry` requests `$count=true`; a result that hits the row cap then carries `totalCount` and `mayBeComplete: false` ("N records match this query; this response contains only the first M"), and a result exactly at the cap that is in fact complete comes back without the truncation envelope. The model can answer "how many" questions from the total instead of asking the user to narrow the filter. Off by default: the 2025 R2 Reporting Tools guide lists `$count` as unsupported on the GI-based OData interface, so production does not send it. Verified on a 2026 R2 sandbox (filtered and unfiltered totals; the total equals the rows the same query returns). `docs/upgrading-acumatica.md` §7 has the step to turn it on after a 2026 R2 upgrade.

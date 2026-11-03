@@ -40,7 +40,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.55.0",
+    version: "0.56.0",
   });
 
   // agents 0.21.0 types `props` as optional (`props?: Props`), but on this
@@ -115,6 +115,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       ACUMATICA_MAX_PER_MINUTE: this.env.ACUMATICA_MAX_PER_MINUTE,
       ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS: this.env.ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS,
       ACUMATICA_GI_COUNT: this.env.ACUMATICA_GI_COUNT,
+      ACUMATICA_GI_PARAMETERS: this.env.ACUMATICA_GI_PARAMETERS,
       store: new CloudflareKVStore(this.env.TOKEN_STORE),
       tokenProvider: new DOTokenProvider(this.env.TOKEN_MANAGER),
       indexStore: this.env.INDEX_STORE ? new CloudflareR2BlobStore(this.env.INDEX_STORE) : undefined,
@@ -188,7 +189,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
     this.tool(
       "acumatica_run_inquiry",
-      "Execute a Generic Inquiry (GI) exposed via OData in Acumatica and return filtered results. Use this for custom reports and cross-entity queries. Use acumatica_list_generic_inquiries to discover GI names and acumatica_describe_inquiry to get field schema before calling this tool.",
+      "Execute a Generic Inquiry (GI) exposed via OData in Acumatica and return filtered results. Use this for custom reports and cross-entity queries. Use acumatica_list_generic_inquiries to discover GI names and acumatica_describe_inquiry to get field schema before calling this tool. Some GIs take PARAMETERS (acumatica_list_generic_inquiries and acumatica_describe_inquiry show them): such a GI must be called with the `parameters` argument, and is refused without it.",
       {
         inquiryName: z
           .string()
@@ -208,12 +209,16 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
           .string()
           .optional()
           .describe("Comma-separated field names to return (e.g., 'CustomerID,Balance')"),
+        parameters: z
+          .string()
+          .optional()
+          .describe("For a GI that takes parameters ONLY: a JSON object keyed by the parameter names acumatica_describe_inquiry reports, e.g. {\"Warehouse\":\"WHOLESALE\",\"StartDate\":\"2026-10-01\"}. Required parameters must have a value — ask the user rather than guess. Dates are YYYY-MM-DD (also accepted for date-time parameters; a full date-time needs an offset, e.g. 2026-10-01T00:00:00Z); booleans true/false. An optional parameter left out takes the inquiry's own default value (for example a default date range), which can narrow the results — the response lists which defaults applied; tell the user. Pass {} to run with every optional parameter at its default. Unknown names are refused. Omit this argument for GIs without parameters. Parameters are applied before filterExpression, which still works on top."),
       },
-      async ({ inquiryName, filterExpression, topN, selectFields }) => {
+      async ({ inquiryName, filterExpression, topN, selectFields, parameters }) => {
         return this.callTool(
-          () => handleRunInquiry(this.appEnv, this.props.acumaticaUsername, { inquiryName, filterExpression, topN, selectFields }),
+          () => handleRunInquiry(this.appEnv, this.props.acumaticaUsername, { inquiryName, filterExpression, topN, selectFields, parameters }),
           "acumatica_run_inquiry",
-          { inquiryName, filterExpression, topN, selectFields }
+          { inquiryName, filterExpression, topN, selectFields, parameters }
         );
       }
     );
@@ -277,7 +282,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
     this.tool(
       "acumatica_list_generic_inquiries",
-      "List all Generic Inquiries (GIs) exposed via OData in Acumatica. Returns inquiry names. Use this to discover available GI names before calling acumatica_run_inquiry or acumatica_describe_inquiry.",
+      "List all Generic Inquiries (GIs) exposed via OData in Acumatica. Returns inquiry names, and for GIs that take parameters, the parameter names (required ones marked). Use this to discover available GI names before calling acumatica_run_inquiry or acumatica_describe_inquiry.",
       {
         titleFilter: z
           .string()
@@ -302,7 +307,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
 
     this.tool(
       "acumatica_describe_inquiry",
-      "Returns the field schema for a Generic Inquiry (GI) exposed via OData. Field names and types are inferred from a single live sample row — types may be approximate (e.g. a column that is null in the sample reports as 'unknown'), and a GI that returns no rows yields an empty field list. Curated GIs return authoritative names/types instead, and mark calculated (expression) columns with 'calculated: true' — those columns CANNOT be used in a run_inquiry filterExpression. Use this before calling acumatica_run_inquiry to know which fields are available for filtering and selection. For authoritative entity schemas (not GIs), use acumatica_describe_entity instead.",
+      "Returns the field schema for a Generic Inquiry (GI) exposed via OData. Field names and types are inferred from a single live sample row — types may be approximate (e.g. a column that is null in the sample reports as 'unknown'), and a GI that returns no rows yields an empty field list. Curated GIs return authoritative names/types instead, and mark calculated (expression) columns with 'calculated: true' — those columns CANNOT be used in a run_inquiry filterExpression. Use this before calling acumatica_run_inquiry to know which fields are available for filtering and selection. For a GI that takes parameters, also returns each parameter's name, type, whether it is required, and its default value — call this before running such a GI. For authoritative entity schemas (not GIs), use acumatica_describe_entity instead.",
       {
         inquiryName: z
           .string()

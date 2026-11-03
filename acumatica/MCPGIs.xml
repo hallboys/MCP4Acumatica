@@ -170,18 +170,13 @@
   <data>
     <GIDesign>
       <row DesignID="4e295d30-4162-44f9-9a1d-ca6406b9293d" Name="MCPGIs" FilterColCount="3" PageSize="0" ExportTop="0" NewRecordCreationEnabled="0" MassDeleteEnabled="0" AutoConfirmDelete="0" MassRecordsUpdateEnabled="0" MassActionsOnRecordsEnabled="0" ExposeViaOData="1" ExposeViaMobile="0" ShowDeletedRecords="0" ShowArchivedRecords="0" NotesAndFilesTable="$&lt;None&gt;" MLDetectionEnabled="0" SkipEmptyGroups="0" UsrExposedToMCP="0">
-        <GITable Alias="GIFilter" Name="PX.Data.Maintenance.GI.GIFilter" Type="0" />
         <GITable Alias="GIDesign" Name="PX.Data.Maintenance.GI.GIDesign" Type="0">
-          <GIRelation LineNbr="1" ChildTable="GIFilter" IsActive="1" JoinType="L">
-            <GIOn LineNbr="1" ParentField="GIDesign.DesignID" Condition="E" ChildField="GIFilter.DesignID" Operation="A" />
-          </GIRelation>
           <GIResult LineNbr="12" SortOrder="5" IsActive="1" Field="designID" Caption="DesignID" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="6489a3b2-9d58-4840-af30-9a212fc80e0e" />
           <GIResult LineNbr="11" SortOrder="4" IsActive="1" Field="primaryScreenID_description" Caption="ScreenDescription" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="4eae500d-5bb8-4c79-bb99-3e10728f9a5e" />
           <GIResult LineNbr="10" SortOrder="3" IsActive="1" Field="primaryScreenID" Caption="ScreenID" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="e2053f01-ed3c-488c-aa36-5bea9995e42d" />
           <GIResult LineNbr="8" SortOrder="2" IsActive="1" Field="usrAIDescription" Caption="AIDescription" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="8e9c74fb-b014-4ee1-850d-5d46292a8c92" />
           <GIResult LineNbr="1" SortOrder="1" IsActive="1" Field="name" Caption="Name" IsVisible="1" DefaultNav="1" QuickFilter="0" FastFilter="0" RowID="12fe1ad4-2cdc-448c-9106-718eb3887100" />
         </GITable>
-        <GIWhere LineNbr="3" IsActive="1" DataFieldName="GIFilter.LineNbr" Condition="NU" IsExpression="1" Operation="A" />
         <GIWhere LineNbr="2" IsActive="1" DataFieldName="GIDesign.ExposeViaOData" Condition="NE" IsExpression="1" Value1="False" Operation="A" />
         <GIWhere LineNbr="1" IsActive="1" DataFieldName="GIDesign.UsrExposedToMCP" Condition="NE" IsExpression="1" Value1="False" Operation="A" />
         <SiteMap linkname="toDesignByIdNew">

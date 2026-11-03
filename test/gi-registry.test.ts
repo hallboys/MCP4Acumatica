@@ -10,7 +10,6 @@ import assert from "node:assert";
 import {
   checkGiGate,
   EXCLUDED_GI_NAMES,
-  parameterizedGiNames,
   parseEdmxTypes,
   edmTypeToSimple,
   expectedTypeFamily,
@@ -433,24 +432,17 @@ test("alignment: a feed with no active flag at all is refused, not aligned by Li
   assert.equal(annotated, 0, "no captions or descriptions attached");
 });
 
-// ── Parameterized-GI detection (run_inquiry guard + discovery exclusion) ──
+// ── Feed de-duplication ──
 
-test("parameterizedGiNames extracts {Name}_WithParameters function imports", () => {
-  const xml = `
-    <EntityContainer Name="Default">
-      <EntitySet Name="OpenSalesByCustomer" EntityType="x"/>
-      <FunctionImport Name="OpenSalesByCustomer_WithParameters" ReturnType="y"/>
-      <FunctionImport Name="ARAgedByCustomer_WithParameters"/>
-    </EntityContainer>`;
-  const names = parameterizedGiNames(xml);
-  assert.ok(names.has("OpenSalesByCustomer"));
-  assert.ok(names.has("ARAgedByCustomer"));
-  assert.equal(names.has("SomeParameterFreeGI"), false);
-});
-
-test("parameterizedGiNames returns empty set for empty/absent metadata", () => {
-  assert.equal(parameterizedGiNames("").size, 0);
-  assert.equal(parameterizedGiNames("<edmx:Edmx/>").size, 0);
+test("assembleRegistry keeps one entry per GI when the feed repeats a row", () => {
+  const reg = assembleRegistry({
+    giRows: [{ Name: "OpenSales", AIDescription: "first" }, { Name: "OpenSales", AIDescription: "second" }],
+    fieldRows: [],
+    edmxTypes: new Map(),
+    builtAt: "2026-11-03T00:00:00Z",
+  });
+  assert.equal(reg.gis.length, 1);
+  assert.equal(reg.gis[0].description, "first");
 });
 
 // ── Hoist disambiguation: declared types, tie refusal, token tiebreak (0.48.2) ──
