@@ -66,8 +66,16 @@ export interface DocsSearchHit {
   matchedOn: string[];
 }
 
-const FORM_ID_RE = /^[A-Za-z]{2}\.?\d{2}\.?\d{2}\.?\d{2}$/;
+// Two letters (module) + six characters. Usually digits, but some screen IDs
+// carry letters after the module prefix (PMGI3055, AM0018DB, FS4010PL), so a
+// letter is allowed there as long as the ID still has at least two digits.
+const FORM_ID_RE = /^[A-Za-z]{2}\.?[0-9A-Za-z]{2}\.?[0-9A-Za-z]{2}\.?[0-9A-Za-z]{2}$/;
+// Free-text extraction is stricter: the all-digit form in any case, or an
+// alphanumeric ID written in capitals (so ordinary words never qualify).
 const FORM_ID_IN_TEXT_RE = /\b([A-Za-z]{2})\.?(\d{2})\.?(\d{2})\.?(\d{2})\b/;
+const ALNUM_FORM_ID_IN_TEXT_RE = /\b([A-Z]{2}[0-9A-Z]{6})\b/g;
+
+const digitCount = (s: string) => s.replace(/\D/g, "").length;
 
 const STOPWORDS = new Set([
   "the", "a", "an", "of", "to", "in", "on", "for", "and", "or", "is", "are",
@@ -79,13 +87,18 @@ const STOPWORDS = new Set([
 export function normalizeFormId(raw: string | undefined): string | null {
   const t = raw?.trim() ?? "";
   if (!FORM_ID_RE.test(t)) return null;
-  return t.replace(/\./g, "").toUpperCase();
+  const id = t.replace(/\./g, "").toUpperCase();
+  return digitCount(id) >= 2 ? id : null;
 }
 
 /** Extract a Form ID mentioned anywhere in free text (e.g. a search query). */
 export function formIdInText(text: string): string | null {
   const m = FORM_ID_IN_TEXT_RE.exec(text);
-  return m ? (m[1] + m[2] + m[3] + m[4]).toUpperCase() : null;
+  if (m) return (m[1] + m[2] + m[3] + m[4]).toUpperCase();
+  for (const a of text.matchAll(ALNUM_FORM_ID_IN_TEXT_RE)) {
+    if (digitCount(a[1]) >= 2) return a[1];
+  }
+  return null;
 }
 
 function tokenize(query: string): string[] {

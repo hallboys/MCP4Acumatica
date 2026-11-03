@@ -73,6 +73,23 @@ test("formIdInText finds an embedded Form ID, dotted or not", () => {
   assert.equal(formIdInText("release AP retainage"), null);
 });
 
+test("alphanumeric screen IDs (letters after the module prefix) are Form IDs", () => {
+  assert.equal(normalizeFormId("PMGI3055"), "PMGI3055");
+  assert.equal(normalizeFormId("am0018db"), "AM0018DB");
+  assert.equal(normalizeFormId("FS4010PL"), "FS4010PL");
+  // Eight letters, or a single digit, is a word rather than a screen ID.
+  assert.equal(normalizeFormId("ABCDEFGH"), null);
+  assert.equal(normalizeFormId("password"), null);
+  assert.equal(normalizeFormId("OAUTHAB2"), null);
+});
+
+test("formIdInText picks up a capitalized alphanumeric ID but not ordinary words", () => {
+  assert.equal(formIdInText("what is on PMGI3055"), "PMGI3055");
+  assert.equal(formIdInText("the AM0018DB dashboard"), "AM0018DB");
+  assert.equal(formIdInText("pmgi3055 lowercase"), null);
+  assert.equal(formIdInText("CUSTOMER SHIPMENT totals"), null);
+});
+
 test("formId param returns exactly that form's chunks, ranked first", () => {
   const hits = searchDocs(catalog, { formId: "AP301000" });
   assert.equal(hits.length, 3);

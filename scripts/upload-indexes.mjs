@@ -11,13 +11,25 @@
  *
  * Requires `wrangler` (a devDependency) and Cloudflare auth (`wrangler login`).
  *
- * Usage: node scripts/upload-indexes.mjs
+ * Usage: node scripts/upload-indexes.mjs [--dir <dir>] [--bucket <name>]
+ *        defaults ./.index and mcp4acumatica-index. A second worker pointed at
+ *        another Acumatica instance (e.g. a release sandbox) binds its own
+ *        index bucket; build that instance's indexes with --out .index/<release>
+ *        and upload them with --dir .index/<release> --bucket <its bucket>.
  */
 
 import { existsSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
-const BUCKET = "mcp4acumatica-index";
+const args = process.argv.slice(2);
+const option = (name, fallback) => {
+  const i = args.indexOf(`--${name}`);
+  if (i >= 0 && args[i + 1]) return args[i + 1];
+  const eq = args.find((a) => a.startsWith(`--${name}=`));
+  return eq ? eq.slice(name.length + 3) : fallback;
+};
+const DIR = option("dir", "./.index").replace(/\/+$/, "");
+const BUCKET = option("bucket", "mcp4acumatica-index");
 const INDEXES = ["schema-index.json", "dac-index.json", "gi-examples-index.json"];
 
 function putObject(key, file) {
@@ -31,7 +43,7 @@ function putObject(key, file) {
 
 let uploaded = 0;
 for (const name of INDEXES) {
-  const file = `./.index/${name}`;
+  const file = `${DIR}/${name}`;
   if (!existsSync(file)) continue;
   putObject(name, file);
   uploaded++;
@@ -42,20 +54,20 @@ for (const name of INDEXES) {
 // a new catalog against old parts would misalign section text; a worker
 // reading an old catalog against new parts is only wrong for guides whose
 // chunking changed, and the window closes when the catalog lands.
-const chunkDir = "./.index/docs-chunks";
+const chunkDir = `${DIR}/docs-chunks`;
 if (existsSync(chunkDir)) {
   for (const name of readdirSync(chunkDir).filter((n) => n.endsWith(".json")).sort()) {
     putObject(`docs-chunks/${name}`, `${chunkDir}/${name}`);
     uploaded++;
   }
 }
-if (existsSync("./.index/docs-index.json")) {
-  putObject("docs-index.json", "./.index/docs-index.json");
+if (existsSync(`${DIR}/docs-index.json`)) {
+  putObject("docs-index.json", `${DIR}/docs-index.json`);
   uploaded++;
 }
 
 if (uploaded === 0) {
-  console.error("No indexes found in ./.index/. Run `npm run build-schema-index` first.");
+  console.error(`No indexes found in ${DIR}/. Run \`npm run build-schema-index\` first.`);
   process.exit(1);
 }
 console.log(`Done — uploaded ${uploaded} index file(s).`);

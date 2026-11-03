@@ -84,12 +84,22 @@ authenticate against your licensed instance.
    ```
 
    This cleans the PDF-conversion artifacts (page breaks, running headers,
-   dot-leader TOCs), chunks every guide by heading, tags the Form Reference
-   chunks with their Form IDs, and writes `.index/docs-index.json` (the
-   search catalog, ~3–4 MB) plus `.index/docs-chunks/*.json` (the section
-   text, ~40 MB in bounded parts). The release label is inferred from the
-   folder name (e.g. `.../2025R2` → `2025R2`); pass a second argument to
-   override.
+   dot-leader TOCs), chunks every guide by heading, tags each screen's and
+   report's sections with its Form ID, and writes `.index/docs-index.json`
+   (the search catalog, ~1–4 MB) plus `.index/docs-chunks/*.json` (the
+   section text, ~30–40 MB in bounded parts). The release label is inferred
+   from the folder name (e.g. `.../2025R2` → `2025R2`); pass a second
+   argument to override.
+
+   The script handles both shapes the documentation comes in, detected from
+   the median file size: a few dozen monolithic guides (Beacon, up to
+   2025 R2) become one catalog guide per file; a per-topic export (Beacon
+   from 2026 R2, the GitHub set) becomes one catalog guide per top-level
+   folder (`user-guide`, `release-notes`, …). Override with
+   `--layout topic|guide`. Use `--out <dir>` to build a release into
+   another folder (for a second worker serving a different instance), and
+   upload it with `node scripts/upload-indexes.mjs --dir <dir> --bucket
+   <bucket>`.
 3. **Upload to R2:**
 
    ```bash

@@ -40,7 +40,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.53.0",
+    version: "0.54.0",
   });
 
   // agents 0.21.0 types `props` as optional (`props?: Props`), but on this
@@ -439,7 +439,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
           formId: z
             .string()
             .optional()
-            .describe("A screen's Form ID (two letters + six digits, e.g. 'AP301000', 'SO301000') to find that screen's reference sections."),
+            .describe("A screen's Form ID (two letters + six characters, usually digits, e.g. 'AP301000', 'PMGI3055') to find that screen's reference sections."),
           guide: z
             .string()
             .optional()

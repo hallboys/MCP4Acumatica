@@ -86,31 +86,26 @@ topic, and a Form ID recoverable from most filenames (`SM_20_40_07.md` → `SM20
 Only releases Acumatica has published a branch for are available — there is no branch
 for releases predating the repo's first publication (August 2026).
 
-> **TODO before using Option A: `build-docs-index.mjs` needs an ingestion adapter.**
-> The script is calibrated for the PDF-converted, guide-per-file Beacon corpus. Verified
-> against real files from the `2026R1` branch, two things break on a topic-per-file DITA
-> corpus and both are silent — no error, just degraded output:
+> **Per-topic corpora are supported.** The script was originally calibrated for
+> the PDF-converted, guide-per-file Beacon corpus and degraded silently on a
+> topic-per-file one. It now detects the layout from the median file size (override with
+> `--layout topic|guide`) and, for a per-topic set:
 >
-> 1. **Heading attribute blocks leak into breadcrumbs.** The DITA element IDs surface as
->    Pandoc-style attributes on *every* heading (78/78 in a sample):
->    `# Action Executions {#_1fe5f9f7-… .reference}`. `chunkGuide()`'s `/^(#{1,6})\s+(.+)$/`
->    swallows the block into the heading text, so every catalog path carries GUID noise.
->    Since search matches heading breadcrumbs, this degrades search directly and bloats
->    the catalog. Fix: strip a trailing `{...}` from heading text (optionally keep the id
->    as a stable anchor for deep links).
-> 2. **Form IDs stop propagating to a form's tabs.** In the Beacon corpus a form is an
->    `##` with its tabs as `###`; here each topic is its own file, so the form is `#` and
->    its tabs are `##`. `currentH2()`'s "nearest heading at level ≤ 2" then resolves a
->    tab's form scope to *the tab itself*, so only the form's intro section gets tagged
->    and `acumatica_get_doc_section(formId: …)` returns no tabs or field tables — the
->    tool's main use case. Fix: derive the form scope from the file's top heading when
->    the corpus is topic-per-file, rather than assuming guide-per-file depth.
+> - **groups topics into one guide per top-level folder** (`user-guide`, `release-notes`,
+>   …) instead of one guide per file, so the `guide` filter stays usable and chunk text
+>   packs into ~700 KB parts (2026R2: 11 guides, 44 parts, not 3,652 of each);
+> - **scopes a Form ID to the heading it is defined under and everything beneath it**, so
+>   a form defined under a topic's `#` reaches its `##` toolbar and tabs
+>   (`get_doc_section(AP301000)` on 2026R2: 31 sections, previously 1);
+> - **strips Pandoc heading attributes** (`# Action Executions {#_1fe5f9f7-… .reference}`)
+>   from breadcrumbs, which search matches against.
 >
-> Escaped parens (`Form ID: \(AP301000\)`) are already handled — `FORM_ID_DEF_RE` accepts
-> both flavors and `test/docs-ingest.test.ts` covers it. Note that none of this is a defect
-> in Acumatica's conversion: escaping literal parens and emitting element IDs are both
-> correct for a direct DITA→Markdown render. It is our ingester that assumes the other
-> corpus shape.
+> Escaped parens (`Form ID: \(AP301000\)`), `Report ID:` lines and alphanumeric screen
+> IDs (`PMGI3055`, `FS4010PL`) are recognized in both layouts. None of this was a defect in
+> Acumatica's conversion; escaping literal parens and emitting element IDs are both correct
+> for a direct DITA→Markdown render. The 2026R1 GitHub branch itself has not been
+> ingested yet; the per-topic support was verified on the 2026R2 Beacon export, which has
+> the same shape.
 
 **Option B — the Beacon Portal (any release, incl. pre-2026 R1).**
 
@@ -120,6 +115,23 @@ for releases predating the repo's first publication (August 2026).
 # portal credentials), then:
 npm run build-docs-index -- path/to/new-release-docs-folder
 npm run upload-index
+```
+
+Since 2026 R2 the Beacon download is a per-topic export too (one file per help topic,
+HTML field tables), split across several zips: the main help export (named
+`MarkdownReleaseNotes<release>` despite its content), a Form and Report Reference export,
+and the developer release notes. The two help exports overlap; merge them into one folder
+before ingesting. `hallboys/acumatica-docs` → `2026R2/CATALOG.md` records how that was
+done for 2026R2.
+
+**Building for a second worker.** When a separate worker serves another instance (for
+example a release sandbox ahead of an upgrade), build that release into its own folder
+and upload it to that worker's index bucket, so the production index is untouched:
+
+```bash
+npm run build-docs-index -- path/to/2026R2 --out .index/2026R2
+node scripts/build-schema-index.mjs swagger-26R2.json --out .index/2026R2
+node scripts/upload-indexes.mjs --dir .index/2026R2 --bucket <that worker's index bucket>
 ```
 
 > **Licensing (both options).** The documentation is licensed, not open content. In the

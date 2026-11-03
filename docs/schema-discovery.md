@@ -65,6 +65,11 @@ index is absent, the three schema tools don't register (so they never error), an
 Rebuild and re-upload whenever your endpoint version or customizations change, then
 reconnect the MCP client so the tool list refreshes.
 
+A second worker serving another instance (for example a release sandbox) binds its own
+index bucket. Build that instance's index into a separate folder and upload it there:
+`node scripts/build-schema-index.mjs swagger-26R2.json --out .index/2026R2`, then
+`node scripts/upload-indexes.mjs --dir .index/2026R2 --bucket <that worker's index bucket>`.
+
 ## Privacy / licensing posture
 
 - The ingestion **scripts** (`scripts/build-*.mjs`) are part of the open-source repo

@@ -7,7 +7,7 @@ Remote MCP (Model Context Protocol) server on Cloudflare Workers that connects C
 - **License:** Apache 2.0 — Copyright 2026 Hall Boys, Inc.
 - **Copyright header** required on all `.ts` source files: `// Copyright 2026 Hall Boys, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 - **Git config (this repo only):** `user.email = saratvemuri@hallboys.com`
-- **Current tag:** `25R2-0.53.0`
+- **Current tag:** `25R2-0.54.0`
 - **Deployed at:** `https://mcp4acumatica.hallboys.com` (primary custom domain) / `https://acumatica-mcp.hallboys.com` (legacy alias, kept active during migration) / `https://mcp4acumatica.<account>.workers.dev` (workers.dev fallback)
 - **GitHub:** `https://github.com/hallboys/MCP4Acumatica`
 
@@ -226,9 +226,9 @@ Four tools help power users build *against* Acumatica (discover entities/fields/
 
 `acumatica_search_docs` + `acumatica_get_doc_section` answer "how do I / what does this screen or field do / what changed" questions from the **official Acumatica documentation** — same OSS-script → private-R2-index → conditionally-registered-tools architecture as the schema tools. Exists because `help.acumatica.com` bot-blocks unreliably (see "Scope evolution" above); the operator supplies the official Markdown documentation set, from either Acumatica's **public GitHub repo** (`github.com/Acumatica/Acumatica-AI-Resources`, `Documentation/`, one **branch per release** — DITA-converted, so no PDF-artifact cleanup needed and Form IDs are recoverable from filenames; 2026 R1 and later only) or the **Beacon Portal** (`https://beacon.acumatica.com/`, customer-portal login required — PDF-converted; the only source for pre-2026 R1 releases). **Either way it is licensed content — never committed, never redistributed:** the GitHub repo's `Documentation/` is explicitly excluded from that repo's GPLv3 and is all-rights-reserved, so public readability is not redistribution rights. (The rest of that repo is GPL-3.0-only — do not copy its skill text into this Apache-2.0 project.) Hall Boys' copy lives in the private `hallboys/acumatica-docs` repo, one folder per release.
 
-- **Ingestion:** `scripts/build-docs-index.mjs` (exports pure functions, unit-tested via `test/docs-ingest.test.ts`; `main` runs only when executed directly). Cleans PDF-conversion artifacts (PAGE_BREAK markers, running headers, dot-leader TOC lines, title-page noise headings), chunks by heading with full breadcrumbs, splits >7 KB sections at paragraph boundaries, drops <80-char stubs, and tags Form Reference chunks with their Form ID (a `Form ID: (XX000000)` definition tags its whole H2 scope; body *mentions* of other forms deliberately don't).
+- **Ingestion:** `scripts/build-docs-index.mjs` (exports pure functions, unit-tested via `test/docs-ingest.test.ts`; `main` runs only when executed directly). Cleans PDF-conversion artifacts (PAGE_BREAK markers, running headers, dot-leader TOC lines, title-page noise headings), chunks by heading with full breadcrumbs, splits >7 KB sections at paragraph boundaries, drops <80-char stubs, and tags each screen's/report's chunks with its ID (a `Form ID:`/`Report ID:` definition tags the nearest heading at level ≤ 2 above it **and everything beneath it** — an H2 in the monolithic Form Reference, the H1 of a per-topic file; scopes are keyed **per heading occurrence**, not breadcrumb text, because two screens can share a title in one guide — 2025R2's two *Employee Time Cards* screens were mislabelled until this was fixed; body *mentions* of other forms deliberately don't count). **Two input layouts**, detected from median file size (`--layout topic|guide`): monolithic guides (Beacon ≤ 2025R2) → one catalog guide per file; per-topic exports (Beacon from 2026R2, the GitHub set) → one guide per top-level folder, root `index*.md` navigation maps skipped, Pandoc heading attributes stripped. `--out <dir>` builds a release elsewhere; `upload-indexes.mjs --dir --bucket` targets another worker's bucket (one worker per Acumatica instance; there is no runtime release selection).
 - **Memory design (the load-bearing decision):** the corpus is ~40 MB and must never be held in worker memory. The catalog (`docs-index.json`, ~3.5 MB) holds ONLY heading breadcrumbs + Form IDs — no body text — and is the one thing `loadIndex()` memoizes; section text lives in ~700 KB `docs-chunks/{slug}-{n}.json` R2 parts fetched on demand through a 4-entry FIFO cache in `docs-tools.ts` (deliberately NOT via `loadIndex()`, whose memo never evicts). Consequence: **search matches section headings + Form IDs, not body text** — the tool descriptions steer the model to feature terminology, and `ISchemaSearch`-style seam thinking applies (a Vectorize semantic search can replace `searchDocs()` without touching handlers).
-- **Form ID as a first-class key:** `acumatica_get_doc_section` accepts a bare Form ID (`AP301000`) and returns the screen's reference sections (purpose → toolbar commands → tabs/fields) in document order with a truncation envelope + `remainingSections` list; chunkId mode returns `prev`/`next` neighbors for browsing. 916 forms tagged in the 2025R2 build.
+- **Form ID as a first-class key:** `acumatica_get_doc_section` accepts a bare Form ID (`AP301000`) and returns the screen's reference sections (purpose → toolbar commands → tabs/fields) in document order with a truncation envelope + `remainingSections` list; chunkId mode returns `prev`/`next` neighbors for browsing. 1,301 distinct screen/report IDs tagged in the 2025R2 build, 1,384 in 2026R2. Some IDs are alphanumeric (`PMGI3055`, `FS4010PL`); `normalizeFormId` accepts them when they contain ≥ 2 digits.
 - **Redaction bypass:** both tools pass `skipRedaction` to `callTool` — the payload is vendor documentation, and the payroll/1099/AP guides legitimately *discuss* fields named SSN etc.; pattern redaction would mangle the prose. Only valid for tools that cannot return tenant records.
 - **Upload ordering:** `upload-indexes.mjs` puts `docs-chunks/*` parts BEFORE `docs-index.json` — a live worker resolving a new catalog against old parts would misalign section text.
 - **Upgrades:** the index describes one release; rebuild from the new release's markdown set (upgrading guide §3b). 2025R2-build quirk: guide title pages read "2025 R1" (release notes genuinely R2) — title-page headings are stripped by ingestion, so this affects provenance only.
@@ -523,18 +523,11 @@ When the user says **"close session"**, perform all of the following:
 - [ ] Remove old Entra ID secrets from Cloudflare (`wrangler secret delete`)
 - [~] Add unit tests — `test/` harness added (`npm test`, node --test); covers filter normalization + complex-entity detection. Broader coverage still pending.
 - [ ] Add CI/CD pipeline
-- [ ] **Docs-ingestion adapter for the DITA/topic-per-file corpus — do this when moving to 26R1.**
-  Acumatica now publishes the official docs as Markdown at `github.com/Acumatica/Acumatica-AI-Resources`
-  (branch per release; `2026R1` is the first, no `2025R2`), which becomes the preferred source at our
-  26R1 move. `scripts/build-docs-index.mjs` is calibrated for the PDF-converted, guide-per-file Beacon
-  corpus and degrades **silently** on the new shape: (1) DITA element IDs surface as Pandoc heading
-  attributes on every heading, and `chunkGuide()`'s `(.+)` swallows them into the breadcrumb — which is
-  what search matches; (2) a topic-per-file corpus makes a form an `#` rather than `##`, so
-  `currentH2()`'s "nearest heading at level ≤ 2" resolves a tab's form scope to the tab itself and Form
-  IDs never reach the tabs/field tables — `get_doc_section(formId)` returns only the intro. Escaped
-  parens are already handled (`FORM_ID_DEF_RE` + `test/docs-ingest.test.ts`). Neither issue is a defect
-  in Acumatica's conversion; both are correct DITA→Markdown output meeting our wrong-shaped assumptions.
-  Full detail + fixes in `docs/upgrading-acumatica.md` §3b.
+- [x] **Docs ingestion for per-topic corpora.** Done (0.54.0): layout detected from median file
+  size; a per-topic set builds one guide per top-level folder; Form IDs scope to the defining heading and
+  everything beneath it, keyed per heading occurrence; Pandoc heading attributes stripped; `Report ID:`
+  and alphanumeric IDs recognized. Verified on the 2026R2 Beacon export (same shape as the GitHub
+  `2026R1` branch, which has not itself been ingested). Detail in `docs/upgrading-acumatica.md` §3b.
 
 ### Deferred — `createMcpHandler` migration (assessed 2026-08-18)
 

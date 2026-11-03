@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 51 tools available in the MCP4Acumatica (v0.53.0).
+Complete specification for all 51 tools available in the MCP4Acumatica (v0.54.0).
 
 > **Tool annotations (0.53.0).** Every tool carries MCP annotations and a human-readable `title`.
 > All tools are `readOnlyHint: true` except the write tools (`readOnlyHint: false`,

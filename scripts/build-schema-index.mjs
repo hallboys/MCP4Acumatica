@@ -15,14 +15,19 @@
  * The index is derived purely from swagger.json; run it whenever the endpoint
  * version or your customizations change. Upload with `npm run upload-index`.
  *
- * Usage: node scripts/build-schema-index.mjs [path/to/swagger.json]
+ * Usage: node scripts/build-schema-index.mjs [path/to/swagger.json] [--out <dir>]
+ *        output dir defaults to ./.index; use --out .index/<release> for a
+ *        second instance's worker (see scripts/upload-indexes.mjs).
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-const INPUT = process.argv[2] || "./swagger.json";
-const OUTPUT = "./.index/schema-index.json";
+const argv = process.argv.slice(2);
+const outAt = argv.indexOf("--out");
+const OUT_DIR = outAt >= 0 ? argv.splice(outAt, 2)[1] : "./.index";
+const INPUT = argv[0] || "./swagger.json";
+const OUTPUT = `${OUT_DIR.replace(/\/+$/, "")}/schema-index.json`;
 
 const refName = (ref) => (ref || "").split("/").pop();
 

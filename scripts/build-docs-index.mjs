@@ -37,16 +37,23 @@
  * The catalog is what the worker memoizes per isolate; chunk parts are
  * fetched from R2 on demand. Upload everything with `npm run upload-index`.
  *
+ * Two input layouts, detected from the median file size (override with
+ * --layout): "guide" — a few dozen monolithic guides (the PDF-converted
+ * Beacon sets, 2025R2), one catalog guide per file; "topic" — one help topic
+ * per file (the 2026R2 Beacon export, the GitHub set), one catalog guide per
+ * top-level folder.
+ *
  * Usage: node scripts/build-docs-index.mjs [path/to/docs-folder] [release-label]
+ *          [--out <dir>] [--layout topic|guide]
  *        default folder ./.docs-source, release label inferred from the
- *        folder's basename (e.g. ~/ClaudeCode/acumatica-docs/2025R2 → "2025R2").
+ *        folder's basename (e.g. ~/ClaudeCode/acumatica-docs/2025R2 → "2025R2"),
+ *        output ./.index. Use --out .index/<release> to build a second
+ *        release (for another worker) without overwriting the first.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync } from "node:fs";
 import { join, basename, relative, resolve } from "node:path";
 
-const OUT_DIR = "./.index";
-const CHUNK_DIR = `${OUT_DIR}/docs-chunks`;
 // Bounds are on cleaned text length (chars ≈ bytes for this ASCII-heavy corpus).
 const MAX_CHUNK_CHARS = 7000; // split bigger sections at paragraph boundaries
 const MIN_BODY_CHARS = 80; // heading-only / stub sections are not chunks
@@ -56,8 +63,15 @@ const PART_BUDGET_CHARS = 700_000; // ~700 KB of text per docs-chunks part file
 // "Form ID: (AP301000)", while the DITA-converted set Acumatica publishes on
 // GitHub escapes the parens as "Form ID: \(AP301000\)". Without the optional
 // backslashes the latter silently yields ZERO Form IDs rather than erroring.
+// Report reference pages say "Report ID:" for the same kind of key, and some
+// screen IDs carry letters after the module prefix (PMGI3055, AM0018DB).
 const FORM_ID_DEF_RE =
-  /^\s*Form ID:?\s*\\?\(?([A-Z]{2}\.?\d{2}\.?\d{2}\.?\d{2})\\?\)?/m;
+  /^\s*(?:Form|Report) ID:?\s*\\?\(?([A-Z]{2}\.?[0-9A-Z]{2}\.?[0-9A-Z]{2}\.?[0-9A-Z]{2})\\?\)?/m;
+
+// Pandoc heading attributes left by the DITA conversion:
+// "# Copyright {#_c92aa4bb-… .concept}". Search matches headings, so the ids
+// must not reach the breadcrumb.
+const HEADING_ATTRS_RE = /\s*\{[#.][^}]*\}\s*$/;
 
 /** Normalize a doc filename to a stable slug: strip vendor prefixes, kebab-case. */
 export function guideSlug(fileName) {
@@ -101,7 +115,7 @@ export function cleanMarkdown(raw) {
 
 /** Heading text: strip #'s already removed; strip bold markers + trailing space. */
 function cleanHeading(text) {
-  return text.replace(/\*+/g, "").replace(/\s+/g, " ").trim();
+  return text.replace(HEADING_ATTRS_RE, "").replace(/\*+/g, "").replace(/\s+/g, " ").trim();
 }
 
 const SKIP_HEADINGS = /^(contents|copyright|restricted rights|disclaimer|trademarks)$/i;
@@ -118,28 +132,40 @@ const NOISE_HEADINGS = /^(20\d\d\s*R\d|end-user guide|user guide|release notes)$
  * text lives on in descendants' breadcrumbs.
  *
  * Returns [{ path, body, formId? }] in document order. `formId` is set on
- * every section belonging to a form's H2 scope in the Form Reference (the
- * scope whose body carries a "Form ID: (XX000000)" definition line) — body
- * *mentions* of other forms deliberately don't count.
+ * every section of the scope whose body carries a "Form ID: (XX000000)"
+ * definition line — body *mentions* of other forms deliberately don't count.
+ * The scope is the nearest heading at level ≤ 2 above the definition, plus
+ * everything beneath it: an H2 in the monolithic Form Reference, the H1 of a
+ * per-topic file (where a form's toolbar and tabs are H2s under its title).
  */
 export function chunkGuide(cleaned) {
   const lines = cleaned.split("\n");
-  // heading stack: [{level, text}]
+  // heading stack: [{level, text, id}]. `id` is unique per heading occurrence:
+  // Form ID scopes are keyed by it, not by breadcrumb text, because two
+  // different forms can share a title within one guide (2025R2 has two
+  // "Staff Schedule Rules" screens, FS202001 and FS4010PL).
   const stack = [];
+  let nextId = 0;
   const sections = [];
+  // Form ID per scope heading id. Collected before the stub filter, so a
+  // definition in a body too short to be a chunk still counts.
+  const formIdByScope = new Map();
   let body = [];
 
   const flush = () => {
     const text = body.join("\n").trim();
     body = [];
     if (stack.length === 0) return;
+    const def = FORM_ID_DEF_RE.exec(text);
+    if (def) formIdByScope.set(scopeId(), def[1].replace(/\./g, ""));
     const leaf = stack[stack.length - 1].text;
     if (SKIP_HEADINGS.test(leaf)) return;
     if (text.length < MIN_BODY_CHARS) return;
     const path = stack.map((s) => s.text).join(" > ");
+    const anc = stack.map((s) => s.id);
     // Split oversized bodies at paragraph boundaries.
     if (text.length <= MAX_CHUNK_CHARS) {
-      sections.push({ path, body: text, h2: currentH2() });
+      sections.push({ path, body: text, anc });
       return;
     }
     const paras = text.split(/\n\n+/);
@@ -151,7 +177,7 @@ export function chunkGuide(cleaned) {
       sections.push({
         path: partNo === 1 ? path : `${path} (cont. ${partNo})`,
         body: buf.join("\n\n"),
-        h2: currentH2(),
+        anc,
       });
       partNo++;
       buf = [];
@@ -165,11 +191,12 @@ export function chunkGuide(cleaned) {
     emit();
   };
 
-  const currentH2 = () => {
+  // The scope a definition belongs to: the nearest heading at level <= 2.
+  const scopeId = () => {
     for (let i = stack.length - 1; i >= 0; i--) {
-      if (stack[i].level <= 2) return stack.map((s) => s.text).slice(0, i + 1).join(" > ");
+      if (stack[i].level <= 2) return stack[i].id;
     }
-    return stack.length ? stack[0].text : "";
+    return stack[0].id;
   };
 
   for (const line of lines) {
@@ -183,21 +210,19 @@ export function chunkGuide(cleaned) {
     const text = cleanHeading(m[2]);
     if (NOISE_HEADINGS.test(text)) continue;
     while (stack.length > 0 && stack[stack.length - 1].level >= level) stack.pop();
-    stack.push({ level, text });
+    stack.push({ level, text, id: nextId++ });
   }
   flush();
 
-  // Form ID pass: a definition in any section of an H2 scope tags every
-  // section of that scope (a form's toolbar/tab sections follow the
-  // definition under the same H2 in the Form Reference).
-  const formIdByH2 = new Map();
-  for (const s of sections) {
-    const def = FORM_ID_DEF_RE.exec(s.body);
-    if (def) formIdByH2.set(s.h2, def[1].replace(/\./g, ""));
-  }
-  return sections.map(({ path, body: b, h2 }) => {
-    const formId = formIdByH2.get(h2);
-    return formId ? { path, body: b, formId } : { path, body: b };
+  // Form ID pass: a definition tags every section in or beneath its scope
+  // (a form's toolbar/tab sections follow the definition). When scopes nest,
+  // the deepest one wins; for the same scope, the last definition wins.
+  return sections.map(({ path, body: b, anc }) => {
+    for (let i = anc.length - 1; i >= 0; i--) {
+      const formId = formIdByScope.get(anc[i]);
+      if (formId) return { path, body: b, formId };
+    }
+    return { path, body: b };
   });
 }
 
@@ -213,9 +238,75 @@ function walkMarkdownFiles(dir) {
   return out.sort();
 }
 
+// A per-topic export has thousands of small files; a guide-per-file set has
+// a few dozen large ones. The median separates them by orders of magnitude
+// (2025R2 Beacon guides vs the 2026R2 per-topic export).
+const TOPIC_LAYOUT_MEDIAN_BYTES = 64 * 1024;
+
+/** "topic" when the median file is small (one help topic per file), else "guide". */
+export function detectLayout(sizes) {
+  if (sizes.length === 0) return "guide";
+  const sorted = [...sizes].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] < TOPIC_LAYOUT_MEDIAN_BYTES ? "topic" : "guide";
+}
+
+/**
+ * Group documentation files into guides, given paths relative to the input
+ * folder. "guide" layout: one guide per file (the monolithic Beacon guides).
+ * "topic" layout: one guide per top-level folder (UserGuide/, ReleaseNotes/,
+ * …), since a guide per topic would mean thousands of guides and a useless
+ * `guide` filter; files at the root are guides of their own, except the
+ * export's navigation maps (index.md, index-*.md), which hold only links.
+ *
+ * Returns [{ slug, title, file, files }] in input order; `files` are the
+ * relative paths that make up the guide.
+ */
+export function groupGuides(relFiles, layout) {
+  const guides = [];
+  const byFolder = new Map();
+  for (const rel of relFiles) {
+    const segs = rel.split(/[\\/]/);
+    if (layout === "topic" && segs.length > 1) {
+      let g = byFolder.get(segs[0]);
+      if (!g) {
+        g = { slug: guideSlug(segs[0]), title: guideTitle(segs[0]), file: `${segs[0]}/`, files: [] };
+        byFolder.set(segs[0], g);
+        guides.push(g);
+      }
+      g.files.push(rel);
+      continue;
+    }
+    if (layout === "topic" && /^index(-.*)?\.md$/i.test(segs[0])) continue;
+    guides.push({ slug: guideSlug(rel), title: guideTitle(rel), file: rel, files: [rel] });
+  }
+  // Slugs key chunk IDs and part blobs, so they must be unique.
+  const seen = new Map();
+  for (const g of guides) {
+    const n = seen.get(g.slug) ?? 0;
+    seen.set(g.slug, n + 1);
+    if (n > 0) g.slug = `${g.slug}-${n + 1}`;
+  }
+  return guides;
+}
+
+/** Split argv into positionals and `--name value` / `--name=value` options. */
+function parseArgs(argv) {
+  const positional = [];
+  const options = {};
+  for (let i = 0; i < argv.length; i++) {
+    const m = /^--([a-z-]+)(?:=(.*))?$/.exec(argv[i]);
+    if (!m) positional.push(argv[i]);
+    else options[m[1]] = m[2] ?? argv[++i];
+  }
+  return { positional, options };
+}
+
 function main() {
-  const inputDir = resolve(process.argv[2] || "./.docs-source");
-  const release = process.argv[3] || basename(inputDir);
+  const { positional, options } = parseArgs(process.argv.slice(2));
+  const inputDir = resolve(positional[0] || "./.docs-source");
+  const release = positional[1] || basename(inputDir);
+  const outDir = options.out || "./.index";
+  const chunkDir = `${outDir}/docs-chunks`;
   const files = walkMarkdownFiles(inputDir);
   if (files.length === 0) {
     console.error(`No .md files found under ${inputDir}.`);
@@ -224,15 +315,25 @@ function main() {
     );
     process.exit(1);
   }
+  const layout = options.layout || detectLayout(files.map((f) => statSync(f).size));
+  if (layout !== "topic" && layout !== "guide") {
+    console.error(`--layout must be "topic" or "guide", not "${layout}".`);
+    process.exit(1);
+  }
+  console.log(`Layout: ${layout}${options.layout ? "" : " (detected)"}`);
 
-  mkdirSync(CHUNK_DIR, { recursive: true });
+  // Start from an empty chunk folder: parts left over from an earlier build
+  // (a different layout means different slugs) would otherwise be uploaded too.
+  rmSync(chunkDir, { recursive: true, force: true });
+  mkdirSync(chunkDir, { recursive: true });
   const guides = [];
   let totalChunks = 0;
 
-  for (const file of files) {
-    const slug = guideSlug(file);
-    const title = guideTitle(file);
-    const sections = chunkGuide(cleanMarkdown(readFileSync(file, "utf8")));
+  for (const unit of groupGuides(files.map((f) => relative(inputDir, f)), layout)) {
+    const { slug, title, file } = unit;
+    const sections = unit.files.flatMap((rel) =>
+      chunkGuide(cleanMarkdown(readFileSync(join(inputDir, rel), "utf8")))
+    );
     if (sections.length === 0) continue;
 
     // Write chunk-text parts of bounded size; catalog records part boundaries.
@@ -243,7 +344,7 @@ function main() {
     const flushPart = () => {
       if (texts.length === 0) return;
       const key = `docs-chunks/${slug}-${parts.length}.json`;
-      writeFileSync(`${OUT_DIR}/${key}`, JSON.stringify({ slug, first, texts }));
+      writeFileSync(`${outDir}/${key}`, JSON.stringify({ slug, first, texts }));
       parts.push({ key, first, count: texts.length });
       first += texts.length;
       texts = [];
@@ -260,7 +361,7 @@ function main() {
     }
     flushPart();
 
-    guides.push({ slug, title, file: relative(inputDir, file), parts, chunks });
+    guides.push({ slug, title, file, parts, chunks });
     totalChunks += chunks.length;
     console.log(`  ${slug}: ${chunks.length} chunks, ${parts.length} part(s)`);
   }
@@ -274,14 +375,18 @@ function main() {
     chunkCount: totalChunks,
     guides,
   };
-  writeFileSync(`${OUT_DIR}/docs-index.json`, JSON.stringify(catalog));
+  writeFileSync(`${outDir}/docs-index.json`, JSON.stringify(catalog));
   const kb = (s) => `${Math.round(s / 1024)} KB`;
   console.log(
-    `\nWrote ${OUT_DIR}/docs-index.json (${kb(statSync(`${OUT_DIR}/docs-index.json`).size)}), ` +
-      `${guides.reduce((n, g) => n + g.parts.length, 0)} chunk part file(s) in ${CHUNK_DIR}/ — ` +
+    `\nWrote ${outDir}/docs-index.json (${kb(statSync(`${outDir}/docs-index.json`).size)}), ` +
+      `${guides.reduce((n, g) => n + g.parts.length, 0)} chunk part file(s) in ${chunkDir}/ — ` +
       `${guides.length} guides, ${totalChunks} chunks, release ${release}.`
   );
-  console.log("Upload with `npm run upload-index`.");
+  console.log(
+    outDir === "./.index"
+      ? "Upload with `npm run upload-index`."
+      : `Upload with \`node scripts/upload-indexes.mjs --dir ${outDir} --bucket <bucket>\`.`
+  );
 }
 
 // Run only when executed directly (the exports above are unit-tested).

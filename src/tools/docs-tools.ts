@@ -76,7 +76,7 @@ export async function handleSearchDocs(
   }
   if (formId && !normalizeFormId(formId)) {
     return {
-      error: `'${formId}' is not a Form ID. Form IDs are two letters + six digits (e.g. AP301000, SO301000). To search by words, use \`query\` instead.`,
+      error: `'${formId}' is not a Form ID. Form IDs are two letters + six characters, usually digits (e.g. AP301000, PMGI3055). To search by words, use \`query\` instead.`,
     };
   }
   if (args.guide && matchGuides(catalog, args.guide).length === 0) {
@@ -147,7 +147,7 @@ async function getFormSections(env: AppEnv, catalog: DocsCatalog, formId: string
   const all = chunksForFormId(catalog, formId);
   if (all.length === 0) {
     return {
-      error: `No documentation sections found for Form ID ${formId}. Verify the ID (two letters + six digits), or search by the screen's name with acumatica_search_docs.`,
+      error: `No documentation sections found for Form ID ${formId}. Verify the ID (two letters + six characters, e.g. AP301000), or search by the screen's name with acumatica_search_docs.`,
     };
   }
 
