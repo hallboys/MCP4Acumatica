@@ -5,6 +5,13 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [0.55.0] - 2026-11-03
+### Added
+- **Exact totals for Generic Inquiries, opt-in (`ACUMATICA_GI_COUNT`).** When set to `"true"`, `acumatica_run_inquiry` requests `$count=true`; a result that hits the row cap then carries `totalCount` and `mayBeComplete: false` ("N records match this query; this response contains only the first M"), and a result exactly at the cap that is in fact complete comes back without the truncation envelope. The model can answer "how many" questions from the total instead of asking the user to narrow the filter. Off by default: the 2025 R2 Reporting Tools guide lists `$count` as unsupported on the GI-based OData interface, so production does not send it. Verified on a 2026 R2 sandbox (filtered and unfiltered totals; the total equals the rows the same query returns). `docs/upgrading-acumatica.md` §7 has the step to turn it on after a 2026 R2 upgrade.
+
+### Documentation
+- `CLAUDE.md` and `docs/tool-reference.md`: the new setting and the `totalCount` envelope. Noted that an OData total counts only the rows OData can see, which can be fewer than Acumatica's native 2026 R2 MCP server returns for the same inquiry.
+
 ## [0.54.0] - 2026-11-02
 ### Added
 - **The docs ingestion script handles per-topic documentation sets.** Since 2026 R2 the Beacon Portal ships the documentation as one Markdown file per help topic (the GitHub set has the same shape), and `scripts/build-docs-index.mjs` degraded silently on it. It now detects the layout from the median file size (override with `--layout topic|guide`); a per-topic set becomes one catalog guide per top-level folder (`user-guide`, `release-notes`, …) with chunk text packed into the usual ~700 KB parts — 11 guides and 44 parts for 2026R2 instead of 3,652 of each — and the export's root navigation maps (`index.md`, `index-*.md`) are skipped. Monolithic guide sets (2025R2) build as before.

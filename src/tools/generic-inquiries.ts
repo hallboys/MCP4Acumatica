@@ -20,6 +20,8 @@ import { AcumaticaApiError } from "../lib/acumatica-client";
 /** OData query response with value array */
 interface ODataQueryResponse {
   value: Record<string, unknown>[];
+  // Present only when `$count=true` was requested and the endpoint honors it.
+  "@odata.count"?: number;
 }
 
 const GI_METADATA_TTL_SECONDS = 3600; // 1 hour, shared "gi_metadata" cache
@@ -123,6 +125,12 @@ export async function handleRunInquiry(
     query.$select = args.selectFields;
   }
 
+  // Opt-in per deployment: 2025 R2 documents `$count` as unsupported on the
+  // GI-based OData interface, so production never sends it.
+  if (env.ACUMATICA_GI_COUNT === "true") {
+    query.$count = "true";
+  }
+
   let response: ODataQueryResponse;
   try {
     response = await client.getOData<ODataQueryResponse>(
@@ -156,7 +164,27 @@ export async function handleRunInquiry(
   // Strip OData metadata fields and trim space-padded fixed-width values.
   const cleaned = cleanGiRows(rows);
 
-  // OData GI endpoints return no total count, so "exactly at cap" is
+  // With an exact total, "at the cap" no longer has to be ambiguous.
+  const totalCount = response["@odata.count"];
+  if (typeof totalCount === "number") {
+    if (totalCount <= cleaned.length) return cleaned;
+    return {
+      results: cleaned,
+      truncated: true,
+      mayBeComplete: false,
+      totalCount,
+      recordsReturned: cleaned.length,
+      recordLimit: effectiveTop,
+      paginationSupported: false,
+      actionRequired:
+        `${totalCount} records match this query; this response contains only the first ${cleaned.length}. ` +
+        `This tool does NOT support pagination. Do NOT call this tool again with a different offset or topN to retrieve more records — no such mechanism exists. ` +
+        `Report the total if that answers the question; otherwise ask the user to narrow their request with a more specific filterExpression ` +
+        `(e.g., date range, status, or other criteria) so the result set fits under the limit.`,
+    };
+  }
+
+  // Without a total count (the default), "exactly at cap" is
   // indistinguishable from "more rows exist". See entity-list.ts for the
   // same reasoning.
   if (cleaned.length >= effectiveTop) {

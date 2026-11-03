@@ -25,6 +25,9 @@ dac-source/
 # .local-backup file is written by setup.sh / past versions of this repo
 # whenever an existing wrangler.jsonc is overwritten.
 wrangler.jsonc.local-backup
+# Configs for additional workers (one per Acumatica instance, e.g. a release
+# sandbox): instance values, kept in the private tenant repo.
+wrangler.*.jsonc
 
 # Drafted GI descriptions are instance data, not project source: they describe
 # one tenant's inquiries — their document-type filters, custom fields and

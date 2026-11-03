@@ -240,6 +240,13 @@ add/rename/deprecate entities or change field shapes:
   `possibleFalseNegative` warning. If a release renames one of these entities or its key field,
   or makes a previously-unfilterable field optimizable, update the list. The mode-A 500 classifier
   (`getFilterErrorKind`) is body-based and entity-agnostic, so it needs no per-release change.
+- **Exact totals for Generic Inquiries (`ACUMATICA_GI_COUNT`).** Off by default. The 2025 R2
+  Reporting Tools guide lists `$count` as unsupported on the GI-based OData interface; on a
+  2026 R2 sandbox it works (verified 2026-11-03: filtered and unfiltered totals returned, and the
+  total equals the rows the same query returns). After moving to 2026 R2 or later, set
+  `ACUMATICA_GI_COUNT` to `"true"`, redeploy, and run `acumatica_run_inquiry` with a small `topN`
+  on a large GI: a truncated result should carry `totalCount` and `mayBeComplete: false`. If the
+  query fails or `totalCount` is absent, turn the setting back off.
 
 ### Adding or extending a getter entry
 

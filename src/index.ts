@@ -40,7 +40,7 @@ export { TokenManager } from "./token-manager";
 export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, AuthProps> {
   server = new McpServer({
     name: "mcp4acumatica",
-    version: "0.54.0",
+    version: "0.55.0",
   });
 
   // agents 0.21.0 types `props` as optional (`props?: Props`), but on this
@@ -114,6 +114,7 @@ export class AcumaticaMcpServer extends McpAgent<Env, Record<string, unknown>, A
       ACUMATICA_MAX_CONCURRENT: this.env.ACUMATICA_MAX_CONCURRENT,
       ACUMATICA_MAX_PER_MINUTE: this.env.ACUMATICA_MAX_PER_MINUTE,
       ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS: this.env.ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS,
+      ACUMATICA_GI_COUNT: this.env.ACUMATICA_GI_COUNT,
       store: new CloudflareKVStore(this.env.TOKEN_STORE),
       tokenProvider: new DOTokenProvider(this.env.TOKEN_MANAGER),
       indexStore: this.env.INDEX_STORE ? new CloudflareR2BlobStore(this.env.INDEX_STORE) : undefined,

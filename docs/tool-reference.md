@@ -1,6 +1,6 @@
 # MCP4Acumatica -- Tool Reference
 
-Complete specification for all 51 tools available in the MCP4Acumatica (v0.54.0).
+Complete specification for all 51 tools available in the MCP4Acumatica (v0.55.0).
 
 > **Tool annotations (0.53.0).** Every tool carries MCP annotations and a human-readable `title`.
 > All tools are `readOnlyHint: true` except the write tools (`readOnlyHint: false`,
@@ -87,7 +87,7 @@ Execute any configured Generic Inquiry (GI) in Acumatica. Use this for custom re
 
 **Endpoint:** `GET /t/{Company}/api/odata/gi/{inquiryName}?$filter=...&$top=...&$select=...`
 
-> **Truncation semantics:** Same as `acumatica_list_entities` — when results hit the max, the response includes `truncated: true`, `paginationSupported: false`, and `actionRequired` text telling the model to ask the user for a narrower filter rather than calling again.
+> **Truncation semantics:** Same as `acumatica_list_entities` — when results hit the max, the response includes `truncated: true`, `paginationSupported: false`, and `actionRequired` text telling the model to ask the user for a narrower filter rather than calling again. With `ACUMATICA_GI_COUNT=true` (Acumatica 2026 R2 or later), the envelope also carries the exact `totalCount` and `mayBeComplete: false`, and a result at the cap that is in fact complete is returned without the envelope.
 
 > **Calculated columns are refused in filters (0.49.0):** a `$filter` referencing a **calculated** GI column (an `=…` expression in the inquiry design) makes Acumatica return HTTP 200 with an *empty body* — not an error, not an empty list. For curated GIs the registry flags expression columns, and this tool refuses such a filter **before contacting Acumatica**, returning an `invalid_filter` envelope naming the offending columns and listing the stored `filterableFields` to rewrite against. Filter on stored columns (keys, dates, statuses, codes) and apply conditions on calculated columns to the returned rows client-side. See [OData filtering](odata-filtering.md).
 

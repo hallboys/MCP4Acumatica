@@ -1094,6 +1094,10 @@ export interface AppEnv {
   ACUMATICA_MAX_CONCURRENT?: string;
   ACUMATICA_MAX_PER_MINUTE?: string;
   ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS?: string;
+  // Generic Inquiries — set to "true" to request `$count=true` and report the
+  // exact total when a result is truncated. Off by default: the 2025 R2 docs
+  // list `$count` as unsupported on the GI-based OData interface.
+  ACUMATICA_GI_COUNT?: string;
   // Resolved rate limits (KV override → env var → built-in default), computed
   // once when the session starts so the hot path needs no extra KV read.
   // Optional: when absent, withRateLimit() falls back to DEFAULT_RATE_LIMITS.
@@ -1138,6 +1142,7 @@ export interface Env {
   ACUMATICA_MAX_CONCURRENT?: string;
   ACUMATICA_MAX_PER_MINUTE?: string;
   ACUMATICA_RATE_LIMIT_QUEUE_WAIT_MS?: string;
+  ACUMATICA_GI_COUNT?: string;
   // Raw KV binding (used by auth handler and admin handler which need direct KV access)
   TOKEN_STORE: KVNamespace;
   // OAuth provider — OAUTH_KV is required by @cloudflare/workers-oauth-provider internally
