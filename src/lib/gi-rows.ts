@@ -8,9 +8,10 @@
  * describe_inquiry, and the promoted per-GI tools):
  *  1. Drop OData control fields (`@odata.*`).
  *  2. Trim string values. Acumatica returns fixed-width key fields space-padded
- *     (e.g. "MAIN01    "); untrimmed, they bloat context and — worse — break
- *     equality filters the model builds from them ("WarehouseID eq 'MAIN01    '"
- *     won't round-trip). Trailing/leading spaces on GI output are never
+ *     (e.g. "MAIN01    "); untrimmed, they bloat context and break comparisons
+ *     made outside Acumatica (the model matching values across rows or tools).
+ *     An equality $filter still matches either form — SQL ignores trailing pad
+ *     (seen on 25R2 and 26R2). Trailing/leading spaces on GI output are never
  *     semantically meaningful, so trimming every string value is safe.
  */
 

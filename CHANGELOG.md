@@ -5,6 +5,11 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
+## [Unreleased]
+### Documentation
+- Corrected the reason GI values are trimmed: an equality `$filter` still matches a space-padded key (SQL ignores trailing pad, seen on 25R2 and 26R2); the padding breaks comparisons made outside Acumatica and wastes context. Trimming itself is unchanged (`CLAUDE.md`, `docs/generic-inquiries.md`, the `gi-rows.ts` comment).
+- `CLAUDE.md`: removed a stale note saying parameterized GIs are excluded from the GI list (they are listed with their parameters since 0.56.0).
+
 ## [0.56.0] - 2026-11-03
 ### Added
 - **Parameterized Generic Inquiries are supported instead of refused.** A GI with parameters is now queried through its `{Name}_WithParameters` OData function — Acumatica's documented way to pass parameter values — rather than refused. `acumatica_run_inquiry` takes a new `parameters` argument (a JSON object as a string) and checks it against OData `$metadata` before contacting Acumatica: a call without the argument is refused with the parameter list, a **required** parameter (**Is Required** on the GI, `Nullable="false"` in `$metadata`) must have a value, a value must fit the parameter's type, and an **unknown parameter name is refused** — Acumatica itself silently ignores a misspelled name and returns unfiltered rows. Optional parameters left out take the GI's default value, and the response lists them under `parameters.defaulted` so the model can say which defaults applied. Every value is sent as an OData parameter alias, which also keeps date-time values working (the server rejects a `:` in the URL path). `acumatica_describe_inquiry` and `acumatica_list_generic_inquiries` show each GI's parameters; a GI with a required parameter is described without a sample row. Verified on a 2026 R2 sandbox and on 2025 R2 production (text and date parameters filter; an out-of-range date returns nothing). Enabled only when `ACUMATICA_GI_PARAMETERS` is `"true"`. 2025 R2 declares GI date parameters as `Edm.DateTimeOffset` (2026 R2 as `Edm.Date`) and accepts a plain `YYYY-MM-DD` for them, so date-time parameters accept a plain date as well as a full date-time with offset.
