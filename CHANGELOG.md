@@ -5,10 +5,11 @@ All notable changes to MCP4Acumatica are documented here. The format is based on
 semantic-ish versioning. Release tags use the form `25R2-<version>` (the `25R2`
 prefix tracks the targeted Acumatica release, 2025 R2).
 
-## [Unreleased]
+## [0.56.1] - 2026-11-03
 ### Documentation
 - Corrected the reason GI values are trimmed: an equality `$filter` still matches a space-padded key (SQL ignores trailing pad, seen on 25R2 and 26R2); the padding breaks comparisons made outside Acumatica and wastes context. Trimming itself is unchanged (`CLAUDE.md`, `docs/generic-inquiries.md`, the `gi-rows.ts` comment).
 - `CLAUDE.md`: removed a stale note saying parameterized GIs are excluded from the GI list (they are listed with their parameters since 0.56.0).
+- `CLAUDE.md`: parameterized GIs recorded as verified on 25R2 production and enabled there (`ACUMATICA_GI_PARAMETERS` on in production and on the 26R2 worker); which `MCPGIParams` field names are confirmed; tags are per instance; names containing `/` are now refused up front.
 
 ## [0.56.0] - 2026-11-03
 ### Added
